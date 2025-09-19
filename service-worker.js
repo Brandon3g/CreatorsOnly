@@ -108,6 +108,16 @@ self.addEventListener('message', event => {
             icon: options.icon || ICON_URL,
             badge: options.badge || ICON_URL,
         };
-        self.registration.showNotification(title, finalOptions);
-    }
+self.addEventListener("install", (event) => {
+  self.skipWaiting();
 });
+
+self.addEventListener("activate", (event) => {
+  clients.claim();
+});
+
+self.addEventListener("fetch", (event) => {
+  // Let network handle all requests for now
+});
+
+
