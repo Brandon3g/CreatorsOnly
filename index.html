@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-t" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no" />
+    <title>CreatorsOnly</title>
+
+    <!-- Social Media Preview Tags -->
+    <meta property="og:title" content="CreatorsOnly" />
+    <meta property="og:description" content="A social media platform for content creators to connect, collaborate, and grow." />
+    <meta property="og:image" content="https://picsum.photos/id/1015/1200/630" />
+    <meta property="og:url" content="https://creatorsonly.example.com" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#6C2BD9" />
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152x152.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icons/icon-167x167.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180x180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512x512.png">
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <style>
+      :root {
+        --color-primary: #7C3AED;
+        --color-primary-hover: #6D28D9;
+        --color-background: #F9FAFB; /* light gray */
+        --color-surface: #FFFFFF; /* white */
+        --color-surface-light: #F3F4F6; /* lighter gray */
+        --color-text-primary: #111827; /* almost black */
+        --color-text-secondary: #6B7281; /* medium gray */
+        --color-accent-blue: #3B82F6;
+        --color-accent-green: #22C55E;
+        --color-accent-red: #EF4444;
+      }
+      html.dark {
+        --color-primary: #7C3AED;
+        --color-primary-hover: #6D28D9;
+        --color-background: #101010;
+        --color-surface: #181818;
+        --color-surface-light: #282828;
+        --color-text-primary: #F5F5F5;
+        --color-text-secondary: #A3A3A3;
+        --color-accent-blue: #3B82F6;
+        --color-accent-green: #22C55E;
+        --color-accent-red: #EF4444;
+      }
+      body {
+        /* padding-top is now handled by individual page headers to allow background to extend into the safe area */
+        padding-left: env(safe-area-inset-left, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+      .main-content-mobile-padding {
+        /* For main content area on mobile, accounts for nav bar (4rem) */
+        padding-bottom: 4rem;
+      }
+      .mobile-nav-safe-area {
+        /* For the mobile nav bar itself */
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        height: calc(4rem + env(safe-area-inset-bottom, 0px));
+      }
+      /* Base App Header styles */
+      .app-header {
+        position: sticky;
+        top: 0;
+        z-index: 1000;
+        background-color: var(--color-surface);
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--color-surface-light);
+      }
+      .dark .app-header {
+        background-color: #0b0b0b;
+        border-bottom-color: rgba(255,255,255,0.10);
+      }
+      /* iOS PWA Header Fixes */
+      .ios-pwa .app-header {
+        padding-top: calc(12px + env(safe-area-inset-top));
+      }
+      .ios-pwa .safe-area-top-spacer {
+        height: env(safe-area-inset-top);
+        width: 100%;
+      }
+      @supports not (padding-top: env(safe-area-inset-top)) {
+        .ios-pwa .app-header { padding-top: 32px; }
+        .ios-pwa .safe-area-top-spacer { height: 24px; }
+      }
+      /* Prevent iOS auto-zoom when focusing inputs (must be >=16px) */
+      input, select, textarea {
+        font-size: 16px !important;
+      }
+      @media (min-width: 768px) { /* Corresponds to md: breakpoint */
+        .main-content-mobile-padding {
+            padding-bottom: 0;
+        }
+      }
+    </style>
+    <script>
+        // Set theme on initial load to prevent flash. Default to dark.
+        if (localStorage.getItem('creatorsOnlyTheme') === 'light') {
+          document.documentElement.classList.remove('dark');
+        } else {
+          document.documentElement.classList.add('dark');
+        }
+    </script>
+    <script>
+      // iOS PWA Fixes
+      (function () {
+        function isIOS() {
+          return /iP(hone|ad|od)/.test(navigator.userAgent) || 
+                 (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // iPadOS
+        }
+
+        function isStandalone() {
+          // iOS Safari PWA detection
+          const standaloneUA = window.navigator.standalone === true;
+          const displayModeStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+          return standaloneUA || displayModeStandalone;
+        }
+
+        function ensureViewport() {
+          // Guarantee correct viewport settings at runtime
+          var meta = document.querySelector('meta[name="viewport"]');
+          var desired = 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no';
+          if (!meta) {
+            meta = document.createElement('meta');
+            meta.name = 'viewport';
+            meta.content = desired;
+            document.head.appendChild(meta);
+          } else if (meta.content !== desired) {
+            meta.content = desired;
+          }
+        }
+
+        function applyIOSPWAFixes() {
+          if (!(isIOS() && isStandalone())) return;
+
+          // Add a class so CSS safe-area rules apply only in iOS PWA mode
+          document.documentElement.classList.add('ios-pwa');
+          document.body.classList.add('ios-pwa');
+
+          // Fallback padding in case env(safe-area-*) is missing or not respected
+          // (Very old iOS or edge cases). These values are conservative defaults.
+          var computedTop = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--fallback-safe-top')) || 0;
+          var computedBottom = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--fallback-safe-bottom')) || 0;
+
+          // If env() isn't working, gently polyfill with safe defaults:
+          // iPhones with a notch usually need ~20-44px top and ~10-20px bottom.
+          // We'll only add if current padding appears to be 0.
+          var currentTop = parseInt(getComputedStyle(document.body).paddingTop) || 0;
+          var currentBottom = parseInt(getComputedStyle(document.body).paddingBottom) || 0;
+
+          if (currentTop === 0) {
+            document.body.style.paddingTop = (computedTop || 24) + 'px';
+          }
+          if (currentBottom === 0) {
+            document.body.style.paddingBottom = (computedBottom || 16) + 'px';
+          }
+
+          // Prevent unexpected zoom jumps after navigation/login
+          ensureViewport();
+
+          // Extra guard: some iOS zooms on <input> focus if font-size < 16px (handled via CSS),
+          // but we also watch for orientation/resize and re-apply viewport to keep scale stable.
+          window.addEventListener('orientationchange', ensureViewport);
+          window.addEventListener('resize', ensureViewport);
+          window.addEventListener('pageshow', ensureViewport);
+        }
+
+        // Run as early as possible
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', applyIOSPWAFixes);
+        } else {
+          applyIOSPWAFixes();
+        }
+      })();
+    </script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class', // Enable class-based dark mode
+        theme: {
+          extend: {
+            colors: {
+              'primary': 'var(--color-primary)',
+              'primary-hover': 'var(--color-primary-hover)',
+              'background': 'var(--color-background)',
+              'surface': 'var(--color-surface)',
+              'surface-light': 'var(--color-surface-light)',
+              'text-primary': 'var(--color-text-primary)',
+              'text-secondary': 'var(--color-text-secondary)',
+              'accent-blue': 'var(--color-accent-blue)',
+              'accent-green': 'var(--color-accent-green)',
+              'accent-red': 'var(--color-accent-red)',
+            }
+          }
+        }
+      }
+    </script>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+    "react/": "https://aistudiocdn.com/react@^19.1.1/",
+    "react": "https://aistudiocdn.com/react@^19.1.1"
+  }
+}
+</script>
+</head>
+  <body class="bg-background text-text-primary">
+    <div id="root"></div>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/service-worker.js').then(registration => {
+            console.log('ServiceWorker registration successful with scope: ', registration.scope);
+          }, err => {
+            console.log('ServiceWorker registration failed: ', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>
