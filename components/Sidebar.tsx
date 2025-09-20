@@ -11,7 +11,7 @@ type NavItemProps = {
 };
 
 type MobileNavItemProps = {
-  label?: string; // added for accessibility on mobile
+  label?: string; // for accessibility on mobile
   iconKey: string;
   page: Page;
   notificationCount?: number;
@@ -41,6 +41,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
 
+  // --- unread counts ---
   const unreadMessageSenders = new Set(
     notifications
       .filter(
@@ -53,6 +54,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       .map((n) => n.actorId),
   );
   const unreadMessagesCount = unreadMessageSenders.size;
+
   const otherUnreadCount = notifications.filter(
     (n) =>
       currentUser &&
@@ -61,6 +63,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       !n.isRead,
   ).length;
 
+  // --- close menu when clicking outside ---
   useEffect(() => {
     const handleInteractionOutside = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
@@ -77,6 +80,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
 
   const NavItem: React.FC<NavItemProps> = ({ label, iconKey, page, notificationCount = 0 }) => {
     const isActive = currentPage === page;
+
     const handleClick = () => {
       if (page === 'profile') {
         if (currentUser) viewProfile(currentUser.id);
@@ -84,6 +88,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         navigate(page);
       }
     };
+
     return (
       <button
         onClick={handleClick}
@@ -183,8 +188,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       } else {
         throw new Error('Web Share API not supported');
       }
-    } catch (error) {
-      console.log('Sharing failed, copying to clipboard as a fallback', error);
+    } catch {
       navigator.clipboard.writeText(shareUrl).then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -197,7 +201,8 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   return (
     <>
       {/* Desktop Sidebar */}
-      <div className="hidden md:flex fixed top-0 left-0 h-full w-20 lg:w-64 bg-background border-r border-surface-light p-4 flex-col justify-between z-40">
+      <aside className="hidden md:flex fixed top-0 left-0 h-full w-20 lg:w-64 bg-background border-r border-surface-light p-4 flex-col justify-between z-40">
+        {/* Brand + Nav */}
         <div className="w-full">
           <div className="text-primary font-bold text-2xl p-3 hidden lg:block">CreatorsOnly</div>
           <div className="w-12 h-12 flex items-center justify-center text-primary font-bold text-xl p-3 lg:hidden">
@@ -223,6 +228,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             {isMasterUser && <NavItem label="Admin" iconKey="settings" page="admin" />}
             <NavItem label="Profile" iconKey="profile" page="profile" />
 
+            {/* Share */}
             <button
               onClick={handleShareApp}
               onTouchEnd={(e) => {
@@ -244,6 +250,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           </nav>
         </div>
 
+        {/* Bottom: Create + User Card */}
         <div className="w-full">
           <button
             onClick={() => openCreateModal('post')}
@@ -276,7 +283,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             </svg>
           </button>
 
-          {/* Bottom-left USER CARD (menu trigger) */}
+          {/* User Card (menu trigger) */}
           <div className="mt-4 relative" ref={settingsRef}>
             <button
               type="button"
@@ -301,7 +308,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                 </div>
               </div>
 
-              {/* Inline 3-dots icon (no dependence on ICONS.more) */}
+              {/* Inline 3-dots icon */}
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 className="h-5 w-5 hidden lg:block"
@@ -313,12 +320,16 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
               </svg>
             </button>
 
+            {/* SETTINGS MENU (now opaque) */}
             {isSettingsOpen && (
-              <div className="absolute bottom-full mb-2 w-full bg-surface-light rounded-lg shadow-lg py-1 z-50">
+              <div
+                role="menu"
+                className="absolute bottom-full mb-2 w-full rounded-lg shadow-xl z-50 bg-surface border border-surface"
+              >
                 {/* Theme quick switcher */}
                 <div className="w-full text-left px-4 py-2 text-sm text-text-primary flex justify-between items-center">
                   <span>Theme</span>
-                  <div className="flex items-center rounded-full p-0.5 bg-surface">
+                  <div className="flex items-center rounded-full p-0.5 bg-background">
                     <button
                       onClick={() => setTheme('light')}
                       onTouchEnd={(e) => {
@@ -374,8 +385,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                   </div>
                 </div>
 
-                {/* divider */}
-                <div className="border-t border-surface my-1" />
+                <div className="border-t border-surface/70" />
 
                 {/* Send Feedback */}
                 <button
@@ -390,20 +400,22 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                     onOpenFeedbackModal();
                     setIsSettingsOpen(false);
                   }}
-                  className="w-full text-left px-4 py-2 text-sm text-text-primary hover:bg-surface/50"
+                  className="w-full text-left px-4 py-2 text-sm text-text-primary hover:bg-surface-light"
+                  role="menuitem"
                 >
                   Send Feedback
                 </button>
 
-                {/* Theme toggle (global) */}
+                {/* Theme toggle (global event) */}
                 <button
                   type="button"
-                  className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface/50 flex items-center gap-2"
+                  className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface-light flex items-center gap-2"
                   onClick={() => window.dispatchEvent(new Event('co:toggle-theme'))}
                   onTouchEnd={(e) => {
                     e.preventDefault();
                     window.dispatchEvent(new Event('co:toggle-theme'));
                   }}
+                  role="menuitem"
                 >
                   <span aria-hidden="true">🌓</span>
                   <span>Theme</span>
@@ -421,7 +433,8 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                     logout();
                     setIsSettingsOpen(false);
                   }}
-                  className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface/50"
+                  className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface-light"
+                  role="menuitem"
                 >
                   Log out @{currentUser.username}
                 </button>
@@ -429,21 +442,22 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             )}
           </div>
         </div>
-      </div>
+      </aside>
 
       {/* Mobile Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 left-0 w-full bg-background border-t border-surface">
-        <MobileNavItem iconKey="home" label="Home" page="feed" />
-        <MobileNavItem iconKey="explore" label="Explore" page="explore" />
-        <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
-        <MobileNavItem
-          iconKey="messages"
-          label="Messages"
-          page="messages"
-          notificationCount={unreadMessagesCount}
-        />
-        {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
-        <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
+        <div className="grid grid-cols-5 items-stretch">
+          <MobileNavItem iconKey="home" label="Home" page="feed" />
+          <MobileNavItem iconKey="explore" label="Explore" page="explore" />
+          <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
+          <MobileNavItem
+            iconKey="messages"
+            label="Messages"
+            page="messages"
+            notificationCount={unreadMessagesCount}
+          />
+          <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
+        </div>
       </nav>
     </>
   );
