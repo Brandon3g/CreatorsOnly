@@ -2,15 +2,37 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Mobile viewport with safe-area support -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+
     <title>CreatorsOnly</title>
 
     <!-- PWA manifest -->
     <link rel="manifest" href="/manifest.json" />
 
-    <!-- iOS icons (recommended) -->
-    <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
-    <link rel="apple-touch-icon" sizes="512x512" href="/icons/icon-512.png" />
+    <!-- iOS web app settings -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="CreatorsOnly" />
+
+    <!-- iOS / Apple touch icons -->
+    <link rel="apple-touch-icon" sizes="152x152" href="/icons/apple-touch-icon-152.png" />
+    <link rel="apple-touch-icon" sizes="167x167" href="/icons/icon-167.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon-180.png" />
+
+    <!-- Standard PWA icons -->
+    <link rel="icon" type="image/png" sizes="152x152" href="/icons/icon-152.png" />
+    <link rel="icon" type="image/png" sizes="167x167" href="/icons/icon-167.png" />
+    <link rel="icon" type="image/png" sizes="180x180" href="/icons/icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
 
     <!-- Theme color -->
     <meta name="theme-color" content="#6C2BD9" />
@@ -18,8 +40,7 @@
   <body>
     <div id="root"></div>
 
-    <!-- Vite entry for your React app (you have index.tsx in project root) -->
+    <!-- Vite entry for your React app -->
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>
-

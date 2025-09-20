@@ -42,22 +42,16 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   const settingsRef = useRef<HTMLDivElement>(null);
 
   // ---------- THEME + GLOBAL STYLE INJECTION ----------
-  /**
-   * We centralize the palette here and apply it to CSS variables,
-   * then a one-time global stylesheet maps your utility classes to those vars.
-   * This lets us change the entire app’s look from this component.
-   */
   const setDomTheme = (next: 'light' | 'dark') => {
     document.documentElement.setAttribute('data-theme', next);
     document.body.setAttribute('data-theme', next);
 
-    // Palette tuned to your screenshot
     if (next === 'dark') {
-      document.documentElement.style.setProperty('--co-bg', '#0B0B0E');                 // app background
-      document.documentElement.style.setProperty('--co-fg', '#E5E7EB');                 // primary text
-      document.documentElement.style.setProperty('--co-fg-muted', '#9CA3AF');           // secondary text
-      document.documentElement.style.setProperty('--co-primary', '#7C3AED');            // vibrant purple
-      document.documentElement.style.setProperty('--co-primary-hover', '#6D28D9');      // darker purple
+      document.documentElement.style.setProperty('--co-bg', '#0B0B0E'); // app background
+      document.documentElement.style.setProperty('--co-fg', '#E5E7EB'); // primary text
+      document.documentElement.style.setProperty('--co-fg-muted', '#9CA3AF'); // secondary text
+      document.documentElement.style.setProperty('--co-primary', '#7C3AED'); // purple
+      document.documentElement.style.setProperty('--co-primary-hover', '#6D28D9');
       document.documentElement.style.setProperty('--co-surface-opaque-color', '#121214'); // cards/menus
       document.documentElement.style.setProperty('--co-surface-foreground-color', '#E5E7EB');
       document.documentElement.style.setProperty('--co-surface-border-color', '#262626');
@@ -78,15 +72,14 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   };
 
   const applyTheme = (next: 'light' | 'dark') => {
-    setTheme(next);            // update context
-    setDomTheme(next);         // update DOM + CSS vars
+    setTheme(next);
+    setDomTheme(next);
     window.dispatchEvent(new CustomEvent('co:set-theme', { detail: { theme: next } }));
     try {
       localStorage.setItem('co-theme', next);
     } catch {}
   };
 
-  // Ensure DOM reflects current theme on mount + changes
   useEffect(() => {
     setDomTheme(theme === 'dark' ? 'dark' : 'light');
   }, [theme]);
@@ -99,9 +92,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       styleEl.id = 'co-global-theme';
       styleEl.textContent = `
         /* App background + text colors */
-        body, .bg-background {
-          background-color: var(--co-bg) !important;
-        }
+        body, .bg-background { background-color: var(--co-bg) !important; }
         .text-text-primary { color: var(--co-fg) !important; }
         .text-text-secondary { color: var(--co-fg-muted) !important; }
 
@@ -124,6 +115,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           -webkit-backdrop-filter: none !important;
           backdrop-filter: none !important;
         }
+
         /* Menu row hover */
         .hover\\:bg-surface-light:hover {
           background-color: var(--co-surface-hover-color) !important;
@@ -159,23 +151,21 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
 
   // ---------- close user menu when clicking outside ----------
   useEffect(() => {
-    const handleInteractionOutside = (event: MouseEvent | TouchEvent) => {
+    const handleOutside = (event: PointerEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
         setIsSettingsOpen(false);
       }
     };
-    document.addEventListener('mousedown', handleInteractionOutside);
-    document.addEventListener('touchstart', handleInteractionOutside);
+    document.addEventListener('pointerdown', handleOutside);
     return () => {
-      document.removeEventListener('mousedown', handleInteractionOutside);
-      document.removeEventListener('touchstart', handleInteractionOutside);
+      document.removeEventListener('pointerdown', handleOutside);
     };
   }, []);
 
   const NavItem: React.FC<NavItemProps> = ({ label, iconKey, page, notificationCount = 0 }) => {
     const isActive = currentPage === page;
 
-    const handleClick = () => {
+    const handleNav = () => {
       if (page === 'profile') {
         if (currentUser) viewProfile(currentUser.id);
       } else {
@@ -185,11 +175,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
 
     return (
       <button
-        onClick={handleClick}
-        onTouchEnd={(e) => {
-          e.preventDefault();
-          handleClick();
-        }}
+        onPointerUp={handleNav}
         className={`flex items-center w-full p-3 my-1 rounded-full transition-colors duration-200 ${
           isActive ? 'bg-primary text-white' : 'hover:bg-surface-light'
         }`}
@@ -222,7 +208,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         ? currentPage === 'profile' && viewingProfileId === currentUser?.id
         : currentPage === page;
 
-    const handleClick = () => {
+    const handleNav = () => {
       if (page === 'profile') {
         if (currentUser) viewProfile(currentUser.id);
       } else {
@@ -232,11 +218,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
 
     return (
       <button
-        onClick={handleClick}
-        onTouchEnd={(e) => {
-          e.preventDefault();
-          handleClick();
-        }}
+        onPointerUp={handleNav}
         aria-label={label || page}
         className={`flex flex-col items-center justify-center w-full h-full transition-colors duration-200 ${
           isActive ? 'text-primary' : 'text-text-secondary hover:text-text-primary'
@@ -283,10 +265,11 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         throw new Error('Web Share API not supported');
       }
     } catch {
-      navigator.clipboard.writeText(shareUrl).then(() => {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      });
+      } catch {}
     }
   };
 
@@ -324,11 +307,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
 
             {/* Share */}
             <button
-              onClick={handleShareApp}
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                handleShareApp();
-              }}
+              onPointerUp={handleShareApp}
               className="flex items-center w-full p-3 my-1 rounded-full hover:bg-surface-light transition-colors duration-200"
             >
               <div className="relative">
@@ -347,22 +326,14 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         {/* Bottom: Create + User Card */}
         <div className="w-full">
           <button
-            onClick={() => openCreateModal('post')}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              openCreateModal('post');
-            }}
+            onPointerUp={() => openCreateModal('post')}
             className="w-full bg-primary hover:bg-primary-hover text-white font-bold py-3 px-4 rounded-full hidden lg:block"
           >
             Create
           </button>
 
           <button
-            onClick={() => openCreateModal('post')}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              openCreateModal('post');
-            }}
+            onPointerUp={() => openCreateModal('post')}
             className="w-12 h-12 bg-primary hover:bg-primary-hover text-white font-bold rounded-full flex items-center justify-center lg:hidden"
             aria-label="Create"
           >
@@ -381,11 +352,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           <div className="mt-4 relative" ref={settingsRef}>
             <button
               type="button"
-              onClick={() => setIsSettingsOpen((v) => !v)}
-              onTouchEnd={(e) => {
-                e.preventDefault();
-                setIsSettingsOpen((v) => !v);
-              }}
+              onPointerUp={() => setIsSettingsOpen((v) => !v)}
               className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-surface-light transition-colors duration-200"
               aria-haspopup="menu"
               aria-expanded={isSettingsOpen}
@@ -418,7 +385,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             {isSettingsOpen && (
               <div
                 role="menu"
-                className="absolute bottom-full mb-2 w-full rounded-xl shadow-2xl z-50 border border-surface overflow-hidden"
+                className="absolute bottom-full mb-2 w-full rounded-xl shadow-2xl z-50 border border-surface overflow-hidden bg-surface"
                 style={{ backgroundColor: 'var(--co-surface-opaque-color)' }} // fully opaque
               >
                 {/* Theme row */}
@@ -431,11 +398,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                       className={`h-7 w-7 rounded-full flex items-center justify-center ${
                         theme === 'light' ? 'bg-primary text-white' : 'text-text-secondary'
                       }`}
-                      onClick={() => applyTheme('light')}
-                      onTouchEnd={(e) => {
-                        e.preventDefault();
-                        applyTheme('light');
-                      }}
+                      onPointerUp={() => applyTheme('light')}
                     >
                       {/* sun */}
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -448,11 +411,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                       className={`h-7 w-7 rounded-full flex items-center justify-center ${
                         theme === 'dark' ? 'bg-primary text-white' : 'text-text-secondary'
                       }`}
-                      onClick={() => applyTheme('dark')}
-                      onTouchEnd={(e) => {
-                        e.preventDefault();
-                        applyTheme('dark');
-                      }}
+                      onPointerUp={() => applyTheme('dark')}
                     >
                       {/* moon */}
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -467,13 +426,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                 {/* Send Feedback */}
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onOpenFeedbackModal();
-                    setIsSettingsOpen(false);
-                  }}
-                  onTouchEnd={(e) => {
-                    e.preventDefault();
+                  onPointerUp={() => {
                     onOpenFeedbackModal();
                     setIsSettingsOpen(false);
                   }}
@@ -488,12 +441,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                 {/* Log out */}
                 <button
                   type="button"
-                  onClick={() => {
-                    logout();
-                    setIsSettingsOpen(false);
-                  }}
-                  onTouchEnd={(e) => {
-                    e.preventDefault();
+                  onPointerUp={() => {
                     logout();
                     setIsSettingsOpen(false);
                   }}
@@ -509,7 +457,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       </aside>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-background border-t border-surface">
+      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-background border-t border-surface pb-[env(safe-area-inset-bottom)]">
         <div className="grid grid-cols-5 items-stretch">
           <MobileNavItem iconKey="home" label="Home" page="feed" />
           <MobileNavItem iconKey="explore" label="Explore" page="explore" />
