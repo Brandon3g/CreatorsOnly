@@ -11,7 +11,7 @@ type NavItemProps = {
 };
 
 type MobileNavItemProps = {
-  label?: string;
+  label?: string; // added for accessibility on mobile
   iconKey: string;
   page: Page;
   notificationCount?: number;
@@ -183,7 +183,8 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       } else {
         throw new Error('Web Share API not supported');
       }
-    } catch {
+    } catch (error) {
+      console.log('Sharing failed, copying to clipboard as a fallback', error);
       navigator.clipboard.writeText(shareUrl).then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -243,9 +244,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           </nav>
         </div>
 
-        {/* Bottom section */}
         <div className="w-full">
-          {/* Create button */}
           <button
             onClick={() => openCreateModal('post')}
             onTouchEnd={(e) => {
@@ -277,7 +276,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             </svg>
           </button>
 
-          {/* User card (menu trigger) */}
+          {/* Bottom-left USER CARD (menu trigger) */}
           <div className="mt-4 relative" ref={settingsRef}>
             <button
               type="button"
@@ -301,14 +300,19 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                   <div className="text-xs text-text-secondary truncate">@{currentUser.username}</div>
                 </div>
               </div>
-              <span className="ml-2 hidden lg:inline">
-                {React.cloneElement(ICONS.more as React.ReactElement<{ className: string }>, {
-                  className: 'h-5 w-5',
-                })}
-              </span>
+
+              {/* Inline 3-dots icon (no dependence on ICONS.more) */}
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5 hidden lg:block"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+                aria-hidden="true"
+              >
+                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
             </button>
 
-            {/* Settings / quick actions menu */}
             {isSettingsOpen && (
               <div className="absolute bottom-full mb-2 w-full bg-surface-light rounded-lg shadow-lg py-1 z-50">
                 {/* Theme quick switcher */}
@@ -370,6 +374,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                   </div>
                 </div>
 
+                {/* divider */}
                 <div className="border-t border-surface my-1" />
 
                 {/* Send Feedback */}
