@@ -41,32 +41,55 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // ---- Global theme application helper ----
+  // ---------- GLOBAL THEME APPLICATION + SOLID SURFACE OVERRIDE ----------
+  const setDomTheme = (next: 'light' | 'dark') => {
+    document.documentElement.setAttribute('data-theme', next);
+    document.body.setAttribute('data-theme', next);
+    // solid background for all "surface" cards/menus (matches your design)
+    document.documentElement.style.setProperty(
+      '--co-surface-opaque-color',
+      next === 'dark' ? '#0f172a' : '#ffffff'
+    );
+  };
+
   const applyTheme = (next: 'light' | 'dark') => {
+    setTheme(next);             // context
+    setDomTheme(next);          // DOM attributes/vars
+    window.dispatchEvent(new CustomEvent('co:set-theme', { detail: { theme: next } }));
     try {
-      setTheme(next); // update context
-      // update <html data-theme="..."> so Tailwind/CSS can react
-      document.documentElement.setAttribute('data-theme', next);
-      // optional body hook for any styles that target it
-      document.body.setAttribute('data-theme', next);
-      // let any listeners react (keeps compatibility with prior implementations)
-      window.dispatchEvent(new CustomEvent('co:set-theme', { detail: { theme: next } }));
-      // persist between reloads (safe no-op if unused elsewhere)
-      try {
-        localStorage.setItem('co-theme', next);
-      } catch {}
+      localStorage.setItem('co-theme', next);
     } catch {}
   };
 
-  // Ensure the DOM attribute matches context on mount + whenever theme changes
+  // keep DOM in sync with context
   useEffect(() => {
     if (theme === 'light' || theme === 'dark') {
-      document.documentElement.setAttribute('data-theme', theme);
-      document.body.setAttribute('data-theme', theme);
+      setDomTheme(theme);
     }
   }, [theme]);
 
-  // ---- unread counts ----
+  // inject one-time CSS override that makes *all* "surface" cards solid
+  useEffect(() => {
+    let styleEl = document.getElementById('co-solid-surfaces') as HTMLStyleElement | null;
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'co-solid-surfaces';
+      styleEl.textContent = `
+        /* Make any card/menu using these utility classes fully opaque everywhere */
+        body .bg-surface,
+        body .bg-surface-light {
+          background-color: var(--co-surface-opaque-color) !important;
+          -webkit-backdrop-filter: none !important;
+          backdrop-filter: none !important;
+        }
+      `;
+      document.head.appendChild(styleEl);
+    }
+    // ensure the CSS var is set right now
+    setDomTheme(theme === 'dark' ? 'dark' : 'light');
+  }, []); // run once
+
+  // ---------- unread counts ----------
   const unreadMessageSenders = new Set(
     notifications
       .filter(
@@ -79,7 +102,6 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       .map((n) => n.actorId),
   );
   const unreadMessagesCount = unreadMessageSenders.size;
-
   const otherUnreadCount = notifications.filter(
     (n) =>
       currentUser &&
@@ -88,7 +110,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       !n.isRead,
   ).length;
 
-  // ---- close menu if clicking outside ----
+  // ---------- close menu if clicking outside ----------
   useEffect(() => {
     const handleInteractionOutside = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
@@ -341,7 +363,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                 viewBox="0 0 20 20"
                 aria-hidden="true"
               >
-                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
+                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
             </button>
 
