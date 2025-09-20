@@ -41,7 +41,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // --- unread counts ---
+  // unread counts
   const unreadMessageSenders = new Set(
     notifications
       .filter(
@@ -63,7 +63,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       !n.isRead,
   ).length;
 
-  // --- close menu when clicking/touching outside ---
+  // close menu if clicking outside
   useEffect(() => {
     const handleInteractionOutside = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
@@ -320,11 +320,13 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
               </svg>
             </button>
 
-            {/* SETTINGS MENU — fully opaque */}
+            {/* SETTINGS MENU — forced fully opaque background */}
             {isSettingsOpen && (
               <div
                 role="menu"
-                className="absolute bottom-full mb-2 w-full rounded-lg shadow-2xl z-50 bg-background border border-surface"
+                className="absolute bottom-full mb-2 w-full rounded-lg shadow-2xl z-50 border border-surface overflow-hidden"
+                // Force a fully opaque background regardless of theme tokens
+                style={{ backgroundColor: theme === 'dark' ? '#0f172a' : '#ffffff' }}
               >
                 {/* Theme quick switcher */}
                 <div className="w-full text-left px-4 py-2 text-sm text-text-primary flex justify-between items-center">
@@ -406,7 +408,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                   Send Feedback
                 </button>
 
-                {/* Theme toggle (global event) */}
+                {/* Theme toggle (global) */}
                 <button
                   type="button"
                   className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface-light flex items-center gap-2"
