@@ -209,7 +209,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             CO
           </div>
 
-          <nav className="mt-8 flex flex-col w-full items-center lg:items-stretch">
+        <nav className="mt-8 flex flex-col w-full items-center lg:items-stretch">
             <NavItem label="Home" iconKey="home" page="feed" />
             <NavItem label="Explore" iconKey="explore" page="explore" />
             <NavItem label="Opportunities" iconKey="collaborations" page="collaborations" />
@@ -320,68 +320,49 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
               </svg>
             </button>
 
-            {/* SETTINGS MENU — forced fully opaque background */}
+            {/* SETTINGS MENU — compact, solid, and only global theme change */}
             {isSettingsOpen && (
               <div
                 role="menu"
-                className="absolute bottom-full mb-2 w-full rounded-lg shadow-2xl z-50 border border-surface overflow-hidden"
-                // Force a fully opaque background regardless of theme tokens
-                style={{ backgroundColor: theme === 'dark' ? '#0f172a' : '#ffffff' }}
+                className="absolute bottom-full mb-2 w-full rounded-xl shadow-2xl z-50 border border-surface overflow-hidden"
+                style={{ backgroundColor: theme === 'dark' ? '#0f172a' : '#ffffff' }} // fully opaque
               >
-                {/* Theme quick switcher */}
-                <div className="w-full text-left px-4 py-2 text-sm text-text-primary flex justify-between items-center">
-                  <span>Theme</span>
-                  <div className="flex items-center rounded-full p-0.5 bg-surface">
+                {/* Theme row */}
+                <div className="flex items-center justify-between px-4 py-3">
+                  <span className="text-sm text-text-primary">Theme</span>
+                  <div className="flex items-center gap-1 rounded-full bg-surface p-0.5">
                     <button
-                      onClick={() => setTheme('light')}
+                      type="button"
+                      aria-label="Light theme"
+                      className={`h-7 w-7 rounded-full flex items-center justify-center ${
+                        theme === 'light' ? 'bg-primary text-white' : 'text-text-secondary'
+                      }`}
+                      onClick={() => setTheme('light')} // updates entire app
                       onTouchEnd={(e) => {
                         e.preventDefault();
                         setTheme('light');
                       }}
-                      aria-label="Switch to light theme"
-                      className={`p-1 rounded-full ${
-                        theme === 'light' ? 'bg-primary text-white' : 'text-text-secondary'
-                      }`}
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"
-                        />
+                      {/* sun */}
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
                       </svg>
                     </button>
                     <button
-                      onClick={() => setTheme('dark')}
+                      type="button"
+                      aria-label="Dark theme"
+                      className={`h-7 w-7 rounded-full flex items-center justify-center ${
+                        theme === 'dark' ? 'bg-primary text-white' : 'text-text-secondary'
+                      }`}
+                      onClick={() => setTheme('dark')} // updates entire app
                       onTouchEnd={(e) => {
                         e.preventDefault();
                         setTheme('dark');
                       }}
-                      aria-label="Switch to dark theme"
-                      className={`p-1 rounded-full ${
-                        theme === 'dark' ? 'bg-primary text-white' : 'text-text-secondary'
-                      }`}
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"
-                        />
+                      {/* moon */}
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
                       </svg>
                     </button>
                   </div>
@@ -402,26 +383,13 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                     onOpenFeedbackModal();
                     setIsSettingsOpen(false);
                   }}
-                  className="w-full text-left px-4 py-2 text-sm text-text-primary hover:bg-surface-light"
+                  className="w-full text-left px-4 py-3 text-sm text-text-primary hover:bg-surface-light"
                   role="menuitem"
                 >
                   Send Feedback
                 </button>
 
-                {/* Theme toggle (global) */}
-                <button
-                  type="button"
-                  className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface-light flex items-center gap-2"
-                  onClick={() => window.dispatchEvent(new Event('co:toggle-theme'))}
-                  onTouchEnd={(e) => {
-                    e.preventDefault();
-                    window.dispatchEvent(new Event('co:toggle-theme'));
-                  }}
-                  role="menuitem"
-                >
-                  <span aria-hidden="true">🌓</span>
-                  <span>Theme</span>
-                </button>
+                <div className="border-t border-surface/70" />
 
                 {/* Log out */}
                 <button
@@ -435,7 +403,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                     logout();
                     setIsSettingsOpen(false);
                   }}
-                  className="w-full text-left px-4 py-2 text-sm text-primary hover:bg-surface-light"
+                  className="w-full text-left px-4 py-3 text-sm text-primary hover:bg-surface-light"
                   role="menuitem"
                 >
                   Log out @{currentUser.username}
