@@ -18,10 +18,8 @@
   "start_url": ".",
   "display": "standalone",
   "orientation": "portrait",
-  "theme_color": "#6C2BD9",
+  "theme_color": "#6C28D9",
   "background_color": "#101010"
 }
-git add manifest.json
-git commit -m "Update manifest to use new CO icons"
-git push
+
 

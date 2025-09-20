@@ -16,8 +16,29 @@ import ResetPasswordSent from './pages/ResetPasswordSent';
 import Admin from './pages/Admin';
 import InterestedUsers from './pages/InterestedUsers';
 import { ICONS } from './constants';
-import { Collaboration, User, Notification, PushSubscriptionObject } from './types';
+import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
+
+// === Theme wiring (start) ===
+const THEME_KEY = 'co-theme';
+type Theme = 'light' | 'dark';
+
+function applyTheme(theme: Theme) {
+  const root = document.documentElement;           // <html>
+  root.classList.toggle('dark', theme === 'dark'); // Tailwind dark mode
+  root.setAttribute('data-theme', theme);          // DaisyUI theme
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+function useThemeBoot() {
+  // If your file already imports `useEffect` from 'react', this works as-is.
+  // (If not, change to React.useEffect(...) or add the import.)
+  useEffect(() => {
+    const saved = (localStorage.getItem(THEME_KEY) as Theme) ?? 'dark';
+    applyTheme(saved);
+  }, []);
+}
+// === Theme wiring (end) ===
 
 
 // --- Web Push Notification Service ---
@@ -656,10 +677,36 @@ const AppContent: React.FC = () => {
     );
 };
 
-const AppWrapper: React.FC = () => (
+const AppWrapper: React.FC = () => {
+  // run once on mount to apply saved theme (default 'dark')
+  useThemeBoot();
+
+  // click handler to flip light/dark
+  const toggleTheme = React.useCallback(() => {
+    const current = (localStorage.getItem(THEME_KEY) as Theme) ?? 'dark';
+    applyTheme(current === 'dark' ? 'light' : 'dark');
+  }, []);
+
+  // listen for global toggle requests (from the sidebar/menu)
+  React.useEffect(() => {
+    const handler = () => toggleTheme();
+    window.addEventListener('co:toggle-theme', handler);
+    return () => window.removeEventListener('co:toggle-theme', handler);
+  }, [toggleTheme]);
+
+  return (
     <AppProvider>
-        <AppContent />
+      <AppContent />
+
+      {/* TEMP button to verify; remove later */}
+      <button
+        className="btn btn-sm fixed bottom-4 right-4 z-50"
+        onClick={toggleTheme}
+      >
+        Theme
+      </button>
     </AppProvider>
-);
+  );
+};
 
 export default AppWrapper;
