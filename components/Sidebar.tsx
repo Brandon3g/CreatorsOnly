@@ -11,6 +11,7 @@ type NavItemProps = {
 };
 
 type MobileNavItemProps = {
+  label?: string;
   iconKey: string;
   page: Page;
   notificationCount?: number;
@@ -111,6 +112,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   };
 
   const MobileNavItem: React.FC<MobileNavItemProps> = ({
+    label,
     iconKey,
     page,
     notificationCount = 0,
@@ -136,7 +138,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           e.preventDefault();
           handleClick();
         }}
-        aria-label={page}
+        aria-label={label || page}
         className={`flex flex-col items-center justify-center w-full h-full transition-colors duration-200 ${
           isActive ? 'text-primary' : 'text-text-secondary hover:text-text-primary'
         }`}
@@ -181,8 +183,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       } else {
         throw new Error('Web Share API not supported');
       }
-    } catch (error) {
-      console.log('Sharing failed, copying to clipboard as a fallback', error);
+    } catch {
       navigator.clipboard.writeText(shareUrl).then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -242,7 +243,9 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           </nav>
         </div>
 
+        {/* Bottom section */}
         <div className="w-full">
+          {/* Create button */}
           <button
             onClick={() => openCreateModal('post')}
             onTouchEnd={(e) => {
@@ -261,6 +264,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
               openCreateModal('post');
             }}
             className="w-12 h-12 bg-primary hover:bg-primary-hover text-white font-bold rounded-full flex items-center justify-center lg:hidden"
+            aria-label="Create"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -273,8 +277,38 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             </svg>
           </button>
 
-          {/* User Menu / Settings */}
+          {/* User card (menu trigger) */}
           <div className="mt-4 relative" ref={settingsRef}>
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen((v) => !v)}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                setIsSettingsOpen((v) => !v);
+              }}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-surface-light transition-colors duration-200"
+              aria-haspopup="menu"
+              aria-expanded={isSettingsOpen}
+            >
+              <div className="flex items-center min-w-0">
+                <img
+                  src={currentUser.avatar}
+                  alt={currentUser.name}
+                  className="h-10 w-10 rounded-full object-cover"
+                />
+                <div className="ml-3 hidden lg:block min-w-0">
+                  <div className="text-sm font-medium truncate">{currentUser.name}</div>
+                  <div className="text-xs text-text-secondary truncate">@{currentUser.username}</div>
+                </div>
+              </div>
+              <span className="ml-2 hidden lg:inline">
+                {React.cloneElement(ICONS.more as React.ReactElement<{ className: string }>, {
+                  className: 'h-5 w-5',
+                })}
+              </span>
+            </button>
+
+            {/* Settings / quick actions menu */}
             {isSettingsOpen && (
               <div className="absolute bottom-full mb-2 w-full bg-surface-light rounded-lg shadow-lg py-1 z-50">
                 {/* Theme quick switcher */}
@@ -336,7 +370,6 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                   </div>
                 </div>
 
-                {/* divider */}
                 <div className="border-t border-surface my-1" />
 
                 {/* Send Feedback */}
@@ -405,7 +438,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           notificationCount={unreadMessagesCount}
         />
         {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
-        <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile={true} />
+        <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
       </nav>
     </>
   );
