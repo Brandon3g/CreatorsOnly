@@ -11,7 +11,7 @@ type NavItemProps = {
 };
 
 type MobileNavItemProps = {
-  label?: string; // for accessibility on mobile
+  label?: string; // accessibility label for mobile buttons
   iconKey: string;
   page: Page;
   notificationCount?: number;
@@ -63,7 +63,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       !n.isRead,
   ).length;
 
-  // --- close menu when clicking outside ---
+  // --- close menu when clicking/touching outside ---
   useEffect(() => {
     const handleInteractionOutside = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
@@ -320,16 +320,16 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
               </svg>
             </button>
 
-            {/* SETTINGS MENU (now opaque) */}
+            {/* SETTINGS MENU — fully opaque */}
             {isSettingsOpen && (
               <div
                 role="menu"
-                className="absolute bottom-full mb-2 w-full rounded-lg shadow-xl z-50 bg-surface border border-surface"
+                className="absolute bottom-full mb-2 w-full rounded-lg shadow-2xl z-50 bg-background border border-surface"
               >
                 {/* Theme quick switcher */}
                 <div className="w-full text-left px-4 py-2 text-sm text-text-primary flex justify-between items-center">
                   <span>Theme</span>
-                  <div className="flex items-center rounded-full p-0.5 bg-background">
+                  <div className="flex items-center rounded-full p-0.5 bg-surface">
                     <button
                       onClick={() => setTheme('light')}
                       onTouchEnd={(e) => {
