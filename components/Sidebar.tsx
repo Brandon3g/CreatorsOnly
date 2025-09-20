@@ -41,7 +41,32 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // unread counts
+  // ---- Global theme application helper ----
+  const applyTheme = (next: 'light' | 'dark') => {
+    try {
+      setTheme(next); // update context
+      // update <html data-theme="..."> so Tailwind/CSS can react
+      document.documentElement.setAttribute('data-theme', next);
+      // optional body hook for any styles that target it
+      document.body.setAttribute('data-theme', next);
+      // let any listeners react (keeps compatibility with prior implementations)
+      window.dispatchEvent(new CustomEvent('co:set-theme', { detail: { theme: next } }));
+      // persist between reloads (safe no-op if unused elsewhere)
+      try {
+        localStorage.setItem('co-theme', next);
+      } catch {}
+    } catch {}
+  };
+
+  // Ensure the DOM attribute matches context on mount + whenever theme changes
+  useEffect(() => {
+    if (theme === 'light' || theme === 'dark') {
+      document.documentElement.setAttribute('data-theme', theme);
+      document.body.setAttribute('data-theme', theme);
+    }
+  }, [theme]);
+
+  // ---- unread counts ----
   const unreadMessageSenders = new Set(
     notifications
       .filter(
@@ -63,7 +88,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       !n.isRead,
   ).length;
 
-  // close menu if clicking outside
+  // ---- close menu if clicking outside ----
   useEffect(() => {
     const handleInteractionOutside = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
@@ -209,7 +234,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             CO
           </div>
 
-        <nav className="mt-8 flex flex-col w-full items-center lg:items-stretch">
+          <nav className="mt-8 flex flex-col w-full items-center lg:items-stretch">
             <NavItem label="Home" iconKey="home" page="feed" />
             <NavItem label="Explore" iconKey="explore" page="explore" />
             <NavItem label="Opportunities" iconKey="collaborations" page="collaborations" />
@@ -320,7 +345,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
               </svg>
             </button>
 
-            {/* SETTINGS MENU — compact, solid, and only global theme change */}
+            {/* SETTINGS MENU — compact, solid, and global theme change */}
             {isSettingsOpen && (
               <div
                 role="menu"
@@ -337,10 +362,10 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                       className={`h-7 w-7 rounded-full flex items-center justify-center ${
                         theme === 'light' ? 'bg-primary text-white' : 'text-text-secondary'
                       }`}
-                      onClick={() => setTheme('light')} // updates entire app
+                      onClick={() => applyTheme('light')}
                       onTouchEnd={(e) => {
                         e.preventDefault();
-                        setTheme('light');
+                        applyTheme('light');
                       }}
                     >
                       {/* sun */}
@@ -354,10 +379,10 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
                       className={`h-7 w-7 rounded-full flex items-center justify-center ${
                         theme === 'dark' ? 'bg-primary text-white' : 'text-text-secondary'
                       }`}
-                      onClick={() => setTheme('dark')} // updates entire app
+                      onClick={() => applyTheme('dark')}
                       onTouchEnd={(e) => {
                         e.preventDefault();
-                        setTheme('dark');
+                        applyTheme('dark');
                       }}
                     >
                       {/* moon */}
