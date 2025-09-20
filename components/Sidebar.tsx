@@ -11,7 +11,7 @@ type NavItemProps = {
 };
 
 type MobileNavItemProps = {
-  label?: string; // accessibility label for mobile buttons
+  label?: string; // accessibility for mobile
   iconKey: string;
   page: Page;
   notificationCount?: number;
@@ -41,51 +41,84 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  // ---------- GLOBAL THEME APPLICATION + SOLID SURFACE OVERRIDE ----------
+  // ---------- GLOBAL THEME + SOLID SURFACE OVERRIDES ----------
   const setDomTheme = (next: 'light' | 'dark') => {
     document.documentElement.setAttribute('data-theme', next);
     document.body.setAttribute('data-theme', next);
-    // solid background for all "surface" cards/menus (matches your design)
-    document.documentElement.style.setProperty(
-      '--co-surface-opaque-color',
-      next === 'dark' ? '#0f172a' : '#ffffff'
-    );
+
+    // Solid color tokens for cards/menus
+    const vars =
+      next === 'dark'
+        ? {
+            surface: '#0f172a', // slate-900-ish
+            foreground: '#e5e7eb', // gray-200
+            border: '#1f2937', // gray-800
+            hover: '#111827', // gray-900
+            shadow: '0 14px 30px rgba(0,0,0,.40)',
+          }
+        : {
+            surface: '#ffffff',
+            foreground: '#111827', // gray-900
+            border: '#e5e7eb', // gray-200
+            hover: '#f3f4f6', // gray-100
+            shadow: '0 10px 25px rgba(0,0,0,.08)',
+          };
+
+    document.documentElement.style.setProperty('--co-surface-opaque-color', vars.surface);
+    document.documentElement.style.setProperty('--co-surface-foreground-color', vars.foreground);
+    document.documentElement.style.setProperty('--co-surface-border-color', vars.border);
+    document.documentElement.style.setProperty('--co-surface-hover-color', vars.hover);
+    document.documentElement.style.setProperty('--co-surface-shadow', vars.shadow);
   };
 
   const applyTheme = (next: 'light' | 'dark') => {
-    setTheme(next);             // context
-    setDomTheme(next);          // DOM attributes/vars
+    setTheme(next); // context
+    setDomTheme(next); // DOM attributes + CSS vars
     window.dispatchEvent(new CustomEvent('co:set-theme', { detail: { theme: next } }));
     try {
       localStorage.setItem('co-theme', next);
     } catch {}
   };
 
-  // keep DOM in sync with context
+  // Sync DOM with context on mount/changes
   useEffect(() => {
-    if (theme === 'light' || theme === 'dark') {
-      setDomTheme(theme);
-    }
+    setDomTheme(theme === 'dark' ? 'dark' : 'light');
   }, [theme]);
 
-  // inject one-time CSS override that makes *all* "surface" cards solid
+  // One-time global CSS to harden ALL "surface" cards/menus app-wide
   useEffect(() => {
     let styleEl = document.getElementById('co-solid-surfaces') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
       styleEl.id = 'co-solid-surfaces';
       styleEl.textContent = `
-        /* Make any card/menu using these utility classes fully opaque everywhere */
+        /* Solidify ALL contextual cards/menus everywhere */
         body .bg-surface,
         body .bg-surface-light {
           background-color: var(--co-surface-opaque-color) !important;
+          color: var(--co-surface-foreground-color) !important;
+          border: 1px solid var(--co-surface-border-color) !important;
+          box-shadow: var(--co-surface-shadow) !important;
           -webkit-backdrop-filter: none !important;
           backdrop-filter: none !important;
+        }
+        /* Improve readability inside menus */
+        body .bg-surface .text-text-primary,
+        body .bg-surface-light .text-text-primary,
+        body .bg-surface .text-text-secondary,
+        body .bg-surface-light .text-text-secondary {
+          color: var(--co-surface-foreground-color) !important;
+        }
+        /* Reliable hover for rows inside menus */
+        body .hover\\:bg-surface-light:hover,
+        body .bg-surface .hover\\:bg-surface-light:hover,
+        body .bg-surface-light .hover\\:bg-surface-light:hover {
+          background-color: var(--co-surface-hover-color) !important;
         }
       `;
       document.head.appendChild(styleEl);
     }
-    // ensure the CSS var is set right now
+    // Ensure vars are initialized
     setDomTheme(theme === 'dark' ? 'dark' : 'light');
   }, []); // run once
 
@@ -102,6 +135,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       .map((n) => n.actorId),
   );
   const unreadMessagesCount = unreadMessageSenders.size;
+
   const otherUnreadCount = notifications.filter(
     (n) =>
       currentUser &&
@@ -110,7 +144,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       !n.isRead,
   ).length;
 
-  // ---------- close menu if clicking outside ----------
+  // ---------- close user menu when clicking outside ----------
   useEffect(() => {
     const handleInteractionOutside = (event: MouseEvent | TouchEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
