@@ -1,463 +1,661 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { useAppContext } from '../context/AppContext';
-import { ICONS } from '../constants';
-import { Page, NotificationType } from '../types';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { AppProvider, useAppContext } from './context/AppContext';
+import Sidebar from './components/Sidebar';
+import Feed from './pages/Feed';
+import Explore from './pages/Explore';
+import NotificationsPage from './pages/Notifications';
+import Messages from './pages/Messages';
+import Search from './pages/Search';
+import Profile from './pages/Profile';
+import RightSidebar from './components/RightSidebar';
+import Collaborations from './pages/Collaborations';
+import Login from './pages/Login';
+import ProfileSetup from './pages/ProfileSetup';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPasswordSent from './pages/ResetPasswordSent';
+import Admin from './pages/Admin';
+import InterestedUsers from './pages/InterestedUsers';
+import { ICONS } from './constants';
+import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
+import { trackEvent } from './services/analytics';
 
-type NavItemProps = {
-  label: string;
-  iconKey: string;
-  page: Page;
-  notificationCount?: number;
+const THEME_KEY = 'co-theme';
+type Theme = 'light' | 'dark';
+
+function applyTheme(theme: Theme) {
+  const root = document.documentElement;
+  root.classList.toggle('dark', theme === 'dark');
+  root.setAttribute('data-theme', theme);
+  localStorage.setItem(THEME_KEY, theme);
+}
+
+function useThemeBoot() {
+  useEffect(() => {
+    const saved = (localStorage.getItem(THEME_KEY) as Theme) ?? 'dark';
+    applyTheme(saved);
+  }, []);
+}
+
+const VAPID_PUBLIC_KEY = 'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
+
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+const requestNotificationPermission = async (subscribeFn: (sub: PushSubscriptionObject) => void) => {
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
+  const permission = await Notification.requestPermission();
+  if (permission === 'granted') {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+      const subJson = subscription.toJSON();
+      const subscriptionObject: PushSubscriptionObject = {
+        endpoint: subJson.endpoint!,
+        keys: { p256dh: subJson.keys!.p256dh!, auth: subJson.keys!.auth! },
+      };
+      subscribeFn(subscriptionObject);
+    } catch (error) {
+      console.error('Failed to subscribe to push notifications:', error);
+    }
+  }
 };
 
-type MobileNavItemProps = {
-  label?: string;
-  iconKey: string;
-  page: Page;
-  notificationCount?: number;
-  isProfile?: boolean;
+type ToastProps = { notification: Notification | null; onClose: () => void; };
+
+const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
+  const { getUserById, navigate } = useAppContext();
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    if (notification) {
+      setIsVisible(true);
+      const t = setTimeout(() => handleClose(), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [notification]);
+
+  const handleClose = () => {
+    setIsVisible(false);
+    setTimeout(onClose, 300);
+  };
+
+  if (!notification) return null;
+  const actor = getUserById(notification.actorId);
+  if (!actor) return null;
+
+  const getIcon = () => {
+    switch (notification.type) {
+      case 'FRIEND_REQUEST': return ICONS.plus;
+      case 'FRIEND_REQUEST_ACCEPTED': return ICONS.verified;
+      case 'NEW_MESSAGE': return ICONS.messages;
+      case 'POST_LIKE': return ICONS.like;
+      default: return ICONS.notifications;
+    }
+  };
+
+  const openNotifications = () => { navigate('notifications'); handleClose(); };
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+
+  return (
+    <div
+      onPointerUp={openNotifications}
+      className={`fixed top-4 right-4 w-full max-w-sm bg-surface shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden z-[200] transition-all duration-300 ease-in-out cursor-pointer
+      ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}`}
+    >
+      <div className="p-4">
+        <div className="flex items-start">
+          <div className="flex-shrink-0 text-primary">{getIcon()}</div>
+          <div className="ml-3 w-0 flex-1 pt-0.5">
+            <p className="text-sm font-medium text-text-primary">{actor.name}</p>
+            <p className="mt-1 text-sm text-text-secondary">{notification.message}</p>
+          </div>
+          <div className="ml-4 flex-shrink-0 flex">
+            <button
+              onPointerUp={(e) => { stop(e); handleClose(); }}
+              className="rounded-md inline-flex text-text-secondary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+              aria-label="Close"
+            >
+              {ICONS.close}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };
 
-type SidebarProps = {
-  openCreateModal: (initialTab?: 'post' | 'project') => void;
-  onOpenFeedbackModal: () => void;
+type CreateModalProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  initialTab?: 'post' | 'project';
+  editingCollaboration?: Collaboration | null;
 };
 
-const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal }) => {
+const CreateModal: React.FC<CreateModalProps> = ({
+  isOpen,
+  onClose,
+  initialTab = 'post',
+  editingCollaboration,
+}) => {
+  const { addPost, addCollaboration, updateCollaboration, navigate, users, currentUser } = useAppContext();
+  const [activeTab, setActiveTab] = useState(initialTab);
+
+  const [postContent, setPostContent] = useState('');
+  const [postImage, setPostImage] = useState<string | null>(null);
+  const postImageInputRef = useRef<HTMLInputElement>(null);
+  const postTextAreaRef = useRef<HTMLTextAreaElement>(null);
+
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<User[]>([]);
+
+  const [projectTitle, setProjectTitle] = useState('');
+  const [projectDesc, setProjectDesc] = useState('');
+  const [projectImage, setProjectImage] = useState<string | null>(null);
+  const projectImageInputRef = useRef<HTMLInputElement>(null);
+
+  const isEditing = !!editingCollaboration;
+
+  useEffect(() => {
+    if (isOpen) {
+      if (editingCollaboration) {
+        setActiveTab('project');
+        setProjectTitle(editingCollaboration.title);
+        setProjectDesc(editingCollaboration.description);
+        setProjectImage(editingCollaboration.image || null);
+      } else {
+        setActiveTab(initialTab);
+      }
+    } else {
+      setPostContent('');
+      setPostImage(null);
+      setProjectTitle('');
+      setProjectDesc('');
+      setProjectImage(null);
+      setMentionQuery(null);
+      setSuggestions([]);
+    }
+  }, [isOpen, initialTab, editingCollaboration]);
+
+  useEffect(() => {
+    if (mentionQuery === null) { setSuggestions([]); return; }
+    if (!currentUser) return;
+    const filtered = users
+      .filter(u =>
+        u.id !== currentUser.id &&
+        (u.username.toLowerCase().includes(mentionQuery.toLowerCase()) ||
+         u.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+      )
+      .slice(0, 5);
+    setSuggestions(filtered);
+  }, [mentionQuery, users, currentUser]);
+
+  if (!isOpen) return null;
+
+  const handlePostSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (postContent.trim() || postImage) {
+      addPost(postContent, postImage || undefined);
+      onClose();
+      navigate('feed');
+    }
+  };
+
+  const handleProjectSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (projectTitle.trim() && projectDesc.trim()) {
+      if (isEditing && editingCollaboration) {
+        const updated: Collaboration = {
+          ...editingCollaboration,
+          title: projectTitle,
+          description: projectDesc,
+          image: projectImage || undefined,
+        };
+        updateCollaboration(updated);
+      } else {
+        const newCollab: Omit<Collaboration, 'id' | 'authorId' | 'timestamp' | 'interestedUserIds'> = {
+          title: projectTitle,
+          description: projectDesc,
+          image: projectImage || undefined,
+          status: 'open',
+        };
+        addCollaboration(newCollab);
+      }
+      onClose();
+      if (currentUser) navigate('profile', { viewingProfileId: currentUser.id });
+    }
+  };
+
+  const handlePostImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const reader = new FileReader();
+      reader.onload = (event) => setPostImage(event.target?.result as string);
+      reader.readAsDataURL(e.target.files[0]);
+    }
+  };
+
+  const handleProjectImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const reader = new FileReader();
+      reader.onload = (event) => setProjectImage(event.target?.result as string);
+      reader.readAsDataURL(e.target.files[0]);
+    }
+  };
+
+  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    setPostContent(text);
+    const caret = e.target.selectionStart;
+    const before = text.substring(0, caret);
+    const at = before.match(/@(\w+)$/);
+    if (at) setMentionQuery(at[1]); else setMentionQuery(null);
+  };
+
+  const handleSelectMention = (username: string) => {
+    const textarea = postTextAreaRef.current;
+    if (!textarea) return;
+    const text = textarea.value;
+    const caret = textarea.selectionStart;
+    const before = text.substring(0, caret);
+    const at = before.match(/@(\w+)$/);
+    if (at) {
+      const start = at.index || 0;
+      const newText = text.substring(0, start) + `@${username} ` + text.substring(caret);
+      setPostContent(newText);
+      const newCaret = start + `@${username} `.length;
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(newCaret, newCaret);
+      }, 0);
+    }
+    setMentionQuery(null);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onPointerUp={onClose}>
+      <div className="bg-surface rounded-2xl w-full max-w-lg relative" onPointerUp={(e) => e.stopPropagation()}>
+        <button onPointerUp={onClose} className="absolute top-4 right-4 text-text-secondary hover:text-text-primary" aria-label="Close">
+          {ICONS.close}
+        </button>
+
+        <div className="flex border-b border-surface-light">
+          {!isEditing && (
+            <button
+              onPointerUp={() => setActiveTab('post')}
+              className={`flex-1 p-4 font-bold ${activeTab === 'post' ? 'text-primary border-b-2 border-primary' : 'text-text-secondary'}`}
+            >
+              Create Post
+            </button>
+          )}
+          <button
+            onPointerUp={() => setActiveTab('project')}
+            className={`flex-1 p-4 font-bold ${activeTab === 'project' ? 'text-primary border-b-2 border-primary' : 'text-text-secondary'}`}
+          >
+            {isEditing ? 'Edit Opportunity' : 'Post Opportunity'}
+          </button>
+        </div>
+
+        <div className="p-6">
+          {activeTab === 'post' && !isEditing ? (
+            <form onSubmit={handlePostSubmit}>
+              <div className="relative">
+                <textarea
+                  ref={postTextAreaRef}
+                  value={postContent}
+                  onChange={handleContentChange}
+                  onBlur={() => setTimeout(() => setMentionQuery(null), 200)}
+                  placeholder="What's happening? Mention others with @"
+                  className="w-full h-32 bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                />
+                {suggestions.length > 0 && (
+                  <div className="absolute top-full left-0 w-full bg-surface rounded-md shadow-lg border border-surface-light mt-1 z-20 max-h-48 overflow-y-auto">
+                    {suggestions.map(user => (
+                      <div
+                        key={user.id}
+                        onPointerUp={() => handleSelectMention(user.username)}
+                        className="flex items-center space-x-3 p-2 hover:bg-surface-light cursor-pointer"
+                      >
+                        <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full" />
+                        <div>
+                          <p className="font-bold text-sm">{user.name}</p>
+                          <p className="text-xs text-text-secondary">@{user.username}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {postImage && (
+                <div className="mt-4 relative">
+                  <img src={postImage} alt="Preview" className="rounded-lg object-contain w-full max-h-80" />
+                  <button
+                    onPointerUp={() => setPostImage(null)}
+                    className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
+                    aria-label="Remove image"
+                  >
+                    {ICONS.close}
+                  </button>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center mt-4">
+                <input type="file" ref={postImageInputRef} onChange={handlePostImageChange} accept="image/*" className="hidden" />
+                <button type="button" onPointerUp={() => postImageInputRef.current?.click()} className="text-primary hover:text-primary-hover" aria-label="Add photo">
+                  {ICONS.camera}
+                </button>
+                <button
+                  type="submit"
+                  className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50"
+                  disabled={!postContent.trim() && !postImage}
+                >
+                  Post
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleProjectSubmit} className="space-y-4">
+              <div>
+                <label className="text-sm text-text-secondary">Opportunity Title</label>
+                <input
+                  type="text"
+                  value={projectTitle}
+                  onChange={(e) => setProjectTitle(e.target.value)}
+                  className="w-full bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-text-secondary">Description</label>
+                <textarea
+                  value={projectDesc}
+                  onChange={(e) => setProjectDesc(e.target.value)}
+                  className="w-full h-24 bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                />
+              </div>
+
+              {projectImage && (
+                <div className="relative">
+                  <img src={projectImage} alt="Preview" className="rounded-lg object-contain w-full max-h-80" />
+                  <button
+                    onPointerUp={() => setProjectImage(null)}
+                    className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
+                    aria-label="Remove image"
+                  >
+                    {ICONS.close}
+                  </button>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center pt-2">
+                <input type="file" ref={projectImageInputRef} onChange={handleProjectImageChange} accept="image/*" className="hidden" />
+                <button type="button" onPointerUp={() => projectImageInputRef.current?.click()} className="text-primary hover:text-primary-hover" aria-label="Add photo for opportunity">
+                  {ICONS.camera}
+                </button>
+                <button
+                  type="submit"
+                  className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50"
+                  disabled={!projectTitle.trim() || !projectDesc.trim()}
+                >
+                  {isEditing ? 'Save Changes' : 'Post Opportunity'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+type FeedbackModalProps = { isOpen: boolean; onClose: () => void; };
+
+const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
+  const { sendFeedback } = useAppContext();
+  const [feedbackType, setFeedbackType] = useState<'Bug Report' | 'Suggestion'>('Suggestion');
+  const [feedbackContent, setFeedbackContent] = useState('');
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (feedbackContent.trim()) {
+      sendFeedback(feedbackContent, feedbackType);
+      setFeedbackContent('');
+      onClose();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onPointerUp={onClose}>
+      <div className="bg-surface rounded-2xl w-full max-w-md relative" onPointerUp={(e) => e.stopPropagation()}>
+        <button onPointerUp={onClose} className="absolute top-4 right-4 text-text-secondary hover:text-text-primary" aria-label="Close">
+          {ICONS.close}
+        </button>
+        <div className="p-6">
+          <h2 className="text-xl font-bold mb-4">Send Feedback</h2>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="text-sm text-text-secondary">Feedback Type</label>
+              <div className="flex space-x-4 mt-2">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="feedbackType"
+                    value="Suggestion"
+                    checked={feedbackType === 'Suggestion'}
+                    onChange={(e) => setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')}
+                    className="form-radio bg-surface-light border-surface-light text-primary focus:ring-primary"
+                  />
+                  <span>Suggestion</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="feedbackType"
+                    value="Bug Report"
+                    checked={feedbackType === 'Bug Report'}
+                    onChange={(e) => setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')}
+                    className="form-radio bg-surface-light border-surface-light text-primary focus:ring-primary"
+                  />
+                  <span>Bug Report</span>
+                </label>
+              </div>
+            </div>
+            <div>
+              <label htmlFor="feedbackContent" className="text-sm text-text-secondary">Details</label>
+              <textarea
+                id="feedbackContent"
+                value={feedbackContent}
+                onChange={(e) => setFeedbackContent(e.target.value)}
+                placeholder={`Enter your ${feedbackType.toLowerCase()}...`}
+                className="w-full h-32 bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none mt-1"
+                required
+              />
+            </div>
+            <div className="flex justify-end">
+              <button type="submit" className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50" disabled={!feedbackContent.trim()}>
+                Send Feedback
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const AppContent: React.FC = () => {
   const {
-    currentPage,
-    navigate,
-    currentUser,
-    viewProfile,
-    viewingProfileId,
-    logout,
-    isMasterUser,
-    theme,
-    setTheme,
-    notifications,
+    currentPage, viewingProfileId, isAuthenticated, isRegistering, registerScrollableNode,
+    currentUser, history, sendPasswordResetLink, subscribeToPushNotifications,
+    editingCollaborationId, setEditingCollaborationId, collaborations
   } = useAppContext();
 
-  const [copied, setCopied] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const settingsRef = useRef<HTMLDivElement>(null);
+  const mainContentRef = useRef<HTMLDivElement>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createModalInitialTab, setCreateModalInitialTab] = useState<'post' | 'project'>('post');
+  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
+  const [toastNotification, setToastNotification] = useState<Notification | null>(null);
 
-  // ---------- THEME + GLOBAL STYLE INJECTION ----------
-  const setDomTheme = (next: 'light' | 'dark') => {
-    document.documentElement.setAttribute('data-theme', next);
-    document.body.setAttribute('data-theme', next);
+  const [authStage, setAuthStage] = useState<'login' | 'forgot' | 'sent'>('login');
+  const [forgotEmail, setForgotEmail] = useState('');
 
-    if (next === 'dark') {
-      document.documentElement.style.setProperty('--co-bg', '#0B0B0E');
-      document.documentElement.style.setProperty('--co-fg', '#E5E7EB');
-      document.documentElement.style.setProperty('--co-fg-muted', '#9CA3AF');
-      document.documentElement.style.setProperty('--co-primary', '#7C3AED');
-      document.documentElement.style.setProperty('--co-primary-hover', '#6D28D9');
-      document.documentElement.style.setProperty('--co-surface-opaque-color', '#121214');
-      document.documentElement.style.setProperty('--co-surface-foreground-color', '#E5E7EB');
-      document.documentElement.style.setProperty('--co-surface-border-color', '#262626');
-      document.documentElement.style.setProperty('--co-surface-hover-color', '#1A1A1F');
-      document.documentElement.style.setProperty('--co-surface-shadow', '0 14px 30px rgba(0,0,0,.50)');
-    } else {
-      document.documentElement.style.setProperty('--co-bg', '#FFFFFF');
-      document.documentElement.style.setProperty('--co-fg', '#111827');
-      document.documentElement.style.setProperty('--co-fg-muted', '#6B7280');
-      document.documentElement.style.setProperty('--co-primary', '#7C3AED');
-      document.documentElement.style.setProperty('--co-primary-hover', '#6D28D9');
-      document.documentElement.style.setProperty('--co-surface-opaque-color', '#FFFFFF');
-      document.documentElement.style.setProperty('--co-surface-foreground-color', '#111827');
-      document.documentElement.style.setProperty('--co-surface-border-color', '#E5E7EB');
-      document.documentElement.style.setProperty('--co-surface-hover-color', '#F3F4F6');
-      document.documentElement.style.setProperty('--co-surface-shadow', '0 10px 25px rgba(0,0,0,.08)');
-    }
+  const editingCollab = collaborations.find(c => c.id === editingCollaborationId);
+  const isEditCollabModalOpen = !!editingCollab;
+
+  const openCreateModal = (initialTab: 'post' | 'project' = 'post') => {
+    setCreateModalInitialTab(initialTab);
+    setIsCreateModalOpen(true);
+    trackEvent('open_create_modal', { initialTab });
   };
 
-  const applyTheme = (next: 'light' | 'dark') => {
-    setTheme(next);
-    setDomTheme(next);
-    window.dispatchEvent(new CustomEvent('co:set-theme', { detail: { theme: next } }));
-    try {
-      localStorage.setItem('co-theme', next);
-    } catch {}
+  const handleCloseModals = () => {
+    setIsCreateModalOpen(false);
+    setEditingCollaborationId(null);
+  };
+
+  const openFeedbackModal = () => {
+    setIsFeedbackModalOpen(true);
+    trackEvent('open_feedback_modal');
   };
 
   useEffect(() => {
-    setDomTheme(theme === 'dark' ? 'dark' : 'light');
-  }, [theme]);
+    if (mainContentRef.current) registerScrollableNode(mainContentRef.current);
+  }, [registerScrollableNode]);
 
-  // Inject once: utility mappings + iOS fixed helper
-  useEffect(() => {
-    let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
-    if (!styleEl) {
-      styleEl = document.createElement('style');
-      styleEl.id = 'co-global-theme';
-      styleEl.textContent = `
-        body, .bg-background { background-color: var(--co-bg) !important; }
-        .text-text-primary { color: var(--co-fg) !important; }
-        .text-text-secondary { color: var(--co-fg-muted) !important; }
-        .text-primary { color: var(--co-primary) !important; }
-        .bg-primary { background-color: var(--co-primary) !important; color: #fff !important; }
-        .hover\\:bg-primary-hover:hover { background-color: var(--co-primary-hover) !important; }
-        .border-surface, .border-surface-light, .border-surface-dark { border-color: var(--co-surface-border-color) !important; }
-        .bg-surface, .bg-surface-light {
-          background-color: var(--co-surface-opaque-color) !important;
-          color: var(--co-surface-foreground-color) !important;
-          border: 1px solid var(--co-surface-border-color) !important;
-          box-shadow: var(--co-surface-shadow) !important;
-          -webkit-backdrop-filter: none !important;
-          backdrop-filter: none !important;
-        }
-        .hover\\:bg-surface-light:hover { background-color: var(--co-surface-hover-color) !important; }
-        .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
-      `;
-      document.head.appendChild(styleEl);
+  useLayoutEffect(() => {
+    const lastEntry = history[history.length - 1];
+    if (mainContentRef.current && lastEntry.scrollTop !== undefined) {
+      mainContentRef.current.scrollTop = lastEntry.scrollTop;
     }
-    setDomTheme(theme === 'dark' ? 'dark' : 'light');
-  }, []); // once
+  }, [currentPage, viewingProfileId, history]);
 
-  // ---------- unread counts ----------
-  const unreadMessageSenders = new Set(
-    notifications
-      .filter(
-        (n) =>
-          currentUser &&
-          n.userId === currentUser.id &&
-          n.type === NotificationType.NEW_MESSAGE &&
-          !n.isRead,
-      )
-      .map((n) => n.actorId),
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser) return;
+    const handleSocketEvent = (event: Event) => {
+      const { userId, eventName, payload } = (event as CustomEvent).detail;
+      if (userId === currentUser.id && eventName === 'notification:new') {
+        setToastNotification(payload);
+      }
+    };
+    window.addEventListener('socket-event', handleSocketEvent);
+    requestNotificationPermission(subscribeToPushNotifications);
+    return () => window.removeEventListener('socket-event', handleSocketEvent);
+  }, [isAuthenticated, currentUser, subscribeToPushNotifications]);
+
+  const handleForgotPassword = () => setAuthStage('forgot');
+  const handleSendResetLink = (email: string) => { sendPasswordResetLink(email); setForgotEmail(email); setAuthStage('sent'); };
+  const handleBackToLogin = () => setAuthStage('login');
+
+  if (!isAuthenticated) {
+    if (isRegistering) return <ProfileSetup />;
+    if (authStage === 'forgot') return <ForgotPassword onSendResetLink={handleSendResetLink} onBackToLogin={handleBackToLogin} />;
+    if (authStage === 'sent') return <ResetPasswordSent email={forgotEmail} onBackToLogin={handleBackToLogin} />;
+    return <Login onForgotPassword={handleForgotPassword} />;
+  }
+
+  const renderPage = () => {
+    switch (currentPage) {
+      case 'feed': return <Feed />;
+      case 'explore': return <Explore />;
+      case 'notifications': return <NotificationsPage />;
+      case 'messages': return <Messages />;
+      case 'search': return <Search />;
+      case 'profile':
+        if (viewingProfileId) return <Profile userId={viewingProfileId} onOpenFeedbackModal={openFeedbackModal} />;
+        if (currentUser) return <Profile userId={currentUser.id} onOpenFeedbackModal={openFeedbackModal} />;
+        return <Feed />;
+      case 'collaborations': return <Collaborations openCreateModal={openCreateModal} />;
+      case 'admin': return <Admin />;
+      case 'interestedUsers': return <InterestedUsers />;
+      default: return <Feed />;
+    }
+  };
+
+  const MobileHeader = () => (
+    <header className="md:hidden sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-surface-light">
+      <div className="px-4 py-3 flex items-center justify-between">
+        <span className="font-bold text-primary">CreatorsOnly</span>
+        <button className="text-text-secondary" aria-label="Share">{ICONS.share}</button>
+      </div>
+    </header>
   );
-  const unreadMessagesCount = unreadMessageSenders.size;
 
-  const otherUnreadCount = notifications.filter(
-    (n) =>
-      currentUser &&
-      n.userId === currentUser.id &&
-      n.type !== NotificationType.NEW_MESSAGE &&
-      !n.isRead,
-  ).length;
+  const MobileBottomSpacer = () => <div className="h-16 md:hidden" />;
 
-  // ---------- close user menu when clicking outside ----------
-  useEffect(() => {
-    const handleOutside = (event: PointerEvent) => {
-      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
-        setIsSettingsOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', handleOutside);
-    return () => {
-      document.removeEventListener('pointerdown', handleOutside);
-    };
-  }, []);
+  const isMessagesPage = currentPage === 'messages';
 
-  const NavItem: React.FC<NavItemProps> = ({ label, iconKey, page, notificationCount = 0 }) => {
-    const isActive = currentPage === page;
-
-    const handleNav = () => {
-      if (page === 'profile') {
-        if (currentUser) viewProfile(currentUser.id);
-      } else {
-        navigate(page);
-      }
-    };
-
+  if (isMessagesPage) {
     return (
-      <button
-        onPointerUp={handleNav}
-        className={`flex items-center w-full p-3 my-1 rounded-full transition-colors duration-200 ${
-          isActive ? 'bg-primary text-white' : 'hover:bg-surface-light'
-        }`}
-      >
-        <div className="relative">
-          {ICONS[iconKey]}
-          {notificationCount > 0 &&
-            (page === 'notifications' ? (
-              <span className="absolute -top-1 -right-1 block h-2.5 w-2.5 rounded-full bg-accent-red ring-2 ring-background" />
-            ) : (
-              <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-accent-red text-white text-xs">
-                {notificationCount > 99 ? '99+' : notificationCount}
-              </span>
-            ))}
+      <>
+        <div className="flex full-height overflow-hidden safe-pads">
+          <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
+          <main className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto">
+            <MobileHeader />
+            <Messages />
+            <MobileBottomSpacer />
+          </main>
+          <CreateModal isOpen={isCreateModalOpen || isEditCollabModalOpen} onClose={handleCloseModals} initialTab={createModalInitialTab} editingCollaboration={editingCollab} />
+          <FeedbackModal isOpen={isFeedbackModalOpen} onClose={() => setIsFeedbackModalOpen(false)} />
         </div>
-        <span className="ml-4 text-xl font-medium hidden lg:inline">{label}</span>
-      </button>
+        <Toast notification={toastNotification} onClose={() => setToastNotification(null)} />
+      </>
     );
-  };
-
-  const MobileNavItem: React.FC<MobileNavItemProps> = ({
-    label,
-    iconKey,
-    page,
-    notificationCount = 0,
-    isProfile,
-  }) => {
-    const isActive =
-      page === 'profile'
-        ? currentPage === 'profile' && viewingProfileId === currentUser?.id
-        : currentPage === page;
-
-    const handleNav = () => {
-      if (page === 'profile') {
-        if (currentUser) viewProfile(currentUser.id);
-      } else {
-        navigate(page);
-      }
-    };
-
-    return (
-      <button
-        onPointerUp={handleNav}
-        aria-label={label || page}
-        className={`flex flex-col items-center justify-center w-full h-full transition-colors duration-200 ${
-          isActive ? 'text-primary' : 'text-text-secondary hover:text-text-primary'
-        }`}
-      >
-        <div className="relative">
-          {isProfile && currentUser ? (
-            <img
-              src={currentUser.avatar}
-              alt="Profile"
-              className={`h-7 w-7 rounded-full border-2 ${
-                isActive ? 'border-primary' : 'border-transparent'
-              }`}
-            />
-          ) : (
-            React.cloneElement(ICONS[iconKey] as React.ReactElement<{ className: string }>, {
-              className: 'h-7 w-7',
-            })
-          )}
-          {notificationCount > 0 &&
-            (page === 'notifications' ? (
-              <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-accent-red" />
-            ) : (
-              <span className="absolute -top-1 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-accent-red text-white text-[10px]">
-                {notificationCount > 9 ? '9+' : notificationCount}
-              </span>
-            ))}
-        </div>
-      </button>
-    );
-  };
-
-  const handleShareApp = async () => {
-    const shareUrl = window.location.origin;
-    const shareData = {
-      title: 'CreatorsOnly',
-      text: 'Join me on CreatorsOnly, the platform for creators to connect, collaborate, and grow!',
-      url: shareUrl,
-    };
-    try {
-      if (navigator.share) {
-        await navigator.share(shareData);
-      } else {
-        throw new Error('Web Share API not supported');
-      }
-    } catch {
-      try {
-        await navigator.clipboard.writeText(shareUrl);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch {}
-    }
-  };
-
-  if (!currentUser) return null;
+  }
 
   return (
     <>
-      {/* Desktop Sidebar */}
-      <aside className="hidden md:flex fixed top-0 left-0 h-full w-20 lg:w-64 bg-background border-r border-surface-light p-4 flex-col justify-between z-40">
-        {/* Brand + Nav */}
-        <div className="w-full">
-          <div className="text-primary font-bold text-2xl p-3 hidden lg:block">CreatorsOnly</div>
-          <div className="w-12 h-12 flex items-center justify-center text-primary font-bold text-xl p-3 lg:hidden">
-            CO
+      <div className="flex full-height overflow-hidden safe-pads">
+        <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
+        <main ref={mainContentRef} className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding">
+          <MobileHeader />
+          <div className="max-w-5xl mx-auto">
+            <div className="md:grid md:grid-cols-3">
+              <div className="md:col-span-2 border-l border-r md:border-l-0 border-surface-light min-h-screen">
+                {renderPage()}
+              </div>
+              <div className="hidden md:block md:col-span-1">
+                <RightSidebar />
+              </div>
+            </div>
           </div>
-
-          <nav className="mt-8 flex flex-col w-full items-center lg:items-stretch">
-            <NavItem label="Home" iconKey="home" page="feed" />
-            <NavItem label="Explore" iconKey="explore" page="explore" />
-            <NavItem label="Opportunities" iconKey="collaborations" page="collaborations" />
-            <NavItem
-              label="Notifications"
-              iconKey="notifications"
-              page="notifications"
-              notificationCount={otherUnreadCount}
-            />
-            <NavItem
-              label="Messages"
-              iconKey="messages"
-              page="messages"
-              notificationCount={unreadMessagesCount}
-            />
-            {isMasterUser && <NavItem label="Admin" iconKey="settings" page="admin" />}
-            <NavItem label="Profile" iconKey="profile" page="profile" />
-
-            {/* Share */}
-            <button
-              onPointerUp={handleShareApp}
-              className="flex items-center w-full p-3 my-1 rounded-full hover:bg-surface-light transition-colors duration-200"
-            >
-              <div className="relative">
-                {React.cloneElement(
-                  (copied ? ICONS.copy : ICONS.share) as React.ReactElement<{ className: string }>,
-                  { className: 'h-6 w-6' },
-                )}
-              </div>
-              <span className="ml-4 text-xl font-medium hidden lg:inline">
-                {copied ? 'Link Copied!' : 'Share App'}
-              </span>
-            </button>
-          </nav>
-        </div>
-
-        {/* Bottom: Create + User Card */}
-        <div className="w-full">
-          <button
-            onPointerUp={() => openCreateModal('post')}
-            className="w-full bg-primary hover:bg-primary-hover text-white font-bold py-3 px-4 rounded-full hidden lg:block"
-          >
-            Create
-          </button>
-
-          <button
-            onPointerUp={() => openCreateModal('post')}
-            className="w-12 h-12 bg-primary hover:bg-primary-hover text-white font-bold rounded-full flex items-center justify-center lg:hidden"
-            aria-label="Create"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-6 w-6"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-          </button>
-
-          {/* User Card (menu trigger) */}
-          <div className="mt-4 relative" ref={settingsRef}>
-            <button
-              type="button"
-              onPointerUp={() => setIsSettingsOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-surface-light transition-colors duration-200"
-              aria-haspopup="menu"
-              aria-expanded={isSettingsOpen}
-            >
-              <div className="flex items-center min-w-0">
-                <img
-                  src={currentUser.avatar}
-                  alt={currentUser.name}
-                  className="h-10 w-10 rounded-full object-cover"
-                />
-                <div className="ml-3 hidden lg:block min-w-0">
-                  <div className="text-sm font-medium truncate">{currentUser.name}</div>
-                  <div className="text-xs text-text-secondary truncate">@{currentUser.username}</div>
-                </div>
-              </div>
-
-              {/* Inline 3-dots icon */}
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5 hidden lg:block"
-                fill="currentColor"
-                viewBox="0 0 20 20"
-                aria-hidden="true"
-              >
-                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
-            </button>
-
-            {/* SETTINGS MENU */}
-            {isSettingsOpen && (
-              <div
-                role="menu"
-                className="absolute bottom-full mb-2 w-full rounded-xl shadow-2xl z-50 border border-surface overflow-hidden bg-surface"
-                style={{ backgroundColor: 'var(--co-surface-opaque-color)' }}
-              >
-                {/* Theme row */}
-                <div className="flex items-center justify-between px-4 py-3">
-                  <span className="text-sm text-text-primary">Theme</span>
-                  <div className="flex items-center gap-1 rounded-full bg-surface p-0.5">
-                    <button
-                      type="button"
-                      aria-label="Light theme"
-                      className={`h-7 w-7 rounded-full flex items-center justify-center ${
-                        theme === 'light' ? 'bg-primary text-white' : 'text-text-secondary'
-                      }`}
-                      onPointerUp={() => applyTheme('light')}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Dark theme"
-                      className={`h-7 w-7 rounded-full flex items-center justify-center ${
-                        theme === 'dark' ? 'bg-primary text-white' : 'text-text-secondary'
-                      }`}
-                      onPointerUp={() => applyTheme('dark')}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="border-t border-surface/70" />
-
-                {/* Send Feedback */}
-                <button
-                  type="button"
-                  onPointerUp={() => {
-                    onOpenFeedbackModal();
-                    setIsSettingsOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-3 text-sm text-text-primary hover:bg-surface-light"
-                  role="menuitem"
-                >
-                  Send Feedback
-                </button>
-
-                <div className="border-t border-surface/70" />
-
-                {/* Log out */}
-                <button
-                  type="button"
-                  onPointerUp={() => {
-                    logout();
-                    setIsSettingsOpen(false);
-                  }}
-                  className="w-full text-left px-4 py-3 text-sm text-primary hover:bg-surface-light"
-                  role="menuitem"
-                >
-                  Log out @{currentUser.username}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </aside>
-
-      {/* Mobile Bottom Navigation (LOCKED) */}
-      <nav className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-surface h-16 pb-[env(safe-area-inset-bottom)]">
-        <div className="grid grid-cols-5 items-center h-full">
-          <MobileNavItem iconKey="home" label="Home" page="feed" />
-          <MobileNavItem iconKey="explore" label="Explore" page="explore" />
-          <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
-          <MobileNavItem
-            iconKey="messages"
-            label="Messages"
-            page="messages"
-            notificationCount={unreadMessagesCount}
-          />
-          <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
-        </div>
-      </nav>
+          <MobileBottomSpacer />
+        </main>
+        <CreateModal isOpen={isCreateModalOpen || isEditCollabModalOpen} onClose={handleCloseModals} initialTab={createModalInitialTab} editingCollaboration={editingCollab} />
+        <FeedbackModal isOpen={isFeedbackModalOpen} onClose={() => setIsFeedbackModalOpen(false)} />
+      </div>
+      <Toast notification={toastNotification} onClose={() => setToastNotification(null)} />
     </>
   );
 };
 
-export default Sidebar;
+const AppWrapper: React.FC = () => {
+  useThemeBoot();
+
+  const toggleTheme = React.useCallback(() => {
+    const current = (localStorage.getItem(THEME_KEY) as Theme) ?? 'dark';
+    applyTheme(current === 'dark' ? 'light' : 'dark');
+  }, []);
+
+  React.useEffect(() => {
+    const handler = () => toggleTheme();
+    window.addEventListener('co:toggle-theme', handler);
+    return () => window.removeEventListener('co:toggle-theme', handler);
+  }, [toggleTheme]);
+
+  return (
+    <AppProvider>
+      <AppContent />
+    </AppProvider>
+  );
+};
+
+export default AppWrapper;
