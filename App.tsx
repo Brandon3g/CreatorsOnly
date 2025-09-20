@@ -19,7 +19,6 @@ import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 
-// === Theme wiring (start) ===
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
 
@@ -36,9 +35,7 @@ function useThemeBoot() {
     applyTheme(saved);
   }, []);
 }
-// === Theme wiring (end) ===
 
-// --- Web Push Notification Service ---
 const VAPID_PUBLIC_KEY = 'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
 
 function urlBase64ToUint8Array(base64String: string) {
@@ -72,11 +69,7 @@ const requestNotificationPermission = async (subscribeFn: (sub: PushSubscription
   }
 };
 
-// --- Toast ---
-type ToastProps = {
-  notification: Notification | null;
-  onClose: () => void;
-};
+type ToastProps = { notification: Notification | null; onClose: () => void; };
 
 const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
   const { getUserById, navigate } = useAppContext();
@@ -109,11 +102,7 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
     }
   };
 
-  const openNotifications = () => {
-    navigate('notifications');
-    handleClose();
-  };
-
+  const openNotifications = () => { navigate('notifications'); handleClose(); };
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
 
   return (
@@ -144,7 +133,6 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
   );
 };
 
-// --- Create Modal ---
 type CreateModalProps = {
   isOpen: boolean;
   onClose: () => void;
@@ -162,6 +150,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
   const [activeTab, setActiveTab] = useState(initialTab);
 
   const [postContent, setPostContent] = useState('');
+  thead;
   const [postImage, setPostImage] = useState<string | null>(null);
   const postImageInputRef = useRef<HTMLInputElement>(null);
   const postTextAreaRef = useRef<HTMLTextAreaElement>(null);
@@ -453,7 +442,6 @@ const CreateModal: React.FC<CreateModalProps> = ({
   );
 };
 
-// --- Feedback Modal ---
 type FeedbackModalProps = { isOpen: boolean; onClose: () => void; };
 
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
@@ -539,7 +527,6 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   );
 };
 
-// --- AppContent ---
 const AppContent: React.FC = () => {
   const {
     currentPage, viewingProfileId, isAuthenticated, isRegistering, registerScrollableNode,
@@ -639,9 +626,20 @@ const AppContent: React.FC = () => {
       <>
         <div className="flex full-height overflow-hidden safe-pads">
           <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
-          <main className="flex-1 md:ml-20 lg:ml-64">
+
+          <main className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto">
+            <header className="md:hidden sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-surface-light">
+              <div className="px-4 py-3 flex items-center justify-between">
+                <span className="font-bold text-primary">CreatorsOnly</span>
+                <button className="text-text-secondary">{ICONS.share}</button>
+              </div>
+            </header>
+
             <Messages />
+
+            <div className="h-16 md:hidden" />
           </main>
+
           <CreateModal
             isOpen={isCreateModalOpen || isEditCollabModalOpen}
             onClose={handleCloseModals}
@@ -659,10 +657,18 @@ const AppContent: React.FC = () => {
     <>
       <div className="flex full-height overflow-hidden safe-pads">
         <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
+
         <main
           ref={mainContentRef}
-          className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding"
+          className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto"
         >
+          <header className="md:hidden sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-surface-light">
+            <div className="px-4 py-3 flex items-center justify-between">
+              <span className="font-bold text-primary">CreatorsOnly</span>
+              <button className="text-text-secondary">{ICONS.share}</button>
+            </div>
+          </header>
+
           <div className="max-w-5xl mx-auto">
             <div className="md:grid md:grid-cols-3">
               <div className="md:col-span-2 border-l border-r md:border-l-0 border-surface-light min-h-screen">
@@ -673,7 +679,10 @@ const AppContent: React.FC = () => {
               </div>
             </div>
           </div>
+
+          <div className="h-16 md:hidden" />
         </main>
+
         <CreateModal
           isOpen={isCreateModalOpen || isEditCollabModalOpen}
           onClose={handleCloseModals}
@@ -687,7 +696,6 @@ const AppContent: React.FC = () => {
   );
 };
 
-// --- AppWrapper ---
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
@@ -705,7 +713,7 @@ const AppWrapper: React.FC = () => {
   return (
     <AppProvider>
       <AppContent />
-      <button className="btn btn-sm fixed bottom-4 right-4 z-50" onPointerUp={toggleTheme}>
+      <button className="btn btn-sm fixed bottom-4 right-4 z-[60]" onPointerUp={toggleTheme}>
         Theme
       </button>
     </AppProvider>
