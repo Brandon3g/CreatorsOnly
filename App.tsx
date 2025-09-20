@@ -19,6 +19,7 @@ import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 
+/* ===================== Theme wiring ===================== */
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
 
@@ -36,6 +37,7 @@ function useThemeBoot() {
   }, []);
 }
 
+/* =============== Web Push Notification Service =============== */
 const VAPID_PUBLIC_KEY = 'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
 
 function urlBase64ToUint8Array(base64String: string) {
@@ -69,6 +71,7 @@ const requestNotificationPermission = async (subscribeFn: (sub: PushSubscription
   }
 };
 
+/* ======================== Toast ======================== */
 type ToastProps = { notification: Notification | null; onClose: () => void; };
 
 const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
@@ -133,6 +136,7 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
   );
 };
 
+/* ===================== Create Modal ===================== */
 type CreateModalProps = {
   isOpen: boolean;
   onClose: () => void;
@@ -149,15 +153,17 @@ const CreateModal: React.FC<CreateModalProps> = ({
   const { addPost, addCollaboration, updateCollaboration, navigate, users, currentUser } = useAppContext();
   const [activeTab, setActiveTab] = useState(initialTab);
 
+  // Post
   const [postContent, setPostContent] = useState('');
-  thead;
   const [postImage, setPostImage] = useState<string | null>(null);
   const postImageInputRef = useRef<HTMLInputElement>(null);
   const postTextAreaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Mentions
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<User[]>([]);
 
+  // Project
   const [projectTitle, setProjectTitle] = useState('');
   const [projectDesc, setProjectDesc] = useState('');
   const [projectImage, setProjectImage] = useState<string | null>(null);
@@ -442,6 +448,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
   );
 };
 
+/* ===================== Feedback Modal ===================== */
 type FeedbackModalProps = { isOpen: boolean; onClose: () => void; };
 
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
@@ -527,6 +534,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   );
 };
 
+/* ===================== Main App Content ===================== */
 const AppContent: React.FC = () => {
   const {
     currentPage, viewingProfileId, isAuthenticated, isRegistering, registerScrollableNode,
@@ -534,7 +542,9 @@ const AppContent: React.FC = () => {
     editingCollaborationId, setEditingCollaborationId, collaborations
   } = useAppContext();
 
+  // Make main content the only scrollable area
   const mainContentRef = useRef<HTMLDivElement>(null);
+
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [createModalInitialTab, setCreateModalInitialTab] = useState<'post' | 'project'>('post');
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
@@ -594,6 +604,7 @@ const AppContent: React.FC = () => {
   };
   const handleBackToLogin = () => setAuthStage('login');
 
+  /* ===================== Auth gates ===================== */
   if (!isAuthenticated) {
     if (isRegistering) return <ProfileSetup />;
     if (authStage === 'forgot') return <ForgotPassword onSendResetLink={handleSendResetLink} onBackToLogin={handleBackToLogin} />;
@@ -601,6 +612,7 @@ const AppContent: React.FC = () => {
     return <Login onForgotPassword={handleForgotPassword} />;
   }
 
+  /* ===================== Router ===================== */
   const renderPage = () => {
     switch (currentPage) {
       case 'feed': return <Feed />;
@@ -619,27 +631,30 @@ const AppContent: React.FC = () => {
     }
   };
 
+  const MobileHeader = () => (
+    <header className="md:hidden sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-surface-light">
+      <div className="px-4 py-3 flex items-center justify-between">
+        <span className="font-bold text-primary">CreatorsOnly</span>
+        <button className="text-text-secondary" aria-label="Share">{ICONS.share}</button>
+      </div>
+    </header>
+  );
+
+  const MobileBottomSpacer = () => <div className="h-16 md:hidden" />; // matches bottom nav height
+
   const isMessagesPage = currentPage === 'messages';
 
   if (isMessagesPage) {
+    // Messages often need full-height columns; keep header/footer locked the same way
     return (
       <>
         <div className="flex full-height overflow-hidden safe-pads">
           <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
-
           <main className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto">
-            <header className="md:hidden sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-surface-light">
-              <div className="px-4 py-3 flex items-center justify-between">
-                <span className="font-bold text-primary">CreatorsOnly</span>
-                <button className="text-text-secondary">{ICONS.share}</button>
-              </div>
-            </header>
-
+            <MobileHeader />
             <Messages />
-
-            <div className="h-16 md:hidden" />
+            <MobileBottomSpacer />
           </main>
-
           <CreateModal
             isOpen={isCreateModalOpen || isEditCollabModalOpen}
             onClose={handleCloseModals}
@@ -657,17 +672,11 @@ const AppContent: React.FC = () => {
     <>
       <div className="flex full-height overflow-hidden safe-pads">
         <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
-
         <main
           ref={mainContentRef}
-          className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto"
+          className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding"
         >
-          <header className="md:hidden sticky top-0 z-40 bg-background/95 backdrop-blur border-b border-surface-light">
-            <div className="px-4 py-3 flex items-center justify-between">
-              <span className="font-bold text-primary">CreatorsOnly</span>
-              <button className="text-text-secondary">{ICONS.share}</button>
-            </div>
-          </header>
+          <MobileHeader />
 
           <div className="max-w-5xl mx-auto">
             <div className="md:grid md:grid-cols-3">
@@ -680,7 +689,7 @@ const AppContent: React.FC = () => {
             </div>
           </div>
 
-          <div className="h-16 md:hidden" />
+          <MobileBottomSpacer />
         </main>
 
         <CreateModal
@@ -696,6 +705,7 @@ const AppContent: React.FC = () => {
   );
 };
 
+/* ===================== App Wrapper ===================== */
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
