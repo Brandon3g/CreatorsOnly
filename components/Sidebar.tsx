@@ -84,7 +84,6 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   }, [theme]);
 
   useEffect(() => {
-    // Inject global styles (theme + mobile layout helpers)
     let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -107,27 +106,25 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         }
         .hover\\:bg-surface-light:hover { background-color: var(--co-surface-hover-color) !important; }
 
-        /* iOS paint fix for fixed elements */
+        /* iOS paint fix */
         .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
 
-        /* Gentle breathing room at the very top of the main content */
+        /* spacing at very top of content */
         main, [role="main"], .content, .center-column {
           padding-top: clamp(6px, 1.2vh, 12px) !important;
         }
 
-        /* Universal sticky header utility applied by script */
+        /* sticky header utility */
         .co-sticky-top {
           position: sticky !important;
-          top: calc(env(safe-area-inset-top, 0px));
+          top: env(safe-area-inset-top, 0px);
           z-index: 35;
           background: var(--co-bg);
-          backdrop-filter: saturate(1.2) blur(0px);
           border-bottom: 1px solid var(--co-surface-border-color);
         }
 
-        /* MOBILE */
+        /* ensure content clears the fixed footer on mobile */
         @media (max-width: 767px) {
-          /* Ensure content can scroll above a fixed footer */
           main, [role="main"], .content, .center-column {
             padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
           }
@@ -142,41 +139,59 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
     }
     setDomTheme(theme === 'dark' ? 'dark' : 'light');
 
-    // Heuristically tag a page header as sticky—even if it's not literally the first child.
+    // Robust sticky header: only tag an element that is truly at the very top.
     const tagStickyHeader = () => {
       const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
       roots.forEach((root) => {
-        // Try common header selectors first
-        let el: HTMLElement | null =
-          root.querySelector<HTMLElement>('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title');
+        // Remove any old tags first
+        Array.from(root.querySelectorAll<HTMLElement>('.co-sticky-top')).forEach((n) => n.classList.remove('co-sticky-top'));
 
-        // Fallback: find the first shallow child that looks like a compact bar (<=88px tall)
-        if (!el) {
-          const candidates = Array.from(root.children) as HTMLElement[];
-          el = candidates.find((c) => {
-            const cs = window.getComputedStyle(c);
-            const h = parseFloat(cs.height || '0');
-            return h > 0 && h <= 88 && (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative');
-          }) || null;
+        const rootRect = root.getBoundingClientRect();
+        // Only consider the first few visible children that are near the top
+        const kids = Array.from(root.children).filter((el) => {
+          const e = el as HTMLElement;
+          const cs = window.getComputedStyle(e);
+          return cs.display !== 'none' && cs.visibility !== 'hidden';
+        }) as HTMLElement[];
+
+        let candidate: HTMLElement | null = null;
+
+        // Prefer explicit header-like nodes among the first 3 children
+        const named = kids
+          .slice(0, 3)
+          .map((k) => (k.matches('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title') ? k : null))
+          .find(Boolean) as HTMLElement | null;
+
+        if (named) candidate = named;
+
+        // Fallback: first child that sits right at the top and is not overly tall
+        if (!candidate) {
+          for (const k of kids.slice(0, 3)) {
+            const r = k.getBoundingClientRect();
+            const topDelta = Math.abs(r.top - rootRect.top);
+            if (topDelta <= 16 && r.height > 0 && r.height <= 88) {
+              candidate = k;
+              break;
+            }
+          }
         }
 
-        if (el) el.classList.add('co-sticky-top');
+        if (candidate) candidate.classList.add('co-sticky-top');
       });
     };
 
-    // Tag now and on a short timer (covers content that mounts after first paint)
+    // Run now and shortly after to catch async layout
     tagStickyHeader();
-    const t = setTimeout(tagStickyHeader, 100);
+    const t1 = setTimeout(tagStickyHeader, 100);
     const t2 = setTimeout(tagStickyHeader, 350);
 
-    // Optional: listen for app navigation events if they exist
     const reapply = () => tagStickyHeader();
     window.addEventListener('co:navigate', reapply as EventListener);
     window.addEventListener('popstate', reapply as EventListener);
     window.addEventListener('hashchange', reapply as EventListener);
 
     return () => {
-      clearTimeout(t);
+      clearTimeout(t1);
       clearTimeout(t2);
       window.removeEventListener('co:navigate', reapply as EventListener);
       window.removeEventListener('popstate', reapply as EventListener);
@@ -453,15 +468,20 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         </div>
       </aside>
 
-      {/* Mobile Bottom Navigation with Admin + Profile when master user */}
-      <nav className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-surface h-16 pt-1 pb-[env(safe-area-inset-bottom)]">
-        <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-full`}>
-          <MobileNavItem iconKey="home" label="Home" page="feed" />
-          <MobileNavItem iconKey="explore" label="Explore" page="explore" />
-          <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
-          <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={unreadMessagesCount} />
-          {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
-          <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
+      {/* Mobile Footer (fixed). Background covers safe-area; icons live in a 64px row pinned to the bottom. */}
+      <nav
+        className="md:hidden fixed ios-fixed inset-x-0 bottom-0 z-50 bg-background border-t border-surface"
+        style={{ height: 'calc(64px + env(safe-area-inset-bottom, 0px))' }}
+      >
+        <div className="absolute inset-x-0 bottom-0 h-16 pt-1">
+          <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-full`}>
+            <MobileNavItem iconKey="home" label="Home" page="feed" />
+            <MobileNavItem iconKey="explore" label="Explore" page="explore" />
+            <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
+            <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={unreadMessagesCount} />
+            {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
+            <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
+          </div>
         </div>
       </nav>
     </>
