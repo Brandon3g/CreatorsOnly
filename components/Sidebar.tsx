@@ -109,9 +109,36 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         /* iOS paint fix */
         .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
 
-        /* Gentle breathing room at the very top of the main content (matches your 2nd screenshot) */
+        /* Gentle breathing room at the very top of the main content */
         main, [role="main"], .content, .center-column {
           padding-top: clamp(6px, 1.2vh, 12px) !important;
+        }
+
+        /* MOBILE LAYOUT TWEAKS */
+        @media (max-width: 767px) {
+          /* Make the first row inside the main column sticky = persistent header */
+          main > :first-child,
+          [role="main"] > :first-child,
+          .content > :first-child,
+          .center-column > :first-child {
+            position: sticky;
+            top: env(safe-area-inset-top, 0px);
+            z-index: 30;
+            background: var(--co-bg);
+          }
+
+          /* Add breathing room at bottom so fixed footer doesn't block content
+             (fixes "can't scroll all the way down after refresh") */
+          main, [role="main"], .content, .center-column {
+            padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+          }
+
+          /* Extra assured spacer after the content for edge cases */
+          main::after, [role="main"]::after, .content::after, .center-column::after {
+            content: "";
+            display: block;
+            height: calc(12px + env(safe-area-inset-bottom, 0px));
+          }
         }
       `;
       document.head.appendChild(styleEl);
@@ -389,7 +416,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       </aside>
 
       {/* Mobile Bottom Navigation with Admin + Profile when master user */}
-      <nav className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-surface h-16 pb-[env(safe-area-inset-bottom)]">
+      <nav className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-surface h-16 pt-1 pb-[env(safe-area-inset-bottom)]">
         <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-full`}>
           <MobileNavItem iconKey="home" label="Home" page="feed" />
           <MobileNavItem iconKey="explore" label="Explore" page="explore" />
