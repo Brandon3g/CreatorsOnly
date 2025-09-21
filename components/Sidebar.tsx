@@ -105,7 +105,14 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           backdrop-filter: none !important;
         }
         .hover\\:bg-surface-light:hover { background-color: var(--co-surface-hover-color) !important; }
+
+        /* iOS paint fix */
         .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
+
+        /* Gentle breathing room at the very top of the main content (matches your 2nd screenshot) */
+        main, [role="main"], .content, .center-column {
+          padding-top: clamp(6px, 1.2vh, 12px) !important;
+        }
       `;
       document.head.appendChild(styleEl);
     }
