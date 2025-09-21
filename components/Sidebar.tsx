@@ -84,7 +84,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   }, [theme]);
 
   useEffect(() => {
-    // Inject global styles (theme + mobile layout helpers)
+    // Inject global styles (theme + mobile helpers)
     let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -115,14 +115,15 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           padding-top: clamp(6px, 1.2vh, 12px) !important;
         }
 
-        /* Universal sticky header utility applied by script */
-        .co-sticky-top {
-          position: sticky !important;
-          top: calc(env(safe-area-inset-top, 0px));
-          z-index: 35;
-          background: var(--co-bg);
-          backdrop-filter: saturate(1.2) blur(0px);
-          border-bottom: 1px solid var(--co-surface-border-color);
+        /* Truly pinned header (mobile). We set this class via script and add a spacer to keep layout stable. */
+        .co-fixed-topbar {
+          position: fixed !important;
+          top: env(safe-area-inset-top, 0px);
+          left: 0;
+          right: 0;
+          z-index: 48;
+          background: var(--co-bg) !important;
+          border-bottom: 1px solid var(--co-surface-border-color) !important;
         }
 
         /* MOBILE */
@@ -142,45 +143,100 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
     }
     setDomTheme(theme === 'dark' ? 'dark' : 'light');
 
-    // Heuristically tag a page header as sticky—even if it's not literally the first child.
-    const tagStickyHeader = () => {
+    // ===== Mobile header pinning (robust) =====
+    const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
+
+    const cleanupPinned = (root: HTMLElement) => {
+      const pinned = root.querySelector<HTMLElement>('.co-fixed-topbar');
+      if (pinned) {
+        const spacer = pinned.previousElementSibling as HTMLElement | null;
+        pinned.classList.remove('co-fixed-topbar');
+        if (spacer && spacer.classList.contains('co-topbar-spacer')) spacer.remove();
+      }
+    };
+
+    const findHeaderCandidate = (root: HTMLElement): HTMLElement | null => {
+      const rootRect = root.getBoundingClientRect();
+      const isNearTop = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        const delta = Math.abs(r.top - rootRect.top);
+        return delta <= 24 && r.height >= 40 && r.height <= 112;
+      };
+      const notFormy = (el: HTMLElement) =>
+        !el.querySelector('textarea, input, [role="textbox"], button');
+
+      // 1) obvious selectors
+      let el =
+        root.querySelector<HTMLElement>('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title');
+      if (el && isNearTop(el) && notFormy(el)) return el;
+
+      // 2) scan the first ~120 elements depth-first for something near the top
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let count = 0;
+      let best: HTMLElement | null = null;
+      while (walker.nextNode() && count < 120) {
+        const node = walker.currentNode as HTMLElement;
+        count++;
+        if (!(node instanceof HTMLElement)) continue;
+        const cs = getComputedStyle(node);
+        if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+        if (!isNearTop(node) || !notFormy(node)) continue;
+        // prefer rows / bars
+        if (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative') {
+          best = node;
+          break;
+        }
+      }
+      return best;
+    };
+
+    const pinHeaders = () => {
+      if (!isMobile()) return;
+
       const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
       roots.forEach((root) => {
-        // Try common header selectors first
-        let el: HTMLElement | null =
-          root.querySelector<HTMLElement>('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title');
+        cleanupPinned(root);
 
-        // Fallback: find the first shallow child that looks like a compact bar (<=88px tall)
-        if (!el) {
-          const candidates = Array.from(root.children) as HTMLElement[];
-          el = candidates.find((c) => {
-            const cs = window.getComputedStyle(c);
-            const h = parseFloat(cs.height || '0');
-            return h > 0 && h <= 88 && (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative');
-          }) || null;
-        }
+        const candidate = findHeaderCandidate(root);
+        if (!candidate) return;
 
-        if (el) el.classList.add('co-sticky-top');
+        // insert spacer to preserve layout
+        const h = Math.ceil(candidate.getBoundingClientRect().height);
+        const spacer = document.createElement('div');
+        spacer.className = 'co-topbar-spacer';
+        spacer.style.height = `${h}px`;
+        candidate.parentElement?.insertBefore(spacer, candidate);
+
+        // pin the header
+        candidate.classList.add('co-fixed-topbar');
       });
     };
 
-    // Tag now and on a short timer (covers content that mounts after first paint)
-    tagStickyHeader();
-    const t = setTimeout(tagStickyHeader, 100);
-    const t2 = setTimeout(tagStickyHeader, 350);
+    // run now + after layout settles
+    pinHeaders();
+    const t1 = setTimeout(pinHeaders, 100);
+    const t2 = setTimeout(pinHeaders, 350);
 
-    // Optional: listen for app navigation events if they exist
-    const reapply = () => tagStickyHeader();
+    // update on viewport changes/navigation
+    const reapply = () => pinHeaders();
+    window.addEventListener('resize', reapply);
+    window.addEventListener('orientationchange', reapply);
     window.addEventListener('co:navigate', reapply as EventListener);
     window.addEventListener('popstate', reapply as EventListener);
     window.addEventListener('hashchange', reapply as EventListener);
 
     return () => {
-      clearTimeout(t);
+      clearTimeout(t1);
       clearTimeout(t2);
+      window.removeEventListener('resize', reapply);
+      window.removeEventListener('orientationchange', reapply);
       window.removeEventListener('co:navigate', reapply as EventListener);
       window.removeEventListener('popstate', reapply as EventListener);
       window.removeEventListener('hashchange', reapply as EventListener);
+
+      // cleanup any pinned headers (useful during hot reloads)
+      const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
+      roots.forEach(cleanupPinned);
     };
   }, []);
 
