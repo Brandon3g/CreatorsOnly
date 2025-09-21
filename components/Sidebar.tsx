@@ -458,7 +458,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       {/* Mobile Bottom Navigation with Admin + Profile when master user */}
       <nav className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-surface">
         {isMessagesPage ? (
-          // Messages page ONLY: two-layer footer so icons sit at the exact same vertical position
+          // Messages tab ONLY: two-layer layout so icons align exactly like Home
           <div className="relative" style={{ height: 'calc(64px + env(safe-area-inset-bottom, 0px))' }}>
             <div className="absolute inset-x-0 bottom-0 h-16 pt-1">
               <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-full`}>
@@ -472,7 +472,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             </div>
           </div>
         ) : (
-          // All other pages: original single-layer footer
+          // Other tabs keep existing single-layer layout
           <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-16 pt-1 pb-[env(safe-area-inset-bottom)]`}>
             <MobileNavItem iconKey="home" label="Home" page="feed" />
             <MobileNavItem iconKey="explore" label="Explore" page="explore" />
