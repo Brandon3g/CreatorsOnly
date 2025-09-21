@@ -84,11 +84,13 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   }, [theme]);
 
   useEffect(() => {
-    // Ensure viewport-fit=cover so iOS will expose safe-area insets to CSS
+    // Ensure iOS PWA exposes safe-area insets
     const vp = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
     if (vp) {
       if (!/viewport-fit\s*=\s*cover/.test(vp.content)) {
-        vp.content = vp.content ? `${vp.content}, viewport-fit=cover` : 'width=device-width, initial-scale=1, viewport-fit=cover';
+        vp.content = vp.content
+          ? `${vp.content}, viewport-fit=cover`
+          : 'width=device-width, initial-scale=1, viewport-fit=cover';
       }
     } else {
       const meta = document.createElement('meta');
@@ -97,7 +99,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       document.head.appendChild(meta);
     }
 
-    // Inject global styles (theme + safe-area guards + mobile layout helpers)
+    // Inject global styles (theme + safe-area + mobile helpers)
     let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -123,11 +125,12 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         /* iOS paint fix for fixed elements */
         .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
 
-        /* SAFE-AREA GUARD (prevents content under iPhone status bar in PWA) */
+        /* SAFE-AREA GUARD — prevents content under iPhone status bar */
         html, body {
           padding-top: env(safe-area-inset-top, 0px);
           padding-left: env(safe-area-inset-left, 0px);
           padding-right: env(safe-area-inset-right, 0px);
+          min-height: 100%;
         }
         /* legacy iOS syntax */
         @supports (padding: constant(safe-area-inset-top)) {
@@ -138,12 +141,12 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           }
         }
 
-        /* Gentle breathing room at the very top of page content */
+        /* Gentle breathing room at the very top of the main content */
         main, [role="main"], .content, .center-column {
           padding-top: clamp(6px, 1.2vh, 12px) !important;
         }
 
-        /* Truly pinned header (mobile) — sits below the status bar */
+        /* Pinned header (mobile) — sits below status bar */
         .co-fixed-topbar {
           position: fixed !important;
           top: env(safe-area-inset-top, 0px);
@@ -171,7 +174,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
     }
     setDomTheme(theme === 'dark' ? 'dark' : 'light');
 
-    // ===== Robust header pinning =====
+    // ===== Mobile header pinning (robust) =====
     const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 
     const cleanupPinned = (root: HTMLElement) => {
@@ -187,15 +190,18 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       const rootRect = root.getBoundingClientRect();
       const isNearTop = (el: HTMLElement) => {
         const r = el.getBoundingClientRect();
-        return Math.abs(r.top - rootRect.top) <= 24 && r.height >= 40 && r.height <= 112;
+        const delta = Math.abs(r.top - rootRect.top);
+        return delta <= 24 && r.height >= 40 && r.height <= 112;
       };
       const notFormy = (el: HTMLElement) =>
         !el.querySelector('textarea, input, [role="textbox"], button');
 
+      // Try obvious selectors first
       let el =
         root.querySelector<HTMLElement>('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title');
       if (el && isNearTop(el) && notFormy(el)) return el;
 
+      // Fallback: scan first ~120 elements
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
       let count = 0;
       while (walker.nextNode() && count < 120) {
@@ -204,7 +210,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         const cs = getComputedStyle(node);
         if (cs.visibility === 'hidden' || cs.display === 'none') continue;
         if (!isNearTop(node) || !notFormy(node)) continue;
-        if (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative')) {
+        if (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative') {
           return node;
         }
       }
@@ -220,21 +226,24 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         const candidate = findHeaderCandidate(root);
         if (!candidate) return;
 
-        // spacer preserves layout below the now-fixed header
+        // Spacer preserves layout where the header was
         const h = Math.ceil(candidate.getBoundingClientRect().height);
         const spacer = document.createElement('div');
         spacer.className = 'co-topbar-spacer';
         spacer.style.height = `${h}px`;
         candidate.parentElement?.insertBefore(spacer, candidate);
 
+        // Pin the header
         candidate.classList.add('co-fixed-topbar');
       });
     };
 
+    // Run now + after layout settles
     pinHeaders();
     const t1 = setTimeout(pinHeaders, 100);
     const t2 = setTimeout(pinHeaders, 350);
 
+    // Reapply on viewport changes / navigation
     const reapply = () => pinHeaders();
     window.addEventListener('resize', reapply);
     window.addEventListener('orientationchange', reapply);
@@ -251,6 +260,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       window.removeEventListener('popstate', reapply as EventListener);
       window.removeEventListener('hashchange', reapply as EventListener);
 
+      // Cleanup any pinned headers (useful during hot reloads)
       const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
       roots.forEach(cleanupPinned);
     };
