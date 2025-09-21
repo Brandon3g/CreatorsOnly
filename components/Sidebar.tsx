@@ -84,6 +84,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   }, [theme]);
 
   useEffect(() => {
+    // Inject global styles (theme + mobile layout helpers)
     let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -106,7 +107,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         }
         .hover\\:bg-surface-light:hover { background-color: var(--co-surface-hover-color) !important; }
 
-        /* iOS paint fix */
+        /* iOS paint fix for fixed elements */
         .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
 
         /* Gentle breathing room at the very top of the main content */
@@ -114,26 +115,22 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           padding-top: clamp(6px, 1.2vh, 12px) !important;
         }
 
-        /* MOBILE LAYOUT TWEAKS */
+        /* Universal sticky header utility applied by script */
+        .co-sticky-top {
+          position: sticky !important;
+          top: calc(env(safe-area-inset-top, 0px));
+          z-index: 35;
+          background: var(--co-bg);
+          backdrop-filter: saturate(1.2) blur(0px);
+          border-bottom: 1px solid var(--co-surface-border-color);
+        }
+
+        /* MOBILE */
         @media (max-width: 767px) {
-          /* Make the first row inside the main column sticky = persistent header */
-          main > :first-child,
-          [role="main"] > :first-child,
-          .content > :first-child,
-          .center-column > :first-child {
-            position: sticky;
-            top: env(safe-area-inset-top, 0px);
-            z-index: 30;
-            background: var(--co-bg);
-          }
-
-          /* Add breathing room at bottom so fixed footer doesn't block content
-             (fixes "can't scroll all the way down after refresh") */
+          /* Ensure content can scroll above a fixed footer */
           main, [role="main"], .content, .center-column {
-            padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+            padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
           }
-
-          /* Extra assured spacer after the content for edge cases */
           main::after, [role="main"]::after, .content::after, .center-column::after {
             content: "";
             display: block;
@@ -144,6 +141,47 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       document.head.appendChild(styleEl);
     }
     setDomTheme(theme === 'dark' ? 'dark' : 'light');
+
+    // Heuristically tag a page header as sticky—even if it's not literally the first child.
+    const tagStickyHeader = () => {
+      const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
+      roots.forEach((root) => {
+        // Try common header selectors first
+        let el: HTMLElement | null =
+          root.querySelector<HTMLElement>('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title');
+
+        // Fallback: find the first shallow child that looks like a compact bar (<=88px tall)
+        if (!el) {
+          const candidates = Array.from(root.children) as HTMLElement[];
+          el = candidates.find((c) => {
+            const cs = window.getComputedStyle(c);
+            const h = parseFloat(cs.height || '0');
+            return h > 0 && h <= 88 && (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative');
+          }) || null;
+        }
+
+        if (el) el.classList.add('co-sticky-top');
+      });
+    };
+
+    // Tag now and on a short timer (covers content that mounts after first paint)
+    tagStickyHeader();
+    const t = setTimeout(tagStickyHeader, 100);
+    const t2 = setTimeout(tagStickyHeader, 350);
+
+    // Optional: listen for app navigation events if they exist
+    const reapply = () => tagStickyHeader();
+    window.addEventListener('co:navigate', reapply as EventListener);
+    window.addEventListener('popstate', reapply as EventListener);
+    window.addEventListener('hashchange', reapply as EventListener);
+
+    return () => {
+      clearTimeout(t);
+      clearTimeout(t2);
+      window.removeEventListener('co:navigate', reapply as EventListener);
+      window.removeEventListener('popstate', reapply as EventListener);
+      window.removeEventListener('hashchange', reapply as EventListener);
+    };
   }, []);
 
   const unreadMessageSenders = new Set(
