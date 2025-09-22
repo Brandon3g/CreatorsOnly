@@ -84,7 +84,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   }, [theme]);
 
   useEffect(() => {
-    // Ensure iOS PWA exposes safe-area insets
+    // Ensure iOS PWAs expose the safe-area env() variables
     const vp = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
     if (vp) {
       if (!/viewport-fit\s*=\s*cover/.test(vp.content)) {
@@ -99,7 +99,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       document.head.appendChild(meta);
     }
 
-    // Inject global styles (theme + safe-area + mobile helpers)
+    // Inject global styles (theme + mobile helpers)
     let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -125,7 +125,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         /* iOS paint fix for fixed elements */
         .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
 
-        /* SAFE-AREA GUARD — prevents content under iPhone status bar */
+        /* SAFE-AREA TOP GUARD — prevents content under iPhone status bar */
         html, body {
           padding-top: env(safe-area-inset-top, 0px);
           padding-left: env(safe-area-inset-left, 0px);
@@ -141,12 +141,13 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
           }
         }
 
-        /* Gentle breathing room at the very top of the main content */
+        /* Gentle breathing room at the very top of the main content
+           + safe-area padding so content never scrolls beneath status icons */
         main, [role="main"], .content, .center-column {
-          padding-top: clamp(6px, 1.2vh, 12px) !important;
+          padding-top: calc(env(safe-area-inset-top, 0px) + clamp(6px, 1.2vh, 12px)) !important;
         }
 
-        /* Pinned header (mobile) — sits below status bar */
+        /* Truly pinned header (mobile). We set this class via script and add a spacer to keep layout stable. */
         .co-fixed-topbar {
           position: fixed !important;
           top: env(safe-area-inset-top, 0px);
@@ -196,25 +197,29 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       const notFormy = (el: HTMLElement) =>
         !el.querySelector('textarea, input, [role="textbox"], button');
 
-      // Try obvious selectors first
+      // 1) obvious selectors
       let el =
         root.querySelector<HTMLElement>('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title');
       if (el && isNearTop(el) && notFormy(el)) return el;
 
-      // Fallback: scan first ~120 elements
+      // 2) scan the first ~120 elements depth-first for something near the top
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
       let count = 0;
+      let best: HTMLElement | null = null;
       while (walker.nextNode() && count < 120) {
         const node = walker.currentNode as HTMLElement;
         count++;
+        if (!(node instanceof HTMLElement)) continue;
         const cs = getComputedStyle(node);
         if (cs.visibility === 'hidden' || cs.display === 'none') continue;
         if (!isNearTop(node) || !notFormy(node)) continue;
+        // prefer rows / bars
         if (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative') {
-          return node;
+          best = node;
+          break;
         }
       }
-      return null;
+      return best;
     };
 
     const pinHeaders = () => {
@@ -223,27 +228,28 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
       roots.forEach((root) => {
         cleanupPinned(root);
+
         const candidate = findHeaderCandidate(root);
         if (!candidate) return;
 
-        // Spacer preserves layout where the header was
+        // insert spacer to preserve layout
         const h = Math.ceil(candidate.getBoundingClientRect().height);
         const spacer = document.createElement('div');
         spacer.className = 'co-topbar-spacer';
         spacer.style.height = `${h}px`;
         candidate.parentElement?.insertBefore(spacer, candidate);
 
-        // Pin the header
+        // pin the header
         candidate.classList.add('co-fixed-topbar');
       });
     };
 
-    // Run now + after layout settles
+    // run now + after layout settles
     pinHeaders();
     const t1 = setTimeout(pinHeaders, 100);
     const t2 = setTimeout(pinHeaders, 350);
 
-    // Reapply on viewport changes / navigation
+    // update on viewport changes/navigation
     const reapply = () => pinHeaders();
     window.addEventListener('resize', reapply);
     window.addEventListener('orientationchange', reapply);
@@ -260,7 +266,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       window.removeEventListener('popstate', reapply as EventListener);
       window.removeEventListener('hashchange', reapply as EventListener);
 
-      // Cleanup any pinned headers (useful during hot reloads)
+      // cleanup any pinned headers (useful during hot reloads)
       const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
       roots.forEach(cleanupPinned);
     };
