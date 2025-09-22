@@ -1,16 +1,15 @@
-// src/services/auth.ts
+// services/auth.ts
 import { supabase } from '../lib/supabaseClient';
 
+const REDIRECT_PATH = '/#/test-auth';
+
 /**
- * Builds a redirect URL for Supabase magic links.
- * We send users back to the TestAuth page so the session
- * can be detected and stored by the client.
+ * Build the URL Supabase should redirect back to after the magic-link is clicked.
+ * Uses the current origin so it works in both local dev and production.
  */
-function buildRedirectUrl() {
-  // In Vercel/production this will be your deployed origin.
-  // In local dev it will be http://localhost:5173 (or similar).
+function buildRedirectUrl(): string | undefined {
   if (typeof window === 'undefined') return undefined;
-  return `${window.location.origin}/#/test-auth`;
+  return `${window.location.origin}${REDIRECT_PATH}`;
 }
 
 /** Sign in via email magic link */
@@ -19,8 +18,7 @@ export async function signInWithEmail(email: string) {
     email,
     options: {
       emailRedirectTo: buildRedirectUrl(),
-      // If you later enable email verification, you can also add:
-      // shouldCreateUser: true
+      // shouldCreateUser: true, // uncomment if you want Supabase to auto-create users
     },
   });
   if (error) throw error;
