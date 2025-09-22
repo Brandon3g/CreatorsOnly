@@ -18,6 +18,7 @@ import InterestedUsers from './pages/InterestedUsers';
 import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
+import TestAuth from './pages/TestAuth';
 
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
