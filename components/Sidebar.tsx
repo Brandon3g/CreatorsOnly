@@ -84,193 +84,59 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   }, [theme]);
 
   useEffect(() => {
-    // Ensure iOS PWAs expose the safe-area env() variables
-    const vp = document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null;
-    if (vp) {
-      if (!/viewport-fit\s*=\s*cover/.test(vp.content)) {
-        vp.content = vp.content
-          ? `${vp.content}, viewport-fit=cover`
-          : 'width=device-width, initial-scale=1, viewport-fit=cover';
-      }
-    } else {
-      const meta = document.createElement('meta');
-      meta.name = 'viewport';
-      meta.content = 'width=device-width, initial-scale=1, viewport-fit=cover';
-      document.head.appendChild(meta);
-    }
-
     // Inject global styles (theme + mobile helpers)
     let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
       styleEl.id = 'co-global-theme';
-      styleEl.textContent = `
-        body, .bg-background { background-color: var(--co-bg) !important; }
-        .text-text-primary { color: var(--co-fg) !important; }
-        .text-text-secondary { color: var(--co-fg-muted) !important; }
-        .text-primary { color: var(--co-primary) !important; }
-        .bg-primary { background-color: var(--co-primary) !important; color: #fff !important; }
-        .hover\\:bg-primary-hover:hover { background-color: var(--co-primary-hover) !important; }
-        .border-surface, .border-surface-light, .border-surface-dark { border-color: var(--co-surface-border-color) !important; }
-        .bg-surface, .bg-surface-light {
-          background-color: var(--co-surface-opaque-color) !important;
-          color: var(--co-surface-foreground-color) !important;
-          border: 1px solid var(--co-surface-border-color) !important;
-          box-shadow: var(--co-surface-shadow) !important;
-          -webkit-backdrop-filter: none !important;
-          backdrop-filter: none !important;
-        }
-        .hover\\:bg-surface-light:hover { background-color: var(--co-surface-hover-color) !important; }
-
-        /* iOS paint fix for fixed elements */
-        .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
-
-        /* SAFE-AREA TOP GUARD — prevents content under iPhone status bar */
-        html, body {
-          padding-top: env(safe-area-inset-top, 0px);
-          padding-left: env(safe-area-inset-left, 0px);
-          padding-right: env(safe-area-inset-right, 0px);
-          min-height: 100%;
-        }
-        /* legacy iOS syntax */
-        @supports (padding: constant(safe-area-inset-top)) {
-          html, body {
-            padding-top: constant(safe-area-inset-top);
-            padding-left: constant(safe-area-inset-left);
-            padding-right: constant(safe-area-inset-right);
-          }
-        }
-
-        /* Gentle breathing room at the very top of the main content
-           + safe-area padding so content never scrolls beneath status icons */
-        main, [role="main"], .content, .center-column {
-          padding-top: calc(env(safe-area-inset-top, 0px) + clamp(6px, 1.2vh, 12px)) !important;
-        }
-
-        /* Truly pinned header (mobile). We set this class via script and add a spacer to keep layout stable. */
-        .co-fixed-topbar {
-          position: fixed !important;
-          top: env(safe-area-inset-top, 0px);
-          left: 0;
-          right: 0;
-          z-index: 48;
-          background: var(--co-bg) !important;
-          border-bottom: 1px solid var(--co-surface-border-color) !important;
-        }
-
-        /* MOBILE */
-        @media (max-width: 767px) {
-          /* Ensure content can scroll above a fixed footer */
-          main, [role="main"], .content, .center-column {
-            padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
-          }
-          main::after, [role="main"]::after, .content::after, .center-column::after {
-            content: "";
-            display: block;
-            height: calc(12px + env(safe-area-inset-bottom, 0px));
-          }
-        }
-      `;
       document.head.appendChild(styleEl);
     }
-    setDomTheme(theme === 'dark' ? 'dark' : 'light');
 
-    // ===== Mobile header pinning (robust) =====
-    const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
-
-    const cleanupPinned = (root: HTMLElement) => {
-      const pinned = root.querySelector<HTMLElement>('.co-fixed-topbar');
-      if (pinned) {
-        const spacer = pinned.previousElementSibling as HTMLElement | null;
-        pinned.classList.remove('co-fixed-topbar');
-        if (spacer && spacer.classList.contains('co-topbar-spacer')) spacer.remove();
+    styleEl.textContent = `
+      body, .bg-background { background-color: var(--co-bg) !important; }
+      .text-text-primary { color: var(--co-fg) !important; }
+      .text-text-secondary { color: var(--co-fg-muted) !important; }
+      .text-primary { color: var(--co-primary) !important; }
+      .bg-primary { background-color: var(--co-primary) !important; color: #fff !important; }
+      .hover\\:bg-primary-hover:hover { background-color: var(--co-primary-hover) !important; }
+      .border-surface, .border-surface-light, .border-surface-dark { border-color: var(--co-surface-border-color) !important; }
+      .bg-surface, .bg-surface-light {
+        background-color: var(--co-surface-opaque-color) !important;
+        color: var(--co-surface-foreground-color) !important;
+        border: 1px solid var(--co-surface-border-color) !important;
+        box-shadow: var(--co-surface-shadow) !important;
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
       }
-    };
+      .hover\\:bg-surface-light:hover { background-color: var(--co-surface-hover-color) !important; }
 
-    const findHeaderCandidate = (root: HTMLElement): HTMLElement | null => {
-      const rootRect = root.getBoundingClientRect();
-      const isNearTop = (el: HTMLElement) => {
-        const r = el.getBoundingClientRect();
-        const delta = Math.abs(r.top - rootRect.top);
-        return delta <= 24 && r.height >= 40 && r.height <= 112;
-      };
-      const notFormy = (el: HTMLElement) =>
-        !el.querySelector('textarea, input, [role="textbox"], button');
+      /* iOS paint fix for fixed elements */
+      .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
 
-      // 1) obvious selectors
-      let el =
-        root.querySelector<HTMLElement>('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title');
-      if (el && isNearTop(el) && notFormy(el)) return el;
+      /* ===== SAFE-AREA: prevent content from scrolling under iPhone status bar ===== */
+      /* We only add the safe-area inset to the main content containers. This does not change header height. */
+      main, [role="main"], .content, .center-column {
+        /* your existing gentle top breathing room + the top safe-area */
+        padding-top: calc(env(safe-area-inset-top, 0px) + clamp(6px, 1.2vh, 12px)) !important;
+        padding-left: env(safe-area-inset-left, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+      }
 
-      // 2) scan the first ~120 elements depth-first for something near the top
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-      let count = 0;
-      let best: HTMLElement | null = null;
-      while (walker.nextNode() && count < 120) {
-        const node = walker.currentNode as HTMLElement;
-        count++;
-        if (!(node instanceof HTMLElement)) continue;
-        const cs = getComputedStyle(node);
-        if (cs.visibility === 'hidden' || cs.display === 'none') continue;
-        if (!isNearTop(node) || !notFormy(node)) continue;
-        // prefer rows / bars
-        if (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative') {
-          best = node;
-          break;
+      /* MOBILE: ensure content can scroll above a fixed footer and respect bottom safe-area */
+      @media (max-width: 767px) {
+        main, [role="main"], .content, .center-column {
+          padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
+        }
+        main::after, [role="main"]::after, .content::after, .center-column::after {
+          content: "";
+          display: block;
+          height: calc(12px + env(safe-area-inset-bottom, 0px));
         }
       }
-      return best;
-    };
+    `;
 
-    const pinHeaders = () => {
-      if (!isMobile()) return;
-
-      const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
-      roots.forEach((root) => {
-        cleanupPinned(root);
-
-        const candidate = findHeaderCandidate(root);
-        if (!candidate) return;
-
-        // insert spacer to preserve layout
-        const h = Math.ceil(candidate.getBoundingClientRect().height);
-        const spacer = document.createElement('div');
-        spacer.className = 'co-topbar-spacer';
-        spacer.style.height = `${h}px`;
-        candidate.parentElement?.insertBefore(spacer, candidate);
-
-        // pin the header
-        candidate.classList.add('co-fixed-topbar');
-      });
-    };
-
-    // run now + after layout settles
-    pinHeaders();
-    const t1 = setTimeout(pinHeaders, 100);
-    const t2 = setTimeout(pinHeaders, 350);
-
-    // update on viewport changes/navigation
-    const reapply = () => pinHeaders();
-    window.addEventListener('resize', reapply);
-    window.addEventListener('orientationchange', reapply);
-    window.addEventListener('co:navigate', reapply as EventListener);
-    window.addEventListener('popstate', reapply as EventListener);
-    window.addEventListener('hashchange', reapply as EventListener);
-
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      window.removeEventListener('resize', reapply);
-      window.removeEventListener('orientationchange', reapply);
-      window.removeEventListener('co:navigate', reapply as EventListener);
-      window.removeEventListener('popstate', reapply as EventListener);
-      window.removeEventListener('hashchange', reapply as EventListener);
-
-      // cleanup any pinned headers (useful during hot reloads)
-      const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
-      roots.forEach(cleanupPinned);
-    };
-  }, []);
+    setDomTheme(theme === 'dark' ? 'dark' : 'light');
+  }, [theme]);
 
   const unreadMessageSenders = new Set(
     notifications
@@ -565,14 +431,4 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
             <MobileNavItem iconKey="home" label="Home" page="feed" />
             <MobileNavItem iconKey="explore" label="Explore" page="explore" />
             <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
-            <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={unreadMessagesCount} />
-            {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
-            <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
-          </div>
-        )}
-      </nav>
-    </>
-  );
-};
-
-export default Sidebar;
+            <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={

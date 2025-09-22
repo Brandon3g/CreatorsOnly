@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Safe-area variables */
 :root {
   --sat: env(safe-area-inset-top);
   --sar: env(safe-area-inset-right);
@@ -9,6 +10,17 @@
   --sal: env(safe-area-inset-left);
 }
 
+/* Normalize values (older iOS/polyfills) */
+@supports (padding: max(0px)) {
+  :root {
+    --sat: max(env(safe-area-inset-top), 0px);
+    --sar: max(env(safe-area-inset-right), 0px);
+    --sab: max(env(safe-area-inset-bottom), 0px);
+    --sal: max(env(safe-area-inset-left), 0px);
+  }
+}
+
+/* Utilities already in your file */
 .safe-pads {
   padding-top: var(--sat);
   padding-right: var(--sar);
@@ -25,4 +37,43 @@
 html,
 body {
   height: -webkit-fill-available;
+}
+
+/* ------------------------------------------------------------------
+   iPhone PWA: Prevent content from scrolling into the status bar area
+   (no header sizing changes)
+------------------------------------------------------------------- */
+
+/* 1) Add top safe padding to the main scroll roots on small screens */
+@media (max-width: 767px) {
+  body,
+  #root,
+  main,
+  [role="main"],
+  .content,
+  .center-column {
+    padding-top: var(--sat);
+  }
+}
+
+/* 2) Visual guard: a non-interactive mask that sits exactly in the
+      safe-area so nothing is ever visible under the status icons. */
+@media (max-width: 767px) {
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--sat);
+    background: var(--co-bg, #0B0B0E); /* falls back to dark if theme var missing */
+    z-index: 60;                        /* above page content, below any modals */
+    pointer-events: none;
+  }
+}
+
+/* 3) Helper (optional): if you have any fixed/sticky bars that should
+      sit directly under the status bar, add this class to them. */
+.stick-below-safe {
+  top: var(--sat) !important;
 }
