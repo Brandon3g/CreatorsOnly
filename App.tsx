@@ -18,7 +18,7 @@ import InterestedUsers from './pages/InterestedUsers';
 import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
-import TestAuth from './pages/TestAuth';
+import TestAuth from './pages/TestAuth.tsx'; // <-- important: include .tsx so Vercel resolves it
 
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
@@ -180,7 +180,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       if (editingCollaboration) {
-        setActiveTab('project');
+        setActiveTab='project';
         setProjectTitle(editingCollaboration.title);
         setProjectDesc(editingCollaboration.description);
         setProjectImage(editingCollaboration.image || null);
@@ -598,7 +598,7 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('socket-event', handleSocketEvent);
   }, [isAuthenticated, currentUser, subscribeToPushNotifications]);
 
-  // --- TEMP DEBUG ROUTE: show TestAuth page when hash includes "test-auth"
+  // Show the TestAuth page when visiting #/test-auth
   if (typeof window !== 'undefined' && window.location.hash.includes('test-auth')) {
     return (
       <div className="p-4">
