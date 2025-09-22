@@ -598,6 +598,15 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('socket-event', handleSocketEvent);
   }, [isAuthenticated, currentUser, subscribeToPushNotifications]);
 
+  // --- TEMP DEBUG ROUTE: show TestAuth page when hash includes "test-auth"
+  if (typeof window !== 'undefined' && window.location.hash.includes('test-auth')) {
+    return (
+      <div className="p-4">
+        <TestAuth />
+      </div>
+    );
+  }
+
   const handleForgotPassword = () => setAuthStage('forgot');
   const handleSendResetLink = (email: string) => {
     sendPasswordResetLink(email);
