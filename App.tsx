@@ -18,7 +18,7 @@ import InterestedUsers from './pages/InterestedUsers';
 import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
-import TestAuth from './pages/TestAuth.tsx'; // <-- important: include .tsx so Vercel resolves it
+import TestAuth from './pages/TestAuth';
 
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
@@ -37,10 +37,11 @@ function useThemeBoot() {
   }, []);
 }
 
-const VAPID_PUBLIC_KEY = 'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
+const VAPID_PUBLIC_KEY =
+  'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
 
 function urlBase64ToUint8Array(base64String: string) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
@@ -48,7 +49,9 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-const requestNotificationPermission = async (subscribeFn: (sub: PushSubscriptionObject) => void) => {
+const requestNotificationPermission = async (
+  subscribeFn: (sub: PushSubscriptionObject) => void
+) => {
   if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
   const permission = await Notification.requestPermission();
   if (permission === 'granted') {
@@ -98,11 +101,16 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
 
   const getIcon = () => {
     switch (notification.type) {
-      case 'FRIEND_REQUEST': return ICONS.plus;
-      case 'FRIEND_REQUEST_ACCEPTED': return ICONS.verified;
-      case 'NEW_MESSAGE': return ICONS.messages;
-      case 'POST_LIKE': return ICONS.like;
-      default: return ICONS.notifications;
+      case 'FRIEND_REQUEST':
+        return ICONS.plus;
+      case 'FRIEND_REQUEST_ACCEPTED':
+        return ICONS.verified;
+      case 'NEW_MESSAGE':
+        return ICONS.messages;
+      case 'POST_LIKE':
+        return ICONS.like;
+      default:
+        return ICONS.notifications;
     }
   };
 
@@ -133,7 +141,10 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
           </div>
           <div className="ml-4 flex-shrink-0 flex">
             <button
-              onPointerUp={(e) => { stop(e); handleClose(); }}
+              onPointerUp={(e) => {
+                stop(e);
+                handleClose();
+              }}
               className="rounded-md inline-flex text-text-secondary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
               aria-label="Close"
             >
@@ -159,7 +170,8 @@ const CreateModal: React.FC<CreateModalProps> = ({
   initialTab = 'post',
   editingCollaboration,
 }) => {
-  const { addPost, addCollaboration, updateCollaboration, navigate, users, currentUser } = useAppContext();
+  const { addPost, addCollaboration, updateCollaboration, navigate, users, currentUser } =
+    useAppContext();
   const [activeTab, setActiveTab] = useState(initialTab);
 
   const [postContent, setPostContent] = useState('');
@@ -180,7 +192,8 @@ const CreateModal: React.FC<CreateModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       if (editingCollaboration) {
-        setActiveTab='project';
+        // FIX: call the setter, don't assign to it
+        setActiveTab('project');
         setProjectTitle(editingCollaboration.title);
         setProjectDesc(editingCollaboration.description);
         setProjectImage(editingCollaboration.image || null);
@@ -199,13 +212,17 @@ const CreateModal: React.FC<CreateModalProps> = ({
   }, [isOpen, initialTab, editingCollaboration]);
 
   useEffect(() => {
-    if (mentionQuery === null) { setSuggestions([]); return; }
+    if (mentionQuery === null) {
+      setSuggestions([]);
+      return;
+    }
     if (!currentUser) return;
     const filtered = users
-      .filter(u =>
-        u.id !== currentUser.id &&
-        (u.username.toLowerCase().includes(mentionQuery.toLowerCase()) ||
-         u.name.toLowerCase().includes(mentionQuery.toLowerCase()))
+      .filter(
+        (u) =>
+          u.id !== currentUser.id &&
+          (u.username.toLowerCase().includes(mentionQuery.toLowerCase()) ||
+            u.name.toLowerCase().includes(mentionQuery.toLowerCase()))
       )
       .slice(0, 5);
     setSuggestions(filtered);
@@ -234,7 +251,10 @@ const CreateModal: React.FC<CreateModalProps> = ({
         };
         updateCollaboration(updated);
       } else {
-        const newCollab: Omit<Collaboration, 'id' | 'authorId' | 'timestamp' | 'interestedUserIds'> = {
+        const newCollab: Omit<
+          Collaboration,
+          'id' | 'authorId' | 'timestamp' | 'interestedUserIds'
+        > = {
           title: projectTitle,
           description: projectDesc,
           image: projectImage || undefined,
@@ -269,7 +289,8 @@ const CreateModal: React.FC<CreateModalProps> = ({
     const caret = e.target.selectionStart;
     const before = text.substring(0, caret);
     const at = before.match(/@(\w+)$/);
-    if (at) setMentionQuery(at[1]); else setMentionQuery(null);
+    if (at) setMentionQuery(at[1]);
+    else setMentionQuery(null);
   };
 
   const handleSelectMention = (username: string) => {
@@ -293,8 +314,14 @@ const CreateModal: React.FC<CreateModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onPointerUp={onClose}>
-      <div className="bg-surface rounded-2xl w-full max-w-lg relative" onPointerUp={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4"
+      onPointerUp={onClose}
+    >
+      <div
+        className="bg-surface rounded-2xl w-full max-w-lg relative"
+        onPointerUp={(e) => e.stopPropagation()}
+      >
         <button
           onPointerUp={onClose}
           className="absolute top-4 right-4 text-text-secondary hover:text-text-primary"
@@ -307,14 +334,20 @@ const CreateModal: React.FC<CreateModalProps> = ({
           {!isEditing && (
             <button
               onPointerUp={() => setActiveTab('post')}
-              className={`flex-1 p-4 font-bold ${activeTab === 'post' ? 'text-primary border-b-2 border-primary' : 'text-text-secondary'}`}
+              className={`flex-1 p-4 font-bold ${
+                activeTab === 'post' ? 'text-primary border-b-2 border-primary' : 'text-text-secondary'
+              }`}
             >
               Create Post
             </button>
           )}
           <button
             onPointerUp={() => setActiveTab('project')}
-            className={`flex-1 p-4 font-bold ${activeTab === 'project' ? 'text-primary border-b-2 border-primary' : 'text-text-secondary'}`}
+            className={`flex-1 p-4 font-bold ${
+              activeTab === 'project'
+                ? 'text-primary border-b-2 border-primary'
+                : 'text-text-secondary'
+            }`}
           >
             {isEditing ? 'Edit Opportunity' : 'Post Opportunity'}
           </button>
@@ -334,7 +367,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
                 />
                 {suggestions.length > 0 && (
                   <div className="absolute top-full left-0 w-full bg-surface rounded-md shadow-lg border border-surface-light mt-1 z-20 max-h-48 overflow-y-auto">
-                    {suggestions.map(user => (
+                    {suggestions.map((user) => (
                       <div
                         key={user.id}
                         onPointerUp={() => handleSelectMention(user.username)}
@@ -454,7 +487,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
   );
 };
 
-type FeedbackModalProps = { isOpen: boolean; onClose: () => void; };
+type FeedbackModalProps = { isOpen: boolean; onClose: () => void };
 
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   const { sendFeedback } = useAppContext();
@@ -473,8 +506,14 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onPointerUp={onClose}>
-      <div className="bg-surface rounded-2xl w-full max-w-md relative" onPointerUp={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4"
+      onPointerUp={onClose}
+    >
+      <div
+        className="bg-surface rounded-2xl w-full max-w-md relative"
+        onPointerUp={(e) => e.stopPropagation()}
+      >
         <button
           onPointerUp={onClose}
           className="absolute top-4 right-4 text-text-secondary hover:text-text-primary"
@@ -494,7 +533,9 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
                     name="feedbackType"
                     value="Suggestion"
                     checked={feedbackType === 'Suggestion'}
-                    onChange={(e) => setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')}
+                    onChange={(e) =>
+                      setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')
+                    }
                     className="form-radio bg-surface-light border-surface-light text-primary focus:ring-primary"
                   />
                   <span>Suggestion</span>
@@ -505,7 +546,9 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
                     name="feedbackType"
                     value="Bug Report"
                     checked={feedbackType === 'Bug Report'}
-                    onChange={(e) => setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')}
+                    onChange={(e) =>
+                      setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')
+                    }
                     className="form-radio bg-surface-light border-surface-light text-primary focus:ring-primary"
                   />
                   <span>Bug Report</span>
@@ -513,7 +556,9 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
               </div>
             </div>
             <div>
-              <label htmlFor="feedbackContent" className="text-sm text-text-secondary">Details</label>
+              <label htmlFor="feedbackContent" className="text-sm text-text-secondary">
+                Details
+              </label>
               <textarea
                 id="feedbackContent"
                 value={feedbackContent}
@@ -541,21 +586,31 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
 
 const AppContent: React.FC = () => {
   const {
-    currentPage, viewingProfileId, isAuthenticated, isRegistering, registerScrollableNode,
-    currentUser, history, sendPasswordResetLink, subscribeToPushNotifications,
-    editingCollaborationId, setEditingCollaborationId, collaborations
+    currentPage,
+    viewingProfileId,
+    isAuthenticated,
+    isRegistering,
+    registerScrollableNode,
+    currentUser,
+    history,
+    sendPasswordResetLink,
+    subscribeToPushNotifications,
+    editingCollaborationId,
+    setEditingCollaborationId,
+    collaborations,
   } = useAppContext();
 
   const mainContentRef = useRef<HTMLDivElement>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [createModalInitialTab, setCreateModalInitialTab] = useState<'post' | 'project'>('post');
+  const [createModalInitialTab, setCreateModalInitialTab] =
+    useState<'post' | 'project'>('post');
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [toastNotification, setToastNotification] = useState<Notification | null>(null);
 
   const [authStage, setAuthStage] = useState<'login' | 'forgot' | 'sent'>('login');
   const [forgotEmail, setForgotEmail] = useState('');
 
-  const editingCollab = collaborations.find(c => c.id === editingCollaborationId);
+  const editingCollab = collaborations.find((c) => c.id === editingCollaborationId);
   const isEditCollabModalOpen = !!editingCollab;
 
   const openCreateModal = (initialTab: 'post' | 'project' = 'post') => {
@@ -617,26 +672,44 @@ const AppContent: React.FC = () => {
 
   if (!isAuthenticated) {
     if (isRegistering) return <ProfileSetup />;
-    if (authStage === 'forgot') return <ForgotPassword onSendResetLink={handleSendResetLink} onBackToLogin={handleBackToLogin} />;
-    if (authStage === 'sent') return <ResetPasswordSent email={forgotEmail} onBackToLogin={handleBackToLogin} />;
+    if (authStage === 'forgot')
+      return (
+        <ForgotPassword
+          onSendResetLink={handleSendResetLink}
+          onBackToLogin={handleBackToLogin}
+        />
+      );
+    if (authStage === 'sent')
+      return <ResetPasswordSent email={forgotEmail} onBackToLogin={handleBackToLogin} />;
     return <Login onForgotPassword={handleForgotPassword} />;
   }
 
   const renderPage = () => {
     switch (currentPage) {
-      case 'feed': return <Feed />;
-      case 'explore': return <Explore />;
-      case 'notifications': return <NotificationsPage />;
-      case 'messages': return <Messages />;
-      case 'search': return <Search />;
-      case 'profile':
-        if (viewingProfileId) return <Profile userId={viewingProfileId} onOpenFeedbackModal={openFeedbackModal} />;
-        if (currentUser) return <Profile userId={currentUser.id} onOpenFeedbackModal={openFeedbackModal} />;
+      case 'feed':
         return <Feed />;
-      case 'collaborations': return <Collaborations openCreateModal={openCreateModal} />;
-      case 'admin': return <Admin />;
-      case 'interestedUsers': return <InterestedUsers />;
-      default: return <Feed />;
+      case 'explore':
+        return <Explore />;
+      case 'notifications':
+        return <NotificationsPage />;
+      case 'messages':
+        return <Messages />;
+      case 'search':
+        return <Search />;
+      case 'profile':
+        if (viewingProfileId)
+          return <Profile userId={viewingProfileId} onOpenFeedbackModal={openFeedbackModal} />;
+        if (currentUser)
+          return <Profile userId={currentUser.id} onOpenFeedbackModal={openFeedbackModal} />;
+        return <Feed />;
+      case 'collaborations':
+        return <Collaborations openCreateModal={openCreateModal} />;
+      case 'admin':
+        return <Admin />;
+      case 'interestedUsers':
+        return <InterestedUsers />;
+      default:
+        return <Feed />;
     }
   };
 
@@ -646,7 +719,10 @@ const AppContent: React.FC = () => {
     return (
       <>
         <div className="flex full-height overflow-hidden safe-pads">
-          <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
+          <Sidebar
+            openCreateModal={openCreateModal}
+            onOpenFeedbackModal={openFeedbackModal}
+          />
           <main className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding">
             <Messages />
           </main>
@@ -656,7 +732,10 @@ const AppContent: React.FC = () => {
             initialTab={createModalInitialTab}
             editingCollaboration={editingCollab}
           />
-          <FeedbackModal isOpen={isFeedbackModalOpen} onClose={() => setIsFeedbackModalOpen(false)} />
+          <FeedbackModal
+            isOpen={isFeedbackModalOpen}
+            onClose={() => setIsFeedbackModalOpen(false)}
+          />
         </div>
         <Toast notification={toastNotification} onClose={() => setToastNotification(null)} />
       </>
@@ -688,7 +767,10 @@ const AppContent: React.FC = () => {
           initialTab={createModalInitialTab}
           editingCollaboration={editingCollab}
         />
-        <FeedbackModal isOpen={isFeedbackModalOpen} onClose={() => setIsFeedbackModalOpen(false)} />
+        <FeedbackModal
+          isOpen={isFeedbackModalOpen}
+          onClose={() => setIsFeedbackModalOpen(false)}
+        />
       </div>
       <Toast notification={toastNotification} onClose={() => setToastNotification(null)} />
     </>
