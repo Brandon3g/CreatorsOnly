@@ -1,6 +1,7 @@
+// pages/TestAuth.tsx
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { signInWithEmail, signOut, getCurrentUser } from '../services/auth';
+import { signInWithEmail, signOut } from '../services/auth';
 import { getMyProfile, upsertMyProfile } from '../services/profile';
 
 export default function TestAuth() {
@@ -10,14 +11,48 @@ export default function TestAuth() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string>('');
 
-  // Keep userId in sync with auth session
+  // Parse tokens when we land on this page (handles the double-hash case)
   useEffect(() => {
     (async () => {
+      if (typeof window !== 'undefined') {
+        const hash = window.location.hash || ''; // e.g. "#/test-auth#access_token=...&refresh_token=..."
+        const pieces = hash.split('#');
+        // Look for the last fragment (after the second '#') which contains the tokens
+        const maybeParams = pieces.length > 1 ? pieces[pieces.length - 1] : '';
+        const hasTokens =
+          maybeParams.includes('access_token=') && maybeParams.includes('refresh_token=');
+
+        if (hasTokens) {
+          const params = new URLSearchParams(maybeParams);
+          const access_token = params.get('access_token') || undefined;
+          const refresh_token = params.get('refresh_token') || undefined;
+
+          if (access_token && refresh_token) {
+            const { error } = await supabase.auth.setSession({ access_token, refresh_token });
+            if (error) {
+              console.error('setSession error:', error);
+              setStatus('Failed to set session');
+            } else {
+              setStatus('Signed in');
+            }
+          }
+
+          // Clean the URL (remove tokens) but keep us on #/test-auth
+          window.history.replaceState({}, '', `${window.location.origin}/#/test-auth`);
+        }
+      }
+
+      // After any token handling, read the current user
       const { data: { user } } = await supabase.auth.getUser();
       setUserId(user?.id ?? null);
       setStatus(user ? 'Signed in' : 'Signed out');
+      if (user) {
+        const p = await getMyProfile();
+        setProfile(p);
+      }
     })();
 
+    // Keep userId/profile in sync with auth state changes
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUserId(session?.user?.id ?? null);
       setStatus(session?.user ? 'Signed in' : 'Signed out');
@@ -35,7 +70,7 @@ export default function TestAuth() {
   async function handleLogin() {
     setStatus('Sending magic link…');
     await signInWithEmail(email);
-    setStatus('Magic link sent. Check your email on this device.');
+    setStatus('Magic link sent. Check this device’s email.');
   }
 
   async function handleLoad() {
