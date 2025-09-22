@@ -84,11 +84,19 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   }, [theme]);
 
   useEffect(() => {
+    // Inject global styles for theme + precise iPhone safe-area handling
     let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
       styleEl.id = 'co-global-theme';
       styleEl.textContent = `
+        :root{
+          --co-topbar-h: 44px;            /* close to Instagram */
+          --co-bottombar-h: 56px;         /* close to Instagram */
+          --co-topbar-pad-y: 6px;         /* breathing room inside header */
+          --co-bottombar-pad-top: 4px;    /* slight space above bottom icons */
+        }
+
         body, .bg-background { background-color: var(--co-bg) !important; }
         .text-text-primary { color: var(--co-fg) !important; }
         .text-text-secondary { color: var(--co-fg-muted) !important; }
@@ -108,11 +116,157 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
 
         /* iOS paint fix for fixed elements */
         .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
+
+        /* Fixed topbar below the iPhone status bar */
+        .co-fixed-topbar {
+          position: fixed !important;
+          top: env(safe-area-inset-top, 0px);
+          left: 0;
+          right: 0;
+          z-index: 48;
+          background: var(--co-bg) !important;
+          border-bottom: 1px solid var(--co-surface-border-color) !important;
+          padding-top: var(--co-topbar-pad-y);
+          padding-bottom: var(--co-topbar-pad-y);
+        }
+
+        /* MOBILE rules */
+        @media (max-width: 767px) {
+          /* When NO pinned header, keep content out of the status bar with top safe-area padding */
+          main, [role="main"], .content, .center-column {
+            padding-top: env(safe-area-inset-top, 0px) !important;
+            padding-bottom: calc(var(--co-bottombar-h) + env(safe-area-inset-bottom, 0px)) !important;
+            min-height: 100svh;
+            overscroll-behavior-y: contain;
+          }
+
+          /* If we did pin a header, we don't want extra top padding above it */
+          .co-has-pinned-header main,
+          .co-has-pinned-header [role="main"],
+          .co-has-pinned-header .content,
+          .co-has-pinned-header .center-column {
+            padding-top: 0 !important;
+          }
+
+          /* Bottom nav height and inner layout to mimic Instagram */
+          nav.co-bottomnav {
+            height: calc(var(--co-bottombar-h) + env(safe-area-inset-bottom, 0px)) !important;
+            padding-bottom: env(safe-area-inset-bottom, 0px);
+            border-top: 1px solid var(--co-surface-border-color) !important;
+          }
+          nav.co-bottomnav > .co-bottomnav-inner {
+            height: var(--co-bottombar-h);
+            padding-top: var(--co-bottombar-pad-top);
+          }
+        }
       `;
       document.head.appendChild(styleEl);
     }
     setDomTheme(theme === 'dark' ? 'dark' : 'light');
-  }, []); // inject once
+
+    // ===== Mobile header pinning =====
+    const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
+
+    const cleanupPinned = (root: HTMLElement) => {
+      const pinned = root.querySelector<HTMLElement>('.co-fixed-topbar');
+      if (pinned) {
+        const spacer = pinned.previousElementSibling as HTMLElement | null;
+        pinned.classList.remove('co-fixed-topbar');
+        if (spacer && spacer.classList.contains('co-topbar-spacer')) spacer.remove();
+      }
+    };
+
+    const findHeaderCandidate = (root: HTMLElement): HTMLElement | null => {
+      const rootRect = root.getBoundingClientRect();
+      const isNearTop = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        const delta = Math.abs(r.top - rootRect.top);
+        return delta <= 24 && r.height >= 40 && r.height <= 112;
+      };
+      const notFormy = (el: HTMLElement) =>
+        !el.querySelector('textarea, input, [role="textbox"], button');
+
+      // 1) obvious selectors
+      let el =
+        root.querySelector<HTMLElement>('header, .page-header, .topbar, .header, .toolbar, .title-bar, .page-title');
+      if (el && isNearTop(el) && notFormy(el)) return el;
+
+      // 2) scan a bit for something row-like near the top
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let count = 0;
+      let best: HTMLElement | null = null;
+      while (walker.nextNode() && count < 120) {
+        const node = walker.currentNode as HTMLElement;
+        count++;
+        if (!(node instanceof HTMLElement)) continue;
+        const cs = getComputedStyle(node);
+        if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+        if (!isNearTop(node) || !notFormy(node)) continue;
+        if (cs.display.includes('flex') || cs.position === 'sticky' || cs.position === 'relative') {
+          best = node;
+          break;
+        }
+      }
+      return best;
+    };
+
+    const pinHeaders = () => {
+      if (!isMobile()) return;
+
+      const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
+      let pinnedAny = false;
+
+      roots.forEach((root) => {
+        cleanupPinned(root);
+
+        const candidate = findHeaderCandidate(root);
+        if (!candidate) return;
+
+        // Insert spacer first (temporary), then pin, then correct spacer height to final measured size
+        const spacer = document.createElement('div');
+        spacer.className = 'co-topbar-spacer';
+        spacer.style.height = `${Math.ceil(candidate.getBoundingClientRect().height)}px`;
+        candidate.parentElement?.insertBefore(spacer, candidate);
+
+        candidate.classList.add('co-fixed-topbar');
+
+        // Measure again after padding was applied by the fixed class
+        const hAfter = Math.ceil(candidate.getBoundingClientRect().height);
+        spacer.style.height = `${hAfter}px`;
+
+        pinnedAny = true;
+      });
+
+      document.documentElement.classList.toggle('co-has-pinned-header', pinnedAny);
+    };
+
+    // run now + after layout settles
+    pinHeaders();
+    const t1 = setTimeout(pinHeaders, 100);
+    const t2 = setTimeout(pinHeaders, 350);
+
+    // update on viewport changes/navigation
+    const reapply = () => pinHeaders();
+    window.addEventListener('resize', reapply);
+    window.addEventListener('orientationchange', reapply);
+    window.addEventListener('co:navigate', reapply as EventListener);
+    window.addEventListener('popstate', reapply as EventListener);
+    window.addEventListener('hashchange', reapply as EventListener);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener('resize', reapply);
+      window.removeEventListener('orientationchange', reapply);
+      window.removeEventListener('co:navigate', reapply as EventListener);
+      window.removeEventListener('popstate', reapply as EventListener);
+      window.removeEventListener('hashchange', reapply as EventListener);
+
+      const roots = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], .content, .center-column'));
+      roots.forEach(cleanupPinned);
+      document.documentElement.classList.remove('co-has-pinned-header');
+    };
+  }, [theme]);
 
   const unreadMessageSenders = new Set(
     notifications
@@ -258,9 +412,11 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
 
   if (!currentUser) return null;
 
+  const isMessagesPage = currentPage === 'messages';
+
   return (
     <>
-      {/* Desktop left sidebar */}
+      {/* Desktop/Tablet left rail */}
       <aside className="hidden md:flex fixed top-0 left-0 h-full w-20 lg:w-64 bg-background border-r border-surface-light p-4 flex-col justify-between z-40">
         <div className="w-full">
           <div className="text-primary font-bold text-2xl p-3 hidden lg:block">CreatorsOnly</div>
@@ -384,18 +540,28 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         </div>
       </aside>
 
-      {/* Mobile Bottom Navigation (uniform layout; safe-area aware) */}
-      <nav
-        className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-surface pt-1"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
-      >
-        <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-16`}>
-          <MobileNavItem iconKey="home" label="Home" page="feed" />
-          <MobileNavItem iconKey="explore" label="Explore" page="explore" />
-          <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
-          <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={unreadMessagesCount} />
-          {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
-          <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
+      {/* Mobile Bottom Navigation (Instagram-like height & spacing) */}
+      <nav className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background co-bottomnav">
+        <div className="co-bottomnav-inner">
+          {isMessagesPage ? (
+            <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-full`}>
+              <MobileNavItem iconKey="home" label="Home" page="feed" />
+              <MobileNavItem iconKey="explore" label="Explore" page="explore" />
+              <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
+              <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={unreadMessagesCount} />
+              {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
+              <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
+            </div>
+          ) : (
+            <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-full`}>
+              <MobileNavItem iconKey="home" label="Home" page="feed" />
+              <MobileNavItem iconKey="explore" label="Explore" page="explore" />
+              <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
+              <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={unreadMessagesCount} />
+              {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
+              <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
+            </div>
+          )}
         </div>
       </nav>
     </>
