@@ -16,7 +16,7 @@ import ResetPasswordSent from './pages/ResetPasswordSent';
 import Admin from './pages/Admin';
 import InterestedUsers from './pages/InterestedUsers';
 import { ICONS } from './constants';
-import type { Collaboration, Notification, PushSubscriptionObject, User } from './types';
+import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 
 const THEME_KEY = 'co-theme';
@@ -39,7 +39,7 @@ function useThemeBoot() {
 const VAPID_PUBLIC_KEY = 'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
 
 function urlBase64ToUint8Array(base64String: string) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
   const rawData = window.atob(base64);
   const outputArray = new Uint8Array(rawData.length);
@@ -115,13 +115,13 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
   return (
     <div
       onPointerUp={openNotifications}
-      className={`fixed w-full max-w-sm bg-surface shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden z-[200] transition-all duration-300 ease-in-out cursor-pointer
-      ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}`}
-      // Respect iPhone safe-areas for the toast placement
       style={{
         top: 'calc(env(safe-area-inset-top, 0px) + 1rem)',
         right: 'calc(env(safe-area-inset-right, 0px) + 1rem)',
+        position: 'fixed',
       }}
+      className={`w-full max-w-sm bg-surface shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden z-[200] transition-all duration-300 ease-in-out cursor-pointer
+      ${isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}`}
     >
       <div className="p-4">
         <div className="flex items-start">
@@ -545,7 +545,7 @@ const AppContent: React.FC = () => {
     editingCollaborationId, setEditingCollaborationId, collaborations
   } = useAppContext();
 
-  const mainContentRef = useRef<HTMLDivElement | HTMLMainElement>(null);
+  const mainContentRef = useRef<HTMLDivElement>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [createModalInitialTab, setCreateModalInitialTab] = useState<'post' | 'project'>('post');
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
@@ -574,13 +574,13 @@ const AppContent: React.FC = () => {
   };
 
   useEffect(() => {
-    if (mainContentRef.current) registerScrollableNode(mainContentRef.current as HTMLElement);
+    if (mainContentRef.current) registerScrollableNode(mainContentRef.current);
   }, [registerScrollableNode]);
 
   useLayoutEffect(() => {
     const lastEntry = history[history.length - 1];
-    if (mainContentRef.current && (lastEntry.scrollTop !== undefined)) {
-      (mainContentRef.current as HTMLElement).scrollTop = lastEntry.scrollTop;
+    if (mainContentRef.current && lastEntry.scrollTop !== undefined) {
+      mainContentRef.current.scrollTop = lastEntry.scrollTop;
     }
   }, [currentPage, viewingProfileId, history]);
 
@@ -635,10 +635,9 @@ const AppContent: React.FC = () => {
   if (isMessagesPage) {
     return (
       <>
-        {/* No safe-pads here; main itself receives env(safe-area-inset-*) via global CSS */}
-        <div className="flex full-height overflow-hidden">
+        <div className="flex full-height overflow-hidden safe-pads">
           <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
-          <main ref={mainContentRef as React.RefObject<HTMLMainElement>} className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto">
+          <main className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding">
             <Messages />
           </main>
           <CreateModal
@@ -656,12 +655,11 @@ const AppContent: React.FC = () => {
 
   return (
     <>
-      {/* No safe-pads here; main gets safe-area padding via global CSS */}
-      <div className="flex full-height overflow-hidden">
+      <div className="flex full-height overflow-hidden safe-pads">
         <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
         <main
-          ref={mainContentRef as React.RefObject<HTMLDivElement>}
-          className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto"
+          ref={mainContentRef}
+          className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding"
         >
           <div className="max-w-5xl mx-auto">
             <div className="md:grid md:grid-cols-3">
@@ -704,7 +702,6 @@ const AppWrapper: React.FC = () => {
   return (
     <AppProvider>
       <AppContent />
-      {/* Removed the temporary floating Theme button */}
     </AppProvider>
   );
 };

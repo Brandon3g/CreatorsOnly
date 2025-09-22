@@ -84,59 +84,35 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   }, [theme]);
 
   useEffect(() => {
-    // Inject global styles (theme + mobile helpers)
     let styleEl = document.getElementById('co-global-theme') as HTMLStyleElement | null;
     if (!styleEl) {
       styleEl = document.createElement('style');
       styleEl.id = 'co-global-theme';
+      styleEl.textContent = `
+        body, .bg-background { background-color: var(--co-bg) !important; }
+        .text-text-primary { color: var(--co-fg) !important; }
+        .text-text-secondary { color: var(--co-fg-muted) !important; }
+        .text-primary { color: var(--co-primary) !important; }
+        .bg-primary { background-color: var(--co-primary) !important; color: #fff !important; }
+        .hover\\:bg-primary-hover:hover { background-color: var(--co-primary-hover) !important; }
+        .border-surface, .border-surface-light, .border-surface-dark { border-color: var(--co-surface-border-color) !important; }
+        .bg-surface, .bg-surface-light {
+          background-color: var(--co-surface-opaque-color) !important;
+          color: var(--co-surface-foreground-color) !important;
+          border: 1px solid var(--co-surface-border-color) !important;
+          box-shadow: var(--co-surface-shadow) !important;
+          -webkit-backdrop-filter: none !important;
+          backdrop-filter: none !important;
+        }
+        .hover\\:bg-surface-light:hover { background-color: var(--co-surface-hover-color) !important; }
+
+        /* iOS paint fix for fixed elements */
+        .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
+      `;
       document.head.appendChild(styleEl);
     }
-
-    styleEl.textContent = `
-      body, .bg-background { background-color: var(--co-bg) !important; }
-      .text-text-primary { color: var(--co-fg) !important; }
-      .text-text-secondary { color: var(--co-fg-muted) !important; }
-      .text-primary { color: var(--co-primary) !important; }
-      .bg-primary { background-color: var(--co-primary) !important; color: #fff !important; }
-      .hover\\:bg-primary-hover:hover { background-color: var(--co-primary-hover) !important; }
-      .border-surface, .border-surface-light, .border-surface-dark { border-color: var(--co-surface-border-color) !important; }
-      .bg-surface, .bg-surface-light {
-        background-color: var(--co-surface-opaque-color) !important;
-        color: var(--co-surface-foreground-color) !important;
-        border: 1px solid var(--co-surface-border-color) !important;
-        box-shadow: var(--co-surface-shadow) !important;
-        -webkit-backdrop-filter: none !important;
-        backdrop-filter: none !important;
-      }
-      .hover\\:bg-surface-light:hover { background-color: var(--co-surface-hover-color) !important; }
-
-      /* iOS paint fix for fixed elements */
-      .ios-fixed { backface-visibility: hidden; transform: translateZ(0); will-change: transform; }
-
-      /* ===== SAFE-AREA: prevent content from scrolling under iPhone status bar ===== */
-      /* We only add the safe-area inset to the main content containers. This does not change header height. */
-      main, [role="main"], .content, .center-column {
-        /* your existing gentle top breathing room + the top safe-area */
-        padding-top: calc(env(safe-area-inset-top, 0px) + clamp(6px, 1.2vh, 12px)) !important;
-        padding-left: env(safe-area-inset-left, 0px);
-        padding-right: env(safe-area-inset-right, 0px);
-      }
-
-      /* MOBILE: ensure content can scroll above a fixed footer and respect bottom safe-area */
-      @media (max-width: 767px) {
-        main, [role="main"], .content, .center-column {
-          padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
-        }
-        main::after, [role="main"]::after, .content::after, .center-column::after {
-          content: "";
-          display: block;
-          height: calc(12px + env(safe-area-inset-bottom, 0px));
-        }
-      }
-    `;
-
     setDomTheme(theme === 'dark' ? 'dark' : 'light');
-  }, [theme]);
+  }, []); // inject once
 
   const unreadMessageSenders = new Set(
     notifications
@@ -282,10 +258,9 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
 
   if (!currentUser) return null;
 
-  const isMessagesPage = currentPage === 'messages';
-
   return (
     <>
+      {/* Desktop left sidebar */}
       <aside className="hidden md:flex fixed top-0 left-0 h-full w-20 lg:w-64 bg-background border-r border-surface-light p-4 flex-col justify-between z-40">
         <div className="w-full">
           <div className="text-primary font-bold text-2xl p-3 hidden lg:block">CreatorsOnly</div>
@@ -409,26 +384,22 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
         </div>
       </aside>
 
-      {/* Mobile Bottom Navigation with Admin + Profile when master user */}
-      <nav className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-surface">
-        {isMessagesPage ? (
-          // Messages tab ONLY: two-layer layout so icons align exactly like Home
-          <div className="relative" style={{ height: 'calc(64px + env(safe-area-inset-bottom, 0px))' }}>
-            <div className="absolute inset-x-0 bottom-0 h-16 pt-1">
-              <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-full`}>
-                <MobileNavItem iconKey="home" label="Home" page="feed" />
-                <MobileNavItem iconKey="explore" label="Explore" page="explore" />
-                <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
-                <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={unreadMessagesCount} />
-                {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
-                <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
-              </div>
-            </div>
-          </div>
-        ) : (
-          // Other tabs keep existing single-layer layout
-          <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-16 pt-1 pb-[env(safe-area-inset-bottom)]`}>
-            <MobileNavItem iconKey="home" label="Home" page="feed" />
-            <MobileNavItem iconKey="explore" label="Explore" page="explore" />
-            <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
-            <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={
+      {/* Mobile Bottom Navigation (uniform layout; safe-area aware) */}
+      <nav
+        className="md:hidden fixed ios-fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-surface pt-1"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      >
+        <div className={`grid ${isMasterUser ? 'grid-cols-6' : 'grid-cols-5'} items-center h-16`}>
+          <MobileNavItem iconKey="home" label="Home" page="feed" />
+          <MobileNavItem iconKey="explore" label="Explore" page="explore" />
+          <MobileNavItem iconKey="collaborations" label="Opportunities" page="collaborations" />
+          <MobileNavItem iconKey="messages" label="Messages" page="messages" notificationCount={unreadMessagesCount} />
+          {isMasterUser && <MobileNavItem iconKey="settings" label="Admin" page="admin" />}
+          <MobileNavItem iconKey="profile" label="Profile" page="profile" isProfile />
+        </div>
+      </nav>
+    </>
+  );
+};
+
+export default Sidebar;
