@@ -1,83 +1,118 @@
-// src/hooks/useRealtime.tsx
+// src/services/hooks/useRealtime.tsx
 import { useEffect } from 'react';
-import { getAllProfiles, subscribeToProfiles } from '../services/profile';
-import { getAllPosts, subscribeToPosts } from '../services/posts';
-import { getMyFriendRequests, subscribeToFriendRequests } from '../services/friendRequests';
-import { subscribeToAuth } from '../services/auth';
-import { trackEvent } from '../services/analytics';
+import { supabase } from '../../lib/supabaseClient';          // ✅ up two levels to /lib
+import type { MyProfile } from '../profile';                  // ✅ ../profile
+import type { Post } from '../posts';                         // ✅ ../posts
+import type { FriendRequest } from '../friendRequests';       // ✅ ../friendRequests
+import { subscribeToTable } from '../realtime';               // ✅ ../realtime
 
-type UseRealtimeProps = {
-  refreshProfiles?: (data: any[]) => void;
-  refreshPosts?: (data: any[]) => void;
-  refreshFriendRequests?: (data: any[]) => void;
-  onAuthChange?: (event: string, session: any) => void;
+type UseRealtimeOptions = {
+  refreshProfiles: (rows: MyProfile[]) => void;
+  refreshPosts: (rows: Post[]) => void;
+  refreshFriendRequests: (rows: FriendRequest[]) => void;
+  onAuthChange?: (event: string, session: any | null) => void;
 };
 
+// ---- Fetch helpers ----
+async function fetchProfiles(): Promise<MyProfile[]> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .order('updated_at', { ascending: false });
+  if (error) throw error;
+  return (data || []) as MyProfile[];
+}
+
+async function fetchPosts(): Promise<Post[]> {
+  const { data, error } = await supabase
+    .from('posts')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []) as Post[];
+}
+
+async function fetchFriendRequests(): Promise<FriendRequest[]> {
+  const { data, error } = await supabase
+    .from('requests')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return (data || []) as FriendRequest[];
+}
+
 /**
- * Central hook to manage realtime subscriptions across the app.
- * 
- * Example usage:
- * 
- * useRealtime({
- *   refreshProfiles: setProfiles,
- *   refreshPosts: setPosts,
- *   refreshFriendRequests: setRequests,
- *   onAuthChange: (event, session) => setUser(session?.user ?? null),
- * });
+ * useRealtime
+ * Wires Supabase Realtime + initial fetches and invokes your callbacks whenever
+ * the backing tables change.
  */
-export function useRealtime({
-  refreshProfiles,
-  refreshPosts,
-  refreshFriendRequests,
-  onAuthChange,
-}: UseRealtimeProps) {
+export function useRealtime(opts: UseRealtimeOptions) {
+  const { refreshProfiles, refreshPosts, refreshFriendRequests, onAuthChange } = opts;
+
   useEffect(() => {
-    const unsubscribers: (() => void)[] = [];
+    let mounted = true;
 
-    // Profiles
-    if (refreshProfiles) {
-      getAllProfiles().then(refreshProfiles);
-      const unsub = subscribeToProfiles(async () => {
-        const updated = await getAllProfiles();
-        refreshProfiles(updated);
-        trackEvent('profile_change', { source: 'realtime' });
-      });
-      unsubscribers.push(unsub);
-    }
+    // Initial fetch
+    (async () => {
+      try {
+        const [p, po, r] = await Promise.all([
+          fetchProfiles(),
+          fetchPosts(),
+          fetchFriendRequests(),
+        ]);
+        if (!mounted) return;
+        refreshProfiles(p);
+        refreshPosts(po);
+        refreshFriendRequests(r);
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[useRealtime] initial fetch failed', e);
+      }
+    })();
 
-    // Posts
-    if (refreshPosts) {
-      getAllPosts().then(refreshPosts);
-      const unsub = subscribeToPosts(async () => {
-        const updated = await getAllPosts();
-        refreshPosts(updated);
-        trackEvent('post_change', { source: 'realtime' });
-      });
-      unsubscribers.push(unsub);
-    }
+    // Auth state (optional)
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      onAuthChange?.(event, session);
+    });
 
-    // Friend Requests
-    if (refreshFriendRequests) {
-      getMyFriendRequests().then(refreshFriendRequests);
-      const unsub = subscribeToFriendRequests(async () => {
-        const updated = await getMyFriendRequests();
-        refreshFriendRequests(updated);
-        trackEvent('friend_request_change', { source: 'realtime' });
-      });
-      unsubscribers.push(unsub);
-    }
+    // Table subscriptions (refetch only that table on change)
+    const unsubProfiles = subscribeToTable('profiles', async () => {
+      try {
+        if (!mounted) return;
+        refreshProfiles(await fetchProfiles());
+      } catch (e) {
+        console.error('[useRealtime] profiles refresh failed', e);
+      }
+    });
 
-    // Auth
-    if (onAuthChange) {
-      const unsub = subscribeToAuth((event, session) => {
-        onAuthChange(event, session);
-        trackEvent('auth_change', { event });
-      });
-      unsubscribers.push(unsub);
-    }
+    const unsubPosts = subscribeToTable('posts', async () => {
+      try {
+        if (!mounted) return;
+        refreshPosts(await fetchPosts());
+      } catch (e) {
+        console.error('[useRealtime] posts refresh failed', e);
+      }
+    });
+
+    const unsubRequests = subscribeToTable('requests', async () => {
+      try {
+        if (!mounted) return;
+        refreshFriendRequests(await fetchFriendRequests());
+      } catch (e) {
+        console.error('[useRealtime] requests refresh failed', e);
+      }
+    });
 
     return () => {
-      unsubscribers.forEach((u) => u());
+      mounted = false;
+      try {
+        unsubProfiles?.();
+        unsubPosts?.();
+        unsubRequests?.();
+        authListener?.subscription?.unsubscribe();
+      } catch {
+        // no-op
+      }
     };
   }, [refreshProfiles, refreshPosts, refreshFriendRequests, onAuthChange]);
 }
