@@ -9,38 +9,51 @@
 
     <title>CreatorsOnly</title>
 
-    <!-- PWA / Icons -->
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#6C2BD9" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
-
-    <!-- Mobile web app (Chrome recommendation) -->
-    <meta name="mobile-web-app-capable" content="yes" />
-    <!-- iOS PWA (kept for compatibility) -->
+    <!-- Color scheme & Safari/iOS status bar behavior -->
+    <meta name="color-scheme" content="dark light" />
+    <!-- Match the app's dark background in dark mode -->
+    <meta name="theme-color" content="#0B0F1A" media="(prefers-color-scheme: dark)" />
+    <!-- Safe light fallback (unused today, but future-proof) -->
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="CreatorsOnly" />
 
-    <!-- Let Safari pick correct system colors immediately -->
-    <meta name="color-scheme" content="dark light" />
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
 
-    <!-- THEME PRE-BOOT: apply saved theme before the app mounts to avoid Safari FOUC -->
+    <!-- SEO / Social -->
+    <link rel="canonical" href="https://creatorzonly.com/" />
+    <meta
+      name="description"
+      content="CreatorsOnly — a community for creators to connect, collaborate, and grow."
+    />
+    <meta property="og:title" content="CreatorsOnly" />
+    <meta property="og:description" content="A community for creators to connect, collaborate, and grow." />
+    <meta property="og:url" content="https://creatorzonly.com/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CreatorsOnly" />
+    <meta name="twitter:description" content="A community for creators to connect, collaborate, and grow." />
+    <meta name="twitter:image" content="/og.jpg" />
+
+    <!-- Prevent theme flash: read saved theme before app JS runs -->
     <script>
       (function () {
         try {
-          var THEME_KEY = 'co-theme';
-          var theme = localStorage.getItem(THEME_KEY) || 'dark';
-          var root = document.documentElement;
-          root.classList.toggle('dark', theme === 'dark');
-          root.setAttribute('data-theme', theme);
-        } catch (e) {
-          /* no-op */
-        }
+          var key = 'co-theme';
+          var t = localStorage.getItem(key) || 'dark';
+          if (t === 'dark') document.documentElement.classList.add('dark');
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
       })();
     </script>
   </head>
+
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
