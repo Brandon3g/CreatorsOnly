@@ -2,11 +2,43 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------- Safe-area + layout utilities ---------- */
 :root {
   --sat: env(safe-area-inset-top);
   --sar: env(safe-area-inset-right);
   --sab: env(safe-area-inset-bottom);
   --sal: env(safe-area-inset-left);
+
+  /* Help Safari choose system-UI colors while we override below */
+  color-scheme: dark light;
+
+  /* Fallback theme tokens used before Tailwind classes mount */
+  --co-bg: #0B0B0F;   /* app dark background */
+  --co-fg: #E5E7EB;   /* app dark foreground (tailwind gray-200-ish) */
+}
+
+/* Force our intended scheme if App preboot set data-theme on <html> */
+html[data-theme='dark'],
+.dark {
+  --co-bg: #0B0B0F;
+  --co-fg: #E5E7EB;
+}
+
+html[data-theme='light'] {
+  --co-bg: #ffffff;
+  --co-fg: #111827; /* tailwind gray-900-ish */
+}
+
+/* Apply fallback colors at very first paint (pre React/Tailwind) */
+html,
+body {
+  background-color: var(--co-bg);
+  color: var(--co-fg);
+  -webkit-text-size-adjust: 100%;
+}
+
+#root {
+  background-color: transparent;
 }
 
 /* Safe-area padding utility */
@@ -39,4 +71,9 @@ body,
 /* For fixed/sticky bars that should sit just under the status bar */
 .sticky-under-statusbar {
   top: var(--sat);
+}
+
+/* Make dialogs/overlays match the page theme color on iOS */
+::backdrop {
+  background-color: var(--co-bg);
 }

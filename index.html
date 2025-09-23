@@ -2,20 +2,44 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
 
     <title>CreatorsOnly</title>
 
+    <!-- PWA / Icons -->
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#6C2BD9" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
 
+    <!-- Mobile web app (Chrome recommendation) -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- iOS PWA (kept for compatibility) -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="CreatorsOnly" />
 
-    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+    <!-- Let Safari pick correct system colors immediately -->
+    <meta name="color-scheme" content="dark light" />
+
+    <!-- THEME PRE-BOOT: apply saved theme before the app mounts to avoid Safari FOUC -->
+    <script>
+      (function () {
+        try {
+          var THEME_KEY = 'co-theme';
+          var theme = localStorage.getItem(THEME_KEY) || 'dark';
+          var root = document.documentElement;
+          root.classList.toggle('dark', theme === 'dark');
+          root.setAttribute('data-theme', theme);
+        } catch (e) {
+          /* no-op */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
