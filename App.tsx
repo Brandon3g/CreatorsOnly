@@ -1,5 +1,7 @@
+// src/App.tsx
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
+import { RealtimeProvider } from './context/RealtimeProvider'; // ✅ NEW
 import Sidebar from './components/Sidebar';
 import Feed from './pages/Feed';
 import Explore from './pages/Explore';
@@ -793,7 +795,9 @@ const AppWrapper: React.FC = () => {
 
   return (
     <AppProvider>
-      <AppContent />
+      <RealtimeProvider> {/* ✅ NEW: provide realtime to the whole app */}
+        <AppContent />
+      </RealtimeProvider>
     </AppProvider>
   );
 };
