@@ -2,9 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+
+    <!-- Viewport + iOS keyboard behavior -->
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
     />
 
     <title>CreatorsOnly</title>
@@ -14,11 +16,10 @@
 
     <!-- Color scheme & Safari/iOS status bar behavior -->
     <meta name="color-scheme" content="dark light" />
-    <!-- Match the app's dark background in dark mode -->
     <meta name="theme-color" content="#0B0F1A" media="(prefers-color-scheme: dark)" />
-    <!-- Safe light fallback (unused today, but future-proof) -->
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="CreatorsOnly" />
 
@@ -27,6 +28,11 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
+
+    <!-- Tiny mobile perf tweaks: resource hints to your API host (update the domain to your Supabase URL) -->
+    <!-- Replace YOUR-PROJECT.supabase.co with your actual project host if different -->
+    <link rel="dns-prefetch" href="//YOUR-PROJECT.supabase.co" />
+    <link rel="preconnect" href="https://YOUR-PROJECT.supabase.co" crossorigin />
 
     <!-- SEO / Social -->
     <link rel="canonical" href="https://creatorzonly.com/" />
@@ -59,6 +65,7 @@
 
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+    <!-- Give the entry the highest fetch priority on mobile -->
+    <script type="module" src="/index.tsx" fetchpriority="high"></script>
   </body>
 </html>
