@@ -17,11 +17,12 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPasswordSent from './pages/ResetPasswordSent';
 import Admin from './pages/Admin';
 import InterestedUsers from './pages/InterestedUsers';
+import ResetPassword from './pages/ResetPassword'; // ✅ NEW
 import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 import TestAuth from './pages/TestAuth';
-import { supabase } from './lib/supabaseClient'; // ✅ FIXED: point to lib
+import { supabase } from './lib/supabaseClient'; // ✅ uses your lib client
 
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
@@ -655,13 +656,18 @@ const AppContent: React.FC = () => {
     return () => window.removeEventListener('socket-event', handleSocketEvent);
   }, [isAuthenticated, currentUser, subscribeToPushNotifications]);
 
-  // Show the TestAuth page when visiting #/test-auth
+  // Debug page: #/test-auth
   if (typeof window !== 'undefined' && window.location.hash.includes('test-auth')) {
     return (
       <div className="p-4">
         <TestAuth />
       </div>
     );
+  }
+
+  // ✅ NEW: Reset password route
+  if (typeof window !== 'undefined' && window.location.hash.includes('reset-password')) {
+    return <ResetPassword />;
   }
 
   const handleForgotPassword = () => setAuthStage('forgot');
@@ -782,7 +788,7 @@ const AppContent: React.FC = () => {
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
-  // ✅ AUTH DEBUG: runs once on load; also exposes window.debugAuth()
+  // Debug helper in console to check auth
   useEffect(() => {
     async function checkUser() {
       const { data, error } = await supabase.auth.getUser();
