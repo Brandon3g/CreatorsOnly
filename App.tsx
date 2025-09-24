@@ -1,7 +1,7 @@
 // src/App.tsx
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
-import { RealtimeProvider } from './context/RealtimeProvider'; // ✅ NEW
+import { RealtimeProvider } from './context/RealtimeProvider';
 import Sidebar from './components/Sidebar';
 import Feed from './pages/Feed';
 import Explore from './pages/Explore';
@@ -21,6 +21,7 @@ import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 import TestAuth from './pages/TestAuth';
+import { supabase } from './supabaseClient'; // ✅ Auth check uses your existing client
 
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
@@ -194,7 +195,6 @@ const CreateModal: React.FC<CreateModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       if (editingCollaboration) {
-        // FIX: call the setter, don't assign to it
         setActiveTab('project');
         setProjectTitle(editingCollaboration.title);
         setProjectDesc(editingCollaboration.description);
@@ -782,6 +782,22 @@ const AppContent: React.FC = () => {
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
+  // ✅ AUTH DEBUG: runs once on load; also exposes window.debugAuth()
+  useEffect(() => {
+    async function checkUser() {
+      const { data, error } = await supabase.auth.getUser();
+      if (error || !data.user) {
+        console.warn('[Auth] Not logged in:', error?.message ?? 'no session');
+      } else {
+        console.log('[Auth] Logged in as:', data.user.id, '(email:', data.user.email, ')');
+      }
+    }
+    // expose to console
+    // @ts-ignore
+    window.debugAuth = checkUser;
+    checkUser();
+  }, []);
+
   const toggleTheme = React.useCallback(() => {
     const current = (localStorage.getItem(THEME_KEY) as Theme) ?? 'dark';
     applyTheme(current === 'dark' ? 'light' : 'dark');
@@ -795,7 +811,7 @@ const AppWrapper: React.FC = () => {
 
   return (
     <AppProvider>
-      <RealtimeProvider> {/* ✅ NEW: provide realtime to the whole app */}
+      <RealtimeProvider>
         <AppContent />
       </RealtimeProvider>
     </AppProvider>
