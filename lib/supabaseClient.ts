@@ -1,10 +1,8 @@
 // lib/supabaseClient.ts
 import { createClient } from '@supabase/supabase-js';
 
-// These must be set in Vercel → Project Settings → Environment Variables
-// (and locally in a .env file if you run dev):
-// VITE_SUPABASE_URL = https://YOUR-PROJECT.supabase.co
-// VITE_SUPABASE_ANON_KEY = <anon public key>
+// Set these in Vercel → Project → Settings → Environment Variables (Prod + Preview):
+// VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
@@ -15,14 +13,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
-// Create a single supabase client for the whole app
+// Use the implicit flow so recovery links land with #access_token/#refresh_token
 export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '', {
   auth: {
-    // Good defaults for SPAs
     persistSession: true,
     autoRefreshToken: true,
-    // Parses ?code=... on first load (PKCE flow). For hash tokens we handle it in NewPassword.tsx.
-    detectSessionInUrl: true,
-    flowType: 'pkce',
+    detectSessionInUrl: true, // parses tokens on first load
+    flowType: 'implicit',
   },
 });
