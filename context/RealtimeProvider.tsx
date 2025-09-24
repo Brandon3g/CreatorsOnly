@@ -1,6 +1,7 @@
 // src/context/RealtimeProvider.tsx
-import React, { createContext, useContext, useState } from 'react';
-import { useRealtime } from '../services/hooks/useRealtime'; // ✅ fixed path
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
+import { useRealtime } from '../services/hooks/useRealtime';
 import type { MyProfile } from '../services/profile';
 import type { Post } from '../services/posts';
 import type { FriendRequest } from '../services/friendRequests';
@@ -35,21 +36,47 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const [isLoadingPosts, setIsLoadingPosts] = useState(true);
   const [isLoadingRequests, setIsLoadingRequests] = useState(true);
 
-  useRealtime({
-    refreshProfiles: (data) => {
-      setProfiles(data);
-      setIsLoadingProfiles(false);
-    },
-    refreshPosts: (data) => {
-      setPosts(data);
-      setIsLoadingPosts(false);
-    },
-    refreshFriendRequests: (data) => {
-      setRequests(data);
-      setIsLoadingRequests(false);
-    },
-    onAuthChange: (event, session) => setUser(session?.user ?? null),
-  });
+  const [isAuthed, setIsAuthed] = useState(false);
+
+  // Determine auth on mount and react to changes
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+      setIsAuthed(!!data?.session);
+      setUser(data?.session?.user ?? null);
+      if (!data?.session) {
+        // Signed out → keep things lightweight
+        setProfiles([]);
+        setPosts([]);
+        setRequests([]);
+        setIsLoadingProfiles(true);
+        setIsLoadingPosts(true);
+        setIsLoadingRequests(true);
+      }
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthed(!!session);
+      setUser(session?.user ?? null);
+      if (!session) {
+        // Signed out → reset and avoid network spam
+        setProfiles([]);
+        setPosts([]);
+        setRequests([]);
+        setIsLoadingProfiles(true);
+        setIsLoadingPosts(true);
+        setIsLoadingRequests(true);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
 
   return (
     <RealtimeContext.Provider
@@ -63,11 +90,68 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
         isLoadingRequests,
       }}
     >
+      {/* Only render realtime subscriptions when authenticated.
+          This avoids any network churn on Login / ForgotPassword screens. */}
+      {isAuthed && (
+        <RealtimeSubscriptions
+          setProfiles={setProfiles}
+          setPosts={setPosts}
+          setRequests={setRequests}
+          setIsLoadingProfiles={setIsLoadingProfiles}
+          setIsLoadingPosts={setIsLoadingPosts}
+          setIsLoadingRequests={setIsLoadingRequests}
+          setUser={setUser}
+        />
+      )}
       {children}
     </RealtimeContext.Provider>
   );
 }
 
+// A small inner component that actually calls the hook.
+// Rendering it conditionally is the safe way to “gate” a hook.
+function RealtimeSubscriptions(props: {
+  setProfiles: React.Dispatch<React.SetStateAction<MyProfile[]>>;
+  setPosts: React.Dispatch<React.SetStateAction<Post[]>>;
+  setRequests: React.Dispatch<React.SetStateAction<FriendRequest[]>>;
+  setIsLoadingProfiles: React.Dispatch<React.SetStateAction<boolean>>;
+  setIsLoadingPosts: React.Dispatch<React.SetStateAction<boolean>>;
+  setIsLoadingRequests: React.Dispatch<React.SetStateAction<boolean>>;
+  setUser: React.Dispatch<React.SetStateAction<any | null>>;
+}) {
+  const {
+    setProfiles,
+    setPosts,
+    setRequests,
+    setIsLoadingProfiles,
+    setIsLoadingPosts,
+    setIsLoadingRequests,
+    setUser,
+  } = props;
+
+  useRealtime({
+    refreshProfiles: (data) => {
+      setProfiles(data);
+      setIsLoadingProfiles(false);
+    },
+    refreshPosts: (data) => {
+      setPosts(data);
+      setIsLoadingPosts(false);
+    },
+    refreshFriendRequests: (data) => {
+      setRequests(data);
+      setIsLoadingRequests(false);
+    },
+    onAuthChange: (_event, session) => {
+      setUser(session?.user ?? null);
+    },
+  });
+
+  return null;
+}
+
 export function useRealtimeContext() {
   return useContext(RealtimeContext);
 }
+
+export default RealtimeProvider;
