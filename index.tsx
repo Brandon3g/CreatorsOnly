@@ -1,16 +1,19 @@
-import './index.css';
+// src/index.tsx
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import AppWrapper from './App';
+import App from './App';           // <-- default export should be the provider-wrapped App
+import './index.css';
 
-const rootElement = document.getElementById('root');
-if (!rootElement) {
-  throw new Error("Could not find root element to mount to");
+// Ensure there's a #root element (useful for static hosting edge cases)
+let rootEl = document.getElementById('root');
+if (!rootEl) {
+  rootEl = document.createElement('div');
+  rootEl.id = 'root';
+  document.body.appendChild(rootEl);
 }
 
-const root = ReactDOM.createRoot(rootElement);
-root.render(
+ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
-    <AppWrapper />
+    <App />
   </React.StrictMode>
 );
