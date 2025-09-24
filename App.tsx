@@ -2,27 +2,32 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { RealtimeProvider } from './context/RealtimeProvider';
+
+// App pages & components
 import Sidebar from './components/Sidebar';
+import RightSidebar from './components/RightSidebar';
 import Feed from './pages/Feed';
 import Explore from './pages/Explore';
 import NotificationsPage from './pages/Notifications';
 import Messages from './pages/Messages';
 import Search from './pages/Search';
 import Profile from './pages/Profile';
-import RightSidebar from './components/RightSidebar';
 import Collaborations from './pages/Collaborations';
-import Login from './pages/Login';
-import ProfileSetup from './pages/ProfileSetup';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPasswordSent from './pages/ResetPasswordSent';
 import Admin from './pages/Admin';
 import InterestedUsers from './pages/InterestedUsers';
-import NewPassword from './pages/NewPassword'; // ✅ reset form page
+
+// Auth pages (rendered outside providers)
+import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
+import NewPassword from './pages/NewPassword';
+
+// Misc
+import ProfileSetup from './pages/ProfileSetup';
+import TestAuth from './pages/TestAuth';
+import { supabase } from './lib/supabaseClient';
 import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
-import TestAuth from './pages/TestAuth';
-import { supabase } from './lib/supabaseClient';
 
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
@@ -575,6 +580,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
               <button
                 type="submit"
                 className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50"
+                disabled={!feedbackContent.trim()}
               >
                 Send Feedback
               </button>
@@ -595,7 +601,6 @@ const AppContent: React.FC = () => {
     registerScrollableNode,
     currentUser,
     history,
-    sendPasswordResetLink,
     subscribeToPushNotifications,
     editingCollaborationId,
     setEditingCollaborationId,
@@ -608,9 +613,6 @@ const AppContent: React.FC = () => {
     useState<'post' | 'project'>('post');
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [toastNotification, setToastNotification] = useState<Notification | null>(null);
-
-  const [authStage, setAuthStage] = useState<'login' | 'forgot' | 'sent'>('login');
-  const [forgotEmail, setForgotEmail] = useState('');
 
   const editingCollab = collaborations.find((c) => c.id === editingCollaborationId);
   const isEditCollabModalOpen = !!editingCollab;
@@ -664,27 +666,15 @@ const AppContent: React.FC = () => {
     );
   }
 
-  const handleForgotPassword = () => setAuthStage('forgot');
-  const handleSendResetLink = (email: string) => {
-    sendPasswordResetLink(email);
-    setForgotEmail(email);
-    setAuthStage('sent');
-  };
-  const handleBackToLogin = () => setAuthStage('login');
+  // If user is not authenticated here, bounce them to the Login route
+  useEffect(() => {
+    if (!isAuthenticated) {
+      window.location.hash = '#/Login';
+    }
+  }, [isAuthenticated]);
 
-  if (!isAuthenticated) {
-    if (isRegistering) return <ProfileSetup />;
-    if (authStage === 'forgot')
-      return (
-        <ForgotPassword
-          onSendResetLink={handleSendResetLink}
-          onBackToLogin={handleBackToLogin}
-        />
-      );
-    if (authStage === 'sent')
-      return <ResetPasswordSent email={forgotEmail} onBackToLogin={handleBackToLogin} />;
-    return <Login onForgotPassword={handleForgotPassword} />;
-  }
+  // While redirecting unauthenticated users, render nothing
+  if (!isAuthenticated) return null;
 
   const renderPage = () => {
     switch (currentPage) {
@@ -779,6 +769,53 @@ const AppContent: React.FC = () => {
   );
 };
 
+/** ---------------------------
+ *  Auth router rendered WITHOUT providers
+ *  --------------------------- */
+const AuthPagesRouter: React.FC = () => {
+  const [hash, setHash] = useState<string>(
+    typeof window !== 'undefined' ? window.location.hash : ''
+  );
+
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  const lower = hash.toLowerCase();
+
+  const sendResetLink = async (email: string) => {
+    const redirectTo = `${location.origin}/#/NewPassword`;
+    return supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  };
+
+  if (lower.includes('newpassword')) return <NewPassword />;
+
+  if (lower.includes('forgotpassword')) {
+    return (
+      <ForgotPassword
+        onSendResetLink={(email) => sendResetLink(email)}
+        onBackToLogin={() => {
+          window.location.hash = '#/Login';
+        }}
+      />
+    );
+  }
+
+  // default: Login
+  return (
+    <Login
+      onForgotPassword={() => {
+        window.location.hash = '#/ForgotPassword';
+      }}
+    />
+  );
+};
+
+/** ---------------------------
+ *  App wrapper
+ *  --------------------------- */
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
@@ -808,45 +845,26 @@ const AppWrapper: React.FC = () => {
     return () => window.removeEventListener('co:toggle-theme', handler);
   }, [toggleTheme]);
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // Minimal hash-router for auth-only pages OUTSIDE providers.
-  // This keeps login/forgot/new-password screens quiet (no realtime/data init).
-  // ────────────────────────────────────────────────────────────────────────────
-  const [fpStage, setFpStage] = React.useState<'forgot' | 'sent'>('forgot');
-  const [fpEmail, setFpEmail] = React.useState('');
-  const hash = typeof window !== 'undefined' ? window.location.hash.toLowerCase() : '';
+  const [hash, setHash] = useState<string>(
+    typeof window !== 'undefined' ? window.location.hash : ''
+  );
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+  const isAuthRoute = /#\/(login|forgotpassword|newpassword)/i.test(hash);
 
-  if (hash.includes('#/newpassword')) {
-    return <NewPassword />;
+  // Render auth pages *without* providers
+  if (isAuthRoute) {
+    return <AuthPagesRouter />;
   }
-  if (hash.includes('#/forgotpassword')) {
-    if (fpStage === 'sent') {
-      return (
-        <ResetPasswordSent
-          email={fpEmail}
-          onBackToLogin={() => {
-            window.location.hash = '#/Login';
-          }}
-        />
-      );
-    }
-    return (
-      <ForgotPassword
-        onSendResetLink={(email) => {
-          setFpEmail(email);
-          setFpStage('sent');
-        }}
-        onBackToLogin={() => {
-          window.location.hash = '#/Login';
-        }}
-      />
-    );
-  }
-  // ────────────────────────────────────────────────────────────────────────────
 
+  // Render the full app with providers
   return (
     <AppProvider>
       <RealtimeProvider>
+        {/* If a just-created account flags isRegistering, you can optionally render ProfileSetup here */}
         <AppContent />
       </RealtimeProvider>
     </AppProvider>
