@@ -818,7 +818,11 @@ const AuthPagesRouter: React.FC = () => {
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
-  // Normalize Supabase implicit hash tokens once they've been parsed
+  // Helper
+  const isAuthRoute = () => /#\/(login|forgotpassword|newpassword)/i.test(location.hash || '');
+  const goToApp = () => location.replace('/#/feed'); // lowercase to match our router
+
+  // Normalize Supabase implicit hash tokens once parsed
   useEffect(() => {
     const h = window.location.hash;
     if (/access_token=|refresh_token=/.test(h)) {
@@ -828,15 +832,32 @@ const AppWrapper: React.FC = () => {
     }
   }, []);
 
-  // If a session already exists and we're on an auth route, jump into the app.
+  // Redirect to app as soon as a session exists (covers late arrival + fresh page loads)
   useEffect(() => {
+    let cancelled = false;
+
+    // 1) immediate check (fresh reloads with session already in storage)
     (async () => {
       const { data } = await supabase.auth.getSession();
-      const isAuthRoute = /#\/(login|forgotpassword|newpassword)/i.test(location.hash || '');
-      if (data.session && isAuthRoute) {
-        location.replace('/#/Feed');
-      }
+      if (!cancelled && data.session && isAuthRoute()) goToApp();
     })();
+
+    // 2) slight delayed re-check (handles init races)
+    const t = setTimeout(async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!cancelled && data.session && isAuthRoute()) goToApp();
+    }, 400);
+
+    // 3) react to future changes (first login without reload)
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      if (session && isAuthRoute()) goToApp();
+    });
+
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   // Debug helper in console to check auth
@@ -873,18 +894,16 @@ const AppWrapper: React.FC = () => {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
-  const isAuthRoute = /#\/(login|forgotpassword|newpassword)/i.test(hash);
+  const onAuthScreen = /#\/(login|forgotpassword|newpassword)/i.test(hash);
 
-  // Render auth pages *without* providers
-  if (isAuthRoute) {
+  if (onAuthScreen) {
     return <AuthPagesRouter />;
   }
 
-  // Render the full app with providers
   return (
     <AppProvider>
       <RealtimeProvider>
-        {/* If a just-created account flags isRegistering, you can optionally render ProfileSetup here */}
+        {/* Optionally render ProfileSetup for new accounts */}
         {/* {isRegistering && <ProfileSetup />} */}
         <AppContent />
       </RealtimeProvider>
