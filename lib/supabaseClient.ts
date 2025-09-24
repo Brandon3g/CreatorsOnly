@@ -1,65 +1,28 @@
 // lib/supabaseClient.ts
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js';
 
+// These must be set in Vercel → Project Settings → Environment Variables
+// (and locally in a .env file if you run dev):
+// VITE_SUPABASE_URL = https://YOUR-PROJECT.supabase.co
+// VITE_SUPABASE_ANON_KEY = <anon public key>
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('Missing Supabase envs:', {
-    hasUrl: !!supabaseUrl,
-    hasAnonKey: !!supabaseAnonKey,
-  });
-  throw new Error('VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not set at build time.');
+  console.warn(
+    '[Supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. ' +
+      'Add them in Vercel → Project Settings → Environment Variables.'
+  );
 }
 
-export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-});
-
-// -------------------------
-// Realtime Subscriptions
-// -------------------------
-
-type ChangeCallback = (payload: any) => void;
-const listeners: Record<string, ChangeCallback[]> = {};
-
-/**
- * Subscribe to changes on a given table.
- * Example:
- *   onTableChange("posts", (payload) => { console.log(payload) })
- */
-export function onTableChange(table: string, callback: ChangeCallback) {
-  if (!listeners[table]) listeners[table] = [];
-  listeners[table].push(callback);
-  console.log(`[onTableChange] Listener added for ${table}`);
-}
-
-// -------------------------
-// Register Subscriptions
-// -------------------------
-
-const tables = [
-  "profiles",
-  "posts",
-  "requests",
-  "messages",
-  "feedback",
-  "collaborations",
-  "notifications",
-];
-
-tables.forEach((table) => {
-  supabase
-    .channel(`public:${table}`)
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table },
-      (payload) => {
-        console.log(`[Realtime] ${table} change:`, payload);
-        listeners[table]?.forEach((cb) => cb(payload));
-      }
-    )
-    .subscribe((status) => {
-      console.log(`[Realtime] Subscription for ${table}:`, status);
-    });
+// Create a single supabase client for the whole app
+export const supabase = createClient(supabaseUrl ?? '', supabaseAnonKey ?? '', {
+  auth: {
+    // Good defaults for SPAs
+    persistSession: true,
+    autoRefreshToken: true,
+    // Parses ?code=... on first load (PKCE flow). For hash tokens we handle it in NewPassword.tsx.
+    detectSessionInUrl: true,
+    flowType: 'pkce',
+  },
 });
