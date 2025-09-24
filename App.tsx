@@ -803,7 +803,6 @@ const AuthPagesRouter: React.FC = () => {
     );
   }
 
-  // default: Login
   return (
     <Login
       onForgotPassword={() => {
@@ -823,13 +822,21 @@ const AppWrapper: React.FC = () => {
   useEffect(() => {
     const h = window.location.hash;
     if (/access_token=|refresh_token=/.test(h)) {
-      // After the first render Supabase (detectSessionInUrl) will have read the tokens.
-      // Clean the URL to a tidy auth route so we don't boot the app with a huge hash.
       const keepNewPassword = h.toLowerCase().includes('/newpassword');
       const clean = keepNewPassword ? '#/NewPassword' : '#/Login';
-      // small delay to ensure parsing happened
       setTimeout(() => history.replaceState(null, '', `${location.origin}/${clean}`), 0);
     }
+  }, []);
+
+  // If a session already exists and we're on an auth route, jump into the app.
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const isAuthRoute = /#\/(login|forgotpassword|newpassword)/i.test(location.hash || '');
+      if (data.session && isAuthRoute) {
+        location.replace('/#/Feed');
+      }
+    })();
   }, []);
 
   // Debug helper in console to check auth

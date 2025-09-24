@@ -2,9 +2,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-type Props = {
-  onForgotPassword: () => void;
-};
+type Props = { onForgotPassword: () => void };
 
 const Login: React.FC<Props> = ({ onForgotPassword }) => {
   const [email, setEmail] = useState('');
@@ -17,15 +15,15 @@ const Login: React.FC<Props> = ({ onForgotPassword }) => {
     setError('');
     setPending(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
       if (error) throw error;
+      if (!data.session) throw new Error('No session returned');
 
-      // ✅ Important: leave the auth router
-      window.location.replace('/#/Feed');
-      // No reload needed—the full app will mount and read the Supabase session.
+      // leave the auth router immediately
+      location.replace('/#/Feed');
     } catch (err: any) {
       setError(err?.message ?? 'Login failed. Please try again.');
     } finally {
@@ -47,9 +45,7 @@ const Login: React.FC<Props> = ({ onForgotPassword }) => {
               <label htmlFor="email-login" className="sr-only">Email</label>
               <input
                 id="email-login"
-                name="email"
                 type="email"
-                autoComplete="email"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-t-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
                 placeholder="Email"
@@ -61,9 +57,7 @@ const Login: React.FC<Props> = ({ onForgotPassword }) => {
               <label htmlFor="password-login" className="sr-only">Password</label>
               <input
                 id="password-login"
-                name="password"
                 type="password"
-                autoComplete="current-password"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-b-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
                 placeholder="Password"
@@ -84,9 +78,7 @@ const Login: React.FC<Props> = ({ onForgotPassword }) => {
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-accent-red text-center">
-              {error}
-            </p>
+            <p role="alert" className="text-sm text-accent-red text-center">{error}</p>
           )}
 
           <div>
