@@ -17,12 +17,13 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPasswordSent from './pages/ResetPasswordSent';
 import Admin from './pages/Admin';
 import InterestedUsers from './pages/InterestedUsers';
-import ResetPassword from './pages/ResetPassword'; // ✅ NEW
+// ⬇️ New password page (replaces the old ResetPassword page)
+import NewPassword from './pages/NewPassword';
 import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 import TestAuth from './pages/TestAuth';
-import { supabase } from './lib/supabaseClient'; // ✅ uses your lib client
+import { supabase } from './lib/supabaseClient';
 
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
@@ -665,9 +666,9 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // ✅ NEW: Reset password route
-  if (typeof window !== 'undefined' && window.location.hash.includes('reset-password')) {
-    return <ResetPassword />;
+  // ✅ New password page route: #/NewPassword
+  if (typeof window !== 'undefined' && window.location.hash.includes('NewPassword')) {
+    return <NewPassword />;
   }
 
   const handleForgotPassword = () => setAuthStage('forgot');
