@@ -1,42 +1,37 @@
-// src/pages/Login.tsx
+// pages/Login.tsx
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-type LoginProps = {
+type Props = {
   onForgotPassword: () => void;
 };
 
-const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
+const Login: React.FC<Props> = ({ onForgotPassword }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string>('');
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     setPending(true);
-    setError(null);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) throw error;
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-
-    setPending(false);
-
-    if (error) {
-      setError(error.message || 'Login failed. Please try again.');
-      return;
+      // ✅ Important: leave the auth router
+      window.location.replace('/#/Feed');
+      // No reload needed—the full app will mount and read the Supabase session.
+    } catch (err: any) {
+      setError(err?.message ?? 'Login failed. Please try again.');
+    } finally {
+      setPending(false);
     }
-
-    // Success: route into the app (providers wrap non-auth routes)
-    window.location.hash = '#/Feed';
-    // Ensure providers read the fresh session
-    window.location.reload();
   };
-
-  const hasError = !!error;
-  const errorId = 'login-error';
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background">
@@ -55,17 +50,11 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
                 name="email"
                 type="email"
                 autoComplete="email"
-                autoCapitalize="none"
-                autoCorrect="off"
-                inputMode="email"
-                spellCheck={false}
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-t-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
                 placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                aria-invalid={hasError}
-                aria-describedby={hasError ? errorId : undefined}
               />
             </div>
             <div>
@@ -80,8 +69,6 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                aria-invalid={hasError}
-                aria-describedby={hasError ? errorId : undefined}
               />
             </div>
           </div>
@@ -96,13 +83,8 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
             </button>
           </div>
 
-          {hasError && (
-            <p
-              id={errorId}
-              role="alert"
-              aria-live="assertive"
-              className="text-sm text-accent-red text-center"
-            >
+          {error && (
+            <p role="alert" className="text-sm text-accent-red text-center">
               {error}
             </p>
           )}
@@ -118,10 +100,9 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
           </div>
         </form>
 
-        {/* Optional CTA — wire up later if you add a dedicated sign-up flow */}
-        <div className="text-sm text-center text-text-secondary">
+        <p className="text-sm text-center text-text-secondary">
           Don’t have an account? Ask an admin to invite you.
-        </div>
+        </p>
       </div>
     </div>
   );
