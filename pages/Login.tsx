@@ -1,22 +1,43 @@
 // pages/Login.tsx
 import React, { useState } from 'react';
 import { useAppContext } from '../context/AppContext';
+import { supabase } from '../lib/supabaseClient';
 
 interface LoginProps {
   onForgotPassword: () => void;
 }
 
 const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
-  const { login, startRegistration } = useAppContext();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const { startRegistration } = useAppContext();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>('');
+  const [info, setInfo] = useState<string>('');
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const ok = login(username.trim(), password);
-    if (!ok) setError('Invalid username or password.');
+    setInfo('');
+    setPending(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) throw error;
+
+      // Optional: small toast in console to verify
+      console.log('[Auth] Logged in as:', data.user?.id, data.user?.email);
+
+      // Reload so AppProvider re-reads the Supabase session
+      window.location.reload();
+    } catch (err: any) {
+      setError(err?.message ?? 'Login failed. Please try again.');
+    } finally {
+      setPending(false);
+    }
   };
 
   const hasError = Boolean(error);
@@ -31,44 +52,36 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
         </div>
 
         <form className="space-y-6" onSubmit={handleLogin} noValidate>
-          <input type="hidden" name="remember" value="true" />
-
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
-              {/* Accessible label (visually hidden) */}
-              <label htmlFor="username-login" className="sr-only">
-                Username
-              </label>
+              <label htmlFor="email-login" className="sr-only">Email</label>
               <input
-                id="username-login"
-                name="username"
-                type="text"
-                autoComplete="username"
+                id="email-login"
+                name="email"
+                type="email"
+                autoComplete="email"
                 autoCapitalize="none"
                 autoCorrect="off"
-                inputMode="text"
+                inputMode="email"
                 spellCheck={false}
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-t-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:text-sm"
-                placeholder="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-t-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
+                placeholder="Email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 aria-invalid={hasError}
                 aria-describedby={hasError ? errorId : undefined}
               />
             </div>
             <div>
-              {/* Accessible label (visually hidden) */}
-              <label htmlFor="password-login" className="sr-only">
-                Password
-              </label>
+              <label htmlFor="password-login" className="sr-only">Password</label>
               <input
                 id="password-login"
                 name="password"
                 type="password"
                 autoComplete="current-password"
                 required
-                className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-b-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:text-sm"
+                className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-b-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -98,13 +111,19 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
               {error}
             </p>
           )}
+          {info && (
+            <p role="status" className="text-sm text-primary text-center">
+              {info}
+            </p>
+          )}
 
           <div>
             <button
               type="submit"
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-full text-white bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-hover"
+              disabled={pending}
+              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-full text-white bg-primary hover:bg-primary-hover disabled:opacity-60"
             >
-              Log In
+              {pending ? 'Signing in…' : 'Log In'}
             </button>
           </div>
         </form>
