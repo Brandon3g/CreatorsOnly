@@ -1,3 +1,4 @@
+// context/AppContext.tsx
 import React, {
   createContext,
   useState,
@@ -7,6 +8,7 @@ import React, {
   useEffect,
   useRef,
 } from 'react';
+
 import {
   User,
   Post,
@@ -25,6 +27,7 @@ import {
   FriendRequestStatus,
   PushSubscriptionObject,
 } from '../types';
+
 import {
   MOCK_USERS,
   MOCK_POSTS,
@@ -35,20 +38,23 @@ import {
   MOCK_FEEDBACK,
   MOCK_FRIEND_REQUESTS,
 } from '../constants';
-import { trackEvent } from '../services/analytics';
 
-// --- Real-time Event Emitter (Simulating WebSockets) ---
+import { trackEvent } from '../services/analytics';
+import { supabase } from '../lib/supabaseClient';
+
+// ---------------------------------------------------------------------------
+// Simple event emitter to simulate realtime (wired up in App.tsx listener)
+// ---------------------------------------------------------------------------
 const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
   window.dispatchEvent(
-    new CustomEvent('socket-event', {
-      detail: { userId, eventName, payload },
-    })
+    new CustomEvent('socket-event', { detail: { userId, eventName, payload } })
   );
 };
 
-// --- Web Push Simulation ---
+// ---------------------------------------------------------------------------
+// Web Push (simulated)
+// ---------------------------------------------------------------------------
 const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
-
 const sendWebPush = (userId: string, title: string, body: string, url: string) => {
   console.log(`[PUSH_SIM] Sending push to user ${userId}: ${title}`);
   const subscriptions = JSON.parse(
@@ -58,7 +64,10 @@ const sendWebPush = (userId: string, title: string, body: string, url: string) =
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({
         type: 'show-notification',
-        payload: { title, options: { body, data: { url } } },
+        payload: {
+          title,
+          options: { body, data: { url } },
+        },
       });
     }
   } else {
@@ -66,7 +75,9 @@ const sendWebPush = (userId: string, title: string, body: string, url: string) =
   }
 };
 
-// --- Storage Keys ---
+// ---------------------------------------------------------------------------
+// Storage Keys
+// ---------------------------------------------------------------------------
 const USERS_STORAGE_KEY = 'creatorsOnlyUsers';
 const POSTS_STORAGE_KEY = 'creatorsOnlyPosts';
 const NOTIFICATIONS_STORAGE_KEY = 'creatorsOnlyNotifications';
@@ -77,7 +88,9 @@ const FRIEND_REQUESTS_STORAGE_KEY = 'creatorsOnlyFriendRequests';
 const AUTH_STORAGE_KEY = 'creatorsOnlyAuth';
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 
-// --- Type Definitions ---
+// ---------------------------------------------------------------------------
+// Context Type
+// ---------------------------------------------------------------------------
 interface AppContextType {
   // State
   users: User[];
@@ -87,19 +100,22 @@ interface AppContextType {
   collaborations: Collaboration[];
   feedback: Feedback[];
   friendRequests: FriendRequest[];
+
   currentUser: User | null;
   isAuthenticated: boolean;
   isRegistering: boolean;
   isMasterUser: boolean;
+
   currentPage: Page;
   viewingProfileId: string | null;
   viewingCollaborationId: string | null;
   history: NavigationEntry[];
   selectedConversationId: string | null;
   editingCollaborationId: string | null;
+
   theme: 'light' | 'dark';
 
-  // Setters & Actions
+  // Actions
   login: (username: string, password: string) => boolean;
   logout: () => void;
   startRegistration: () => void;
@@ -113,54 +129,73 @@ interface AppContextType {
       | 'isVerified'
       | 'friendIds'
       | 'platformLinks'
+      | 'blockedUserIds'
     > & { password?: string }
   ) => boolean;
   updateUserProfile: (updatedUser: User) => void;
+
   sendFriendRequest: (toUserId: string) => void;
   cancelFriendRequest: (toUserId: string) => void;
   acceptFriendRequest: (requestId: string) => void;
   declineFriendRequest: (requestId: string) => void;
   removeFriend: (friendId: string) => void;
   toggleBlockUser: (userId: string) => void;
+
   getFriendRequest: (userId1: string, userId2: string) => FriendRequest | undefined;
   getFriendRequestById: (id: string) => FriendRequest | undefined;
+
   addPost: (content: string, image?: string) => void;
   deletePost: (postId: string) => void;
+
   addCollaboration: (
     collab: Omit<Collaboration, 'id' | 'authorId' | 'timestamp' | 'interestedUserIds'>
   ) => void;
   updateCollaboration: (updatedCollab: Collaboration) => void;
   deleteCollaboration: (collabId: string) => void;
   toggleCollaborationInterest: (collabId: string) => void;
+
   sendMessage: (conversationId: string, text: string) => void;
   viewConversation: (participantId: string) => void;
   setSelectedConversationId: (id: string | null) => void;
   setEditingCollaborationId: (id: string | null) => void;
   moveConversationToFolder: (conversationId: string, folder: ConversationFolder) => void;
+
   markNotificationsAsRead: (ids: string[]) => void;
   sendFeedback: (content: string, type: 'Bug Report' | 'Suggestion') => void;
+
   navigate: (page: Page, context?: PageContext) => void;
   goBack: () => void;
   viewProfile: (userId: string) => void;
   updateCurrentContext: (newContext: Partial<PageContext>) => void;
+
   getUserById: (id: string) => User | undefined;
   getUserByUsername: (username: string) => User | undefined;
+
   registerScrollableNode: (node: HTMLDivElement) => void;
+
+  // 🔐 This is the one we’re fixing to actually send emails via Supabase
   sendPasswordResetLink: (email: string) => void;
+
   subscribeToPushNotifications: (subscription: PushSubscriptionObject) => void;
   setTheme: (theme: 'light' | 'dark') => void;
+
   refreshData: () => Promise<void>;
 }
 
-// --- App Context ---
+// ---------------------------------------------------------------------------
+// Context
+// ---------------------------------------------------------------------------
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+// ---------------------------------------------------------------------------
+// Provider
+// ---------------------------------------------------------------------------
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // A generic hook to abstract localStorage logic
-  const useLocalStorage = <T,>(
+  // Generic localStorage state helper
+  function useLocalStorage<T>(
     key: string,
     initialValue: T
-  ): [T, (value: T | ((val: T) => T)) => void] => {
+  ): [T, (value: T | ((val: T) => T)) => void] {
     const [storedValue, setStoredValue] = useState<T>(() => {
       try {
         const item = window.localStorage.getItem(key);
@@ -180,10 +215,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.error(error);
       }
     };
-    return [storedValue, setValue];
-  };
 
-  // --- State Management ---
+    return [storedValue, setValue];
+  }
+
+  // --- State ---------------------------------------------------------------
   const [users, setUsers] = useLocalStorage<User[]>(USERS_STORAGE_KEY, MOCK_USERS);
   const [posts, setPosts] = useLocalStorage<Post[]>(POSTS_STORAGE_KEY, MOCK_POSTS);
   const [notifications, setNotifications] = useLocalStorage<Notification[]>(
@@ -207,15 +243,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     MOCK_FRIEND_REQUESTS
   );
 
-  // CHANGED: start with NO logged-in user on fresh devices
+  // Start with no logged-in user on new devices
   const [authData, setAuthData] = useLocalStorage<{ userId: string | null }>(
     AUTH_STORAGE_KEY,
     { userId: null }
   );
 
-  const [pushSubscriptions, setPushSubscriptions] = useLocalStorage<{
-    [userId: string]: PushSubscriptionObject;
-  }>(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
+  const [pushSubscriptions, setPushSubscriptions] = useLocalStorage<
+    Record<string, PushSubscriptionObject>
+  >(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
+
   const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(
     THEME_STORAGE_KEY,
     'dark'
@@ -234,56 +271,49 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
 
-  // --- Cross-Tab State Synchronization ---
+  // --- Cross-tab sync (except auth) ---------------------------------------
   useEffect(() => {
     const syncState = (event: StorageEvent) => {
-      // Don't sync auth state to avoid logging out other tabs unintentionally
-      if (event.key === AUTH_STORAGE_KEY) {
-        return;
-      }
+      if (event.key === AUTH_STORAGE_KEY) return;
+      if (!event.key || event.newValue === null) return;
 
-      if (event.newValue) {
-        try {
-          const value = JSON.parse(event.newValue);
-          switch (event.key) {
-            case USERS_STORAGE_KEY:
-              setUsers(value);
-              break;
-            case POSTS_STORAGE_KEY:
-              setPosts(value);
-              break;
-            case NOTIFICATIONS_STORAGE_KEY:
-              setNotifications(value);
-              break;
-            case CONVERSATIONS_STORAGE_KEY:
-              setConversations(value);
-              break;
-            case COLLABORATIONS_STORAGE_KEY:
-              setCollaborations(value);
-              break;
-            case FEEDBACK_STORAGE_KEY:
-              setFeedback(value);
-              break;
-            case FRIEND_REQUESTS_STORAGE_KEY:
-              setFriendRequests(value);
-              break;
-            case THEME_STORAGE_KEY:
-              setThemeState(value);
-              break;
-            default:
-              break;
-          }
-        } catch (error) {
-          console.error(`Error syncing state for key ${event.key}:`, error);
+      try {
+        const value = JSON.parse(event.newValue);
+        switch (event.key) {
+          case USERS_STORAGE_KEY:
+            setUsers(value);
+            break;
+          case POSTS_STORAGE_KEY:
+            setPosts(value);
+            break;
+          case NOTIFICATIONS_STORAGE_KEY:
+            setNotifications(value);
+            break;
+          case CONVERSATIONS_STORAGE_KEY:
+            setConversations(value);
+            break;
+          case COLLABORATIONS_STORAGE_KEY:
+            setCollaborations(value);
+            break;
+          case FEEDBACK_STORAGE_KEY:
+            setFeedback(value);
+            break;
+          case FRIEND_REQUESTS_STORAGE_KEY:
+            setFriendRequests(value);
+            break;
+          case THEME_STORAGE_KEY:
+            setThemeState(value);
+            break;
+          default:
+            break;
         }
+      } catch (err) {
+        console.error(`Error syncing state for key ${event.key}:`, err);
       }
     };
 
     window.addEventListener('storage', syncState);
-
-    return () => {
-      window.removeEventListener('storage', syncState);
-    };
+    return () => window.removeEventListener('storage', syncState);
   }, [
     setUsers,
     setPosts,
@@ -295,30 +325,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setThemeState,
   ]);
 
-  // --- Derived State ---
+  // --- Derived -------------------------------------------------------------
   const currentUser = users.find((u) => u.id === authData.userId) || null;
   const isAuthenticated = !!currentUser;
   const isMasterUser = currentUser?.id === MASTER_USER_ID;
 
   const currentEntry = history[history.length - 1] || { page: 'feed', context: {} };
   const currentPage = currentEntry.page;
-  const viewingProfileId = currentEntry.context.viewingProfileId || null;
-  const viewingCollaborationId = currentEntry.context.viewingCollaborationId || null;
+  const viewingProfileId = (currentEntry.context as PageContext).viewingProfileId || null;
+  const viewingCollaborationId =
+    (currentEntry.context as PageContext).viewingCollaborationId || null;
 
-  // --- Data Refresh Simulation ---
-  const refreshData = useCallback(async (): Promise<void> => {
-    console.log('Simulating data refresh...');
+  // --- Data refresh (simulated) -------------------------------------------
+  const refreshData = useCallback(async () => {
+    console.log('Simulating data refresh…');
     await new Promise((res) => setTimeout(res, 1000));
     trackEvent('data_refreshed');
   }, []);
 
-  // --- Theme Management ---
+  // --- Theme ---------------------------------------------------------------
   useEffect(() => {
-    if (theme === 'light') {
-      document.documentElement.classList.remove('dark');
-    } else {
-      document.documentElement.classList.add('dark');
-    }
+    if (theme === 'light') document.documentElement.classList.remove('dark');
+    else document.documentElement.classList.add('dark');
   }, [theme]);
 
   const setTheme = useCallback(
@@ -329,59 +357,54 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setThemeState]
   );
 
+  // --- Scrolling container -------------------------------------------------
   const registerScrollableNode = useCallback((node: HTMLDivElement) => {
     scrollableNodeRef.current = node;
   }, []);
 
-  // --- Navigation ---
+  // --- Navigation ----------------------------------------------------------
   const navigate = useCallback(
     (page: Page, context: PageContext = {}) => {
-      const currentEntry = history[history.length - 1];
+      const last = history[history.length - 1];
       if (scrollableNodeRef.current) {
-        currentEntry.scrollTop = scrollableNodeRef.current.scrollTop;
+        last.scrollTop = scrollableNodeRef.current.scrollTop;
       }
 
-      // Prevent pushing duplicate pages onto history stack
+      // Avoid pushing duplicates
       if (
-        currentEntry.page === page &&
-        JSON.stringify(currentEntry.context) === JSON.stringify(context)
+        last.page === page &&
+        JSON.stringify(last.context) === JSON.stringify(context)
       ) {
         return;
       }
 
       setHistory((prev) => [...prev, { page, context, scrollTop: 0 }]);
-      if (scrollableNodeRef.current) {
-        scrollableNodeRef.current.scrollTop = 0;
-      }
+      if (scrollableNodeRef.current) scrollableNodeRef.current.scrollTop = 0;
     },
     [history]
   );
 
   const updateCurrentContext = useCallback((newContext: Partial<PageContext>) => {
     setHistory((prev) => {
-      const newHistory = [...prev];
-      const lastEntry = newHistory[newHistory.length - 1];
-      if (lastEntry) {
-        newHistory[newHistory.length - 1] = {
-          ...lastEntry,
-          context: { ...lastEntry.context, ...newContext },
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last) {
+        next[next.length - 1] = {
+          ...last,
+          context: { ...(last.context || {}), ...newContext },
         };
       }
-      return newHistory;
+      return next;
     });
   }, []);
 
   const goBack = useCallback(() => {
-    if (history.length > 1) {
-      setHistory((prev) => prev.slice(0, -1));
-    }
+    if (history.length > 1) setHistory((p) => p.slice(0, -1));
   }, [history.length]);
 
-  const viewProfile = (userId: string) => {
-    navigate('profile', { viewingProfileId: userId });
-  };
+  const viewProfile = (userId: string) => navigate('profile', { viewingProfileId: userId });
 
-  // --- Authentication (demo) ---
+  // --- Auth (demo login w/ mock users) ------------------------------------
   const login = (username: string, _password: string) => {
     const user = users.find(
       (u) => u.username.toLowerCase() === username.toLowerCase()
@@ -389,7 +412,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (user) {
       setAuthData({ userId: user.id });
       setIsRegistering(false);
-      setHistory([{ page: 'feed', context: {} }]); // Reset history on login
+      setHistory([{ page: 'feed', context: {} }]); // reset history
       trackEvent('login_success', { userId: user.id });
       return true;
     }
@@ -399,13 +422,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const logout = () => {
     setAuthData({ userId: null });
-    setHistory([{ page: 'feed', context: {} }]); // Reset history
+    setHistory([{ page: 'feed', context: {} }]);
     trackEvent('logout', { userId: currentUser?.id });
   };
 
+  // 🔐 Real email via Supabase (hash-route redirect to #/NewPassword)
   const sendPasswordResetLink = (email: string) => {
-    console.log(`[AUTH_SIM] Password reset link sent to ${email}`);
-    trackEvent('password_reset_requested', { email });
+    const base =
+      typeof window !== 'undefined'
+        ? window.location.origin
+        : 'https://creatorzonly.com';
+    const redirectTo = `${base}/#/NewPassword`;
+
+    supabase.auth
+      .resetPasswordForEmail(email, { redirectTo })
+      .then(({ error }) => {
+        if (error) {
+          console.error('Password reset email error:', error.message);
+          trackEvent('password_reset_failed', { email, message: error.message });
+        } else {
+          trackEvent('password_reset_requested', { email, redirectTo });
+        }
+      });
   };
 
   const startRegistration = () => setIsRegistering(true);
@@ -421,16 +459,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         | 'isVerified'
         | 'friendIds'
         | 'platformLinks'
+        | 'blockedUserIds'
       > & { password?: string }
     ) => {
       if (
-        users.some((u) => u.username.toLowerCase() === data.username.toLowerCase())
+        users.some(
+          (u) => u.username.toLowerCase() === data.username.toLowerCase()
+        )
       ) {
         trackEvent('registration_failed', { reason: 'username_taken' });
         return false;
       }
 
-      const newIdNumber = users.length + 100; // Use a high offset to avoid collision with mock data seeds
+      const newIdNumber = users.length + 100;
       const newUser: User = {
         id: `u${users.length + 1}`,
         username: data.username,
@@ -449,7 +490,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         blockedUserIds: [],
       };
 
-      setUsers((prev) => [...prev, newUser]);
+      setUsers((p) => [...p, newUser]);
       setAuthData({ userId: newUser.id });
       setIsRegistering(false);
       setHistory([{ page: 'feed', context: {} }]);
@@ -467,34 +508,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setUsers]
   );
 
-  // --- Social Actions ---
-  const getUserById = useCallback((id: string) => users.find((u) => u.id === id), [
-    users,
-  ]);
+  // --- Social --------------------------------------------------------------
+  const getUserById = useCallback(
+    (id: string) => users.find((u) => u.id === id),
+    [users]
+  );
 
-  const getFriendRequest = (userId1: string, userId2: string) => {
-    return friendRequests.find(
+  const getFriendRequest = (userId1: string, userId2: string) =>
+    friendRequests.find(
       (fr) =>
         (fr.fromUserId === userId1 && fr.toUserId === userId2) ||
         (fr.fromUserId === userId2 && fr.toUserId === userId1)
     );
-  };
 
-  const getFriendRequestById = (id: string) => {
-    return friendRequests.find((fr) => fr.id === id);
-  };
+  const getFriendRequestById = (id: string) =>
+    friendRequests.find((fr) => fr.id === id);
 
   const sendFriendRequest = useCallback(
     (toUserId: string) => {
       if (!currentUser) return;
       const fromUserId = currentUser.id;
 
-      // Check if a request already exists
-      const existingRequest = getFriendRequest(fromUserId, toUserId);
-      if (existingRequest) {
-        console.log('Friend request already exists.');
-        return;
-      }
+      const existing = getFriendRequest(fromUserId, toUserId);
+      if (existing) return;
 
       const newRequest: FriendRequest = {
         id: `fr${friendRequests.length + 1}`,
@@ -503,7 +539,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         status: FriendRequestStatus.PENDING,
         timestamp: new Date().toISOString(),
       };
-      setFriendRequests((prev) => [...prev, newRequest]);
+      setFriendRequests((p) => [...p, newRequest]);
 
       const notification: Notification = {
         id: `n${notifications.length + 1}`,
@@ -516,7 +552,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isRead: false,
         timestamp: new Date().toISOString(),
       };
-      setNotifications((prev) => [...prev, notification]);
+      setNotifications((p) => [...p, notification]);
       emitSocketEvent(toUserId, 'notification:new', notification);
       sendWebPush(
         toUserId,
@@ -524,6 +560,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         notification.message,
         `/profile/${currentUser.username}`
       );
+
       trackEvent('friend_request_sent', { from: fromUserId, to: toUserId });
     },
     [
@@ -539,8 +576,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const cancelFriendRequest = useCallback(
     (toUserId: string) => {
       if (!currentUser) return;
-      setFriendRequests((prev) =>
-        prev.filter(
+      setFriendRequests((p) =>
+        p.filter(
           (fr) =>
             !(
               fr.fromUserId === currentUser.id &&
@@ -569,7 +606,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         )
       );
 
-      // Add each other as friends
+      // Connect both users
       setUsers((prev) =>
         prev.map((user) => {
           if (user.id === request.fromUserId)
@@ -580,7 +617,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         })
       );
 
-      // Notify the requester
+      // Notify requester
       const fromUser = getUserById(request.fromUserId);
       if (fromUser) {
         const notification: Notification = {
@@ -594,7 +631,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           isRead: false,
           timestamp: new Date().toISOString(),
         };
-        setNotifications((prev) => [...prev, notification]);
+        setNotifications((p) => [...p, notification]);
         emitSocketEvent(request.fromUserId, 'notification:new', notification);
         sendWebPush(
           request.fromUserId,
@@ -603,6 +640,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           `/profile/${currentUser.username}`
         );
       }
+
       trackEvent('friend_request_accepted', {
         acceptedBy: request.toUserId,
         requestedBy: request.fromUserId,
@@ -645,22 +683,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUsers((prev) =>
         prev.map((user) => {
           if (user.id === currentUserId) {
-            return {
-              ...user,
-              friendIds: user.friendIds.filter((id) => id !== friendId),
-            };
+            return { ...user, friendIds: user.friendIds.filter((id) => id !== friendId) };
           }
           if (user.id === friendId) {
-            return {
-              ...user,
-              friendIds: user.friendIds.filter((id) => id !== currentUserId),
-            };
+            return { ...user, friendIds: user.friendIds.filter((id) => id !== currentUserId) };
           }
           return user;
         })
       );
 
-      // Also remove any pending/accepted friend requests between them
+      // Also strip any requests
       setFriendRequests((prev) =>
         prev.filter(
           (fr) =>
@@ -680,28 +712,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     (userIdToBlock: string) => {
       if (!currentUser) return;
       const currentUserId = currentUser.id;
-
-      const isCurrentlyBlocked = currentUser.blockedUserIds?.includes(userIdToBlock);
+      const isBlocked = currentUser.blockedUserIds?.includes(userIdToBlock);
 
       setUsers((prev) =>
-        prev.map((user) => {
-          if (user.id === currentUserId) {
-            const blockedIds = user.blockedUserIds || [];
-            const newBlockedIds = isCurrentlyBlocked
-              ? blockedIds.filter((id) => id !== userIdToBlock)
-              : [...blockedIds, userIdToBlock];
-            return { ...user, blockedUserIds: newBlockedIds };
+        prev.map((u) => {
+          if (u.id === currentUserId) {
+            const blocked = u.blockedUserIds || [];
+            const nextBlocked = isBlocked
+              ? blocked.filter((id) => id !== userIdToBlock)
+              : [...blocked, userIdToBlock];
+            return { ...u, blockedUserIds: nextBlocked };
           }
-          return user;
+          return u;
         })
       );
 
-      // If blocking, also remove friend connection
-      if (!isCurrentlyBlocked) {
-        removeFriend(userIdToBlock);
-      }
+      // If newly blocking, also remove friendship
+      if (!isBlocked) removeFriend(userIdToBlock);
 
-      trackEvent(isCurrentlyBlocked ? 'user_unblocked' : 'user_blocked', {
+      trackEvent(isBlocked ? 'user_unblocked' : 'user_blocked', {
         blocker: currentUserId,
         blocked: userIdToBlock,
       });
@@ -709,12 +738,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [currentUser, setUsers, removeFriend]
   );
 
-  // --- Content Actions ---
+  // --- Posts ---------------------------------------------------------------
   const addPost = useCallback(
     (content: string, image?: string) => {
       if (!currentUser) return;
-
-      const postId = posts.length + 100; // Use a high offset to avoid collision with mock data seeds
+      const postId = posts.length + 100;
       const newPost: Post = {
         id: `p${posts.length + 1}`,
         authorId: currentUser.id,
@@ -723,7 +751,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         timestamp: new Date().toISOString(),
         likes: 0,
         comments: 0,
-        tags: [], // TODO: Maybe parse tags from content?
+        tags: [],
       };
       setPosts((prev) => [newPost, ...prev]);
       trackEvent('post_created', { userId: currentUser.id, postId: newPost.id });
@@ -739,7 +767,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setPosts, currentUser]
   );
 
-  // --- Collaboration Actions ---
+  // --- Collaborations ------------------------------------------------------
   const addCollaboration = useCallback(
     (
       collabData: Omit<
@@ -792,16 +820,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!collab) return;
 
       const isInterested = collab.interestedUserIds.includes(currentUser.id);
-
       setCollaborations((prev) =>
         prev.map((c) => {
-          if (c.id === collabId) {
-            const updatedIds = isInterested
-              ? c.interestedUserIds.filter((id) => id !== currentUser.id)
-              : [...c.interestedUserIds, currentUser.id];
-            return { ...c, interestedUserIds: updatedIds };
-          }
-          return c;
+          if (c.id !== collabId) return c;
+          const updatedIds = isInterested
+            ? c.interestedUserIds.filter((id) => id !== currentUser.id)
+            : [...c.interestedUserIds, currentUser.id];
+          return { ...c, interestedUserIds: updatedIds };
         })
       );
 
@@ -817,7 +842,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           isRead: false,
           timestamp: new Date().toISOString(),
         };
-        setNotifications((prev) => [...prev, notification]);
+        setNotifications((p) => [...p, notification]);
         emitSocketEvent(collab.authorId, 'notification:new', notification);
         sendWebPush(
           collab.authorId,
@@ -826,37 +851,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           `/collaborations`
         );
       }
+
       trackEvent('collaboration_interest_toggled', {
         userId: currentUser.id,
         collabId,
         isInterested: !isInterested,
       });
     },
-    [
-      currentUser,
-      collaborations,
-      setCollaborations,
-      notifications,
-      setNotifications,
-    ]
+    [currentUser, collaborations, setCollaborations, notifications, setNotifications]
   );
 
-  // --- Messaging Actions ---
+  // --- Messaging -----------------------------------------------------------
   const sendMessage = useCallback(
     (conversationId: string, text: string) => {
       if (!currentUser) return;
       const conversation = conversations.find((c) => c.id === conversationId);
       if (!conversation) return;
 
-      const otherParticipantId = conversation.participantIds.find(
-        (id) => id !== currentUser.id
-      );
-      if (!otherParticipantId) return;
+      const other = conversation.participantIds.find((id) => id !== currentUser.id);
+      if (!other) return;
 
       const newMessage: Message = {
         id: `m${Date.now()}`,
         senderId: currentUser.id,
-        receiverId: otherParticipantId,
+        receiverId: other,
         text,
         timestamp: new Date().toISOString(),
       };
@@ -869,7 +887,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const notification: Notification = {
         id: `n${notifications.length + 1}`,
-        userId: otherParticipantId,
+        userId: other,
         actorId: currentUser.id,
         type: NotificationType.NEW_MESSAGE,
         entityType: 'user',
@@ -878,23 +896,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isRead: false,
         timestamp: new Date().toISOString(),
       };
-      setNotifications((prev) => [...prev, notification]);
-      emitSocketEvent(otherParticipantId, 'notification:new', notification);
-      sendWebPush(otherParticipantId, `New message from ${currentUser.name}`, text, `/messages`);
-      trackEvent('message_sent', { from: currentUser.id, to: otherParticipantId });
+
+      setNotifications((p) => [...p, notification]);
+      emitSocketEvent(other, 'notification:new', notification);
+      sendWebPush(other, `New message from ${currentUser.name}`, text, `/messages`);
+
+      trackEvent('message_sent', { from: currentUser.id, to: other });
     },
-    [
-      currentUser,
-      conversations,
-      setConversations,
-      notifications,
-      setNotifications,
-    ]
+    [currentUser, conversations, setConversations, notifications, setNotifications]
   );
 
   const viewConversation = useCallback(
     (participantId: string) => {
       if (!currentUser) return;
+
       let conversation = conversations.find(
         (c) =>
           c.participantIds.includes(currentUser.id) &&
@@ -902,7 +917,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       );
 
       if (!conversation) {
-        // Create a new conversation if it doesn't exist
         conversation = {
           id: `c${conversations.length + 1}`,
           participantIds: [currentUser.id, participantId],
@@ -928,19 +942,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setConversations]
   );
 
-  // --- Notification Actions ---
+  // --- Notifications -------------------------------------------------------
   const markNotificationsAsRead = useCallback(
     (ids: string[]) => {
       setTimeout(() => {
         setNotifications((prev) =>
           prev.map((n) => (ids.includes(n.id) ? { ...n, isRead: true } : n))
         );
-      }, 500); // Small delay to allow user to see the unread state briefly
+      }, 500); // small delay for UX
     },
     [setNotifications]
   );
 
-  // --- Feedback ---
+  // --- Feedback ------------------------------------------------------------
   const sendFeedback = useCallback(
     (content: string, type: 'Bug Report' | 'Suggestion') => {
       if (!currentUser) return;
@@ -957,20 +971,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [currentUser, feedback, setFeedback]
   );
 
-  // --- Push Notifications ---
+  // --- Push subscriptions --------------------------------------------------
   const subscribeToPushNotifications = useCallback(
     (subscription: PushSubscriptionObject) => {
       if (!currentUser) return;
-      setPushSubscriptions((prev) => ({
-        ...prev,
-        [currentUser.id]: subscription,
-      }));
+      setPushSubscriptions((prev) => ({ ...prev, [currentUser.id]: subscription }));
       console.log(`[PUSH_SIM] User ${currentUser.id} subscribed.`);
       trackEvent('push_subscribed', { userId: currentUser.id });
     },
     [currentUser, setPushSubscriptions]
   );
 
+  // --- Context value -------------------------------------------------------
   const value: AppContextType = {
     users,
     posts,
@@ -979,53 +991,69 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     collaborations,
     feedback,
     friendRequests,
+
     currentUser,
     isAuthenticated,
     isRegistering,
     isMasterUser,
+
     currentPage,
     viewingProfileId,
     viewingCollaborationId,
     history,
     selectedConversationId,
     editingCollaborationId,
+
     theme,
+
     login,
     logout,
     startRegistration,
     cancelRegistration,
     registerAndSetup,
     updateUserProfile,
+
     sendFriendRequest,
     cancelFriendRequest,
     acceptFriendRequest,
     declineFriendRequest,
     removeFriend,
     toggleBlockUser,
+
     getFriendRequest,
     getFriendRequestById,
+
     addPost,
     deletePost,
+
     addCollaboration,
     updateCollaboration,
     deleteCollaboration,
     toggleCollaborationInterest,
+
     sendMessage,
     viewConversation,
     setSelectedConversationId,
     setEditingCollaborationId,
     moveConversationToFolder,
+
     markNotificationsAsRead,
     sendFeedback,
+
     navigate,
     goBack,
     viewProfile,
     updateCurrentContext,
+
     getUserById,
     getUserByUsername: (username: string) =>
       users.find((u) => u.username.toLowerCase() === username.toLowerCase()),
+
     registerScrollableNode,
+
+    // ✅ real email, redirects to #/NewPassword
     sendPasswordResetLink,
+
     subscribeToPushNotifications,
     setTheme,
     refreshData,
@@ -1034,6 +1062,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
 export const useAppContext = () => {
   const context = useContext(AppContext);
   if (context === undefined) {
