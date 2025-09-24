@@ -819,6 +819,19 @@ const AuthPagesRouter: React.FC = () => {
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
+  // Normalize Supabase implicit hash tokens once they've been parsed
+  useEffect(() => {
+    const h = window.location.hash;
+    if (/access_token=|refresh_token=/.test(h)) {
+      // After the first render Supabase (detectSessionInUrl) will have read the tokens.
+      // Clean the URL to a tidy auth route so we don't boot the app with a huge hash.
+      const keepNewPassword = h.toLowerCase().includes('/newpassword');
+      const clean = keepNewPassword ? '#/NewPassword' : '#/Login';
+      // small delay to ensure parsing happened
+      setTimeout(() => history.replaceState(null, '', `${location.origin}/${clean}`), 0);
+    }
+  }, []);
+
   // Debug helper in console to check auth
   useEffect(() => {
     async function checkUser() {
@@ -830,7 +843,7 @@ const AppWrapper: React.FC = () => {
       }
     }
     // @ts-ignore
-    window.debugAuth = checkUser;
+    (window as any).debugAuth = checkUser;
     checkUser();
   }, []);
 
@@ -865,6 +878,7 @@ const AppWrapper: React.FC = () => {
     <AppProvider>
       <RealtimeProvider>
         {/* If a just-created account flags isRegistering, you can optionally render ProfileSetup here */}
+        {/* {isRegistering && <ProfileSetup />} */}
         <AppContent />
       </RealtimeProvider>
     </AppProvider>
