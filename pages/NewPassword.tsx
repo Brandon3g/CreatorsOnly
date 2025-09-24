@@ -9,10 +9,7 @@ const NewPassword: React.FC = () => {
   const [success, setSuccess] = useState('');
   const [checking, setChecking] = useState(true);
 
-  /**
-   * Parse query params that appear *after* the hash, e.g.
-   *   https://site.com/#/NewPassword?code=ABC123&foo=bar
-   */
+  /** Params that appear AFTER the first hash, e.g. #/NewPassword?code=ABC */
   function getHashQueryParams(): URLSearchParams {
     const hash = window.location.hash || '';
     const qIndex = hash.indexOf('?');
@@ -22,26 +19,15 @@ const NewPassword: React.FC = () => {
     return new URLSearchParams('');
   }
 
-  /**
-   * Parse tokens when the URL uses a "double-hash", e.g.
-   *   https://site.com/#/NewPassword#access_token=...&refresh_token=...
-   */
-  function getTokensFromSecondHash():
-    | { access_token: string; refresh_token: string }
-    | null {
+  /** Params that appear as a SECOND hash, e.g. #/NewPassword#code=ABC or #/NewPassword#access_token=... */
+  function getSecondHashParams(): URLSearchParams | null {
     const href = window.location.href;
     const firstHash = href.indexOf('#');
     if (firstHash === -1) return null;
     const secondHash = href.indexOf('#', firstHash + 1);
     if (secondHash === -1) return null;
-
     const fragment = href.substring(secondHash + 1);
-    const params = new URLSearchParams(fragment);
-    const access_token = params.get('access_token') || undefined;
-    const refresh_token = params.get('refresh_token') || undefined;
-
-    if (access_token && refresh_token) return { access_token, refresh_token };
-    return null;
+    return new URLSearchParams(fragment);
   }
 
   useEffect(() => {
@@ -49,21 +35,29 @@ const NewPassword: React.FC = () => {
       setChecking(true);
       setError('');
 
-      // 1) Collect possible params from both places:
+      // Collect params from all possible locations
       const url = new URL(window.location.href);
-      const searchParams = url.searchParams;        // before hash (rare in hash apps)
-      const hashQuery = getHashQueryParams();       // after hash (common in hash apps)
+      const searchParams = url.searchParams;          // ?code=... (before hash)
+      const hashQuery = getHashQueryParams();         // #/NewPassword?code=...
+      const secondHash = getSecondHashParams();       // #/NewPassword#code=... OR #/NewPassword#access_token=...
 
       const errDesc =
-        searchParams.get('error_description') || hashQuery.get('error_description');
+        searchParams.get('error_description') ||
+        hashQuery.get('error_description') ||
+        secondHash?.get('error_description');
+
       if (errDesc) {
         setError(errDesc);
         setChecking(false);
         return;
       }
 
-      // 2) PKCE code flow (may be after hash in hash-router apps)
-      const code = searchParams.get('code') || hashQuery.get('code');
+      // 1) PKCE code (any location)
+      const code =
+        searchParams.get('code') ||
+        hashQuery.get('code') ||
+        secondHash?.get('code');
+
       if (code) {
         const { error: xErr } = await supabase.auth.exchangeCodeForSession(code);
         if (xErr) {
@@ -72,12 +66,14 @@ const NewPassword: React.FC = () => {
           return;
         }
       } else {
-        // 3) Token-in-fragment flow (double-hash: #/NewPassword#access_token=...)
-        const tokens = getTokensFromSecondHash();
-        if (tokens?.access_token && tokens.refresh_token) {
+        // 2) Token-in-fragment (implicit) double-hash
+        const access_token = secondHash?.get('access_token') || undefined;
+        const refresh_token = secondHash?.get('refresh_token') || undefined;
+
+        if (access_token && refresh_token) {
           const { error: sErr } = await supabase.auth.setSession({
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
+            access_token,
+            refresh_token,
           });
           if (sErr) {
             setError('Your reset link is invalid or expired. Please request a new one.');
@@ -87,7 +83,7 @@ const NewPassword: React.FC = () => {
         }
       }
 
-      // 4) Confirm we have a session now
+      // 3) Confirm a session exists now
       const { data, error: sessErr } = await supabase.auth.getSession();
       if (sessErr || !data?.session) {
         setError('Invalid or expired reset link. Please request a new one.');
