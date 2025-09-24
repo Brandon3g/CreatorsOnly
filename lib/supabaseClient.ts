@@ -31,6 +31,7 @@ const listeners: Record<string, ChangeCallback[]> = {};
 export function onTableChange(table: string, callback: ChangeCallback) {
   if (!listeners[table]) listeners[table] = [];
   listeners[table].push(callback);
+  console.log(`[onTableChange] Listener added for ${table}`);
 }
 
 // Setup subscriptions for all key tables
@@ -42,12 +43,12 @@ export function onTableChange(table: string, callback: ChangeCallback) {
         "postgres_changes",
         { event: "*", schema: "public", table },
         (payload) => {
-          // Notify all registered callbacks
+          console.log(`[Realtime] ${table} change:`, payload);
           listeners[table]?.forEach((cb) => cb(payload));
         }
       )
       .subscribe((status) => {
-        console.log(`Realtime subscription for ${table}:`, status);
+        console.log(`[Realtime] Subscription for ${table}:`, status);
       });
   }
 );
