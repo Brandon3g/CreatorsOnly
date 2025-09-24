@@ -17,8 +17,7 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPasswordSent from './pages/ResetPasswordSent';
 import Admin from './pages/Admin';
 import InterestedUsers from './pages/InterestedUsers';
-// ⬇️ New password page (replaces the old ResetPassword page)
-import NewPassword from './pages/NewPassword';
+import NewPassword from './pages/NewPassword'; // ✅ reset form page
 import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
@@ -576,7 +575,6 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
               <button
                 type="submit"
                 className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50"
-                disabled={!feedbackContent.trim()}
               >
                 Send Feedback
               </button>
@@ -664,11 +662,6 @@ const AppContent: React.FC = () => {
         <TestAuth />
       </div>
     );
-  }
-
-  // ✅ New password page route: #/NewPassword
-  if (typeof window !== 'undefined' && window.location.hash.includes('NewPassword')) {
-    return <NewPassword />;
   }
 
   const handleForgotPassword = () => setAuthStage('forgot');
@@ -814,6 +807,42 @@ const AppWrapper: React.FC = () => {
     window.addEventListener('co:toggle-theme', handler);
     return () => window.removeEventListener('co:toggle-theme', handler);
   }, [toggleTheme]);
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Minimal hash-router for auth-only pages OUTSIDE providers.
+  // This keeps login/forgot/new-password screens quiet (no realtime/data init).
+  // ────────────────────────────────────────────────────────────────────────────
+  const [fpStage, setFpStage] = React.useState<'forgot' | 'sent'>('forgot');
+  const [fpEmail, setFpEmail] = React.useState('');
+  const hash = typeof window !== 'undefined' ? window.location.hash.toLowerCase() : '';
+
+  if (hash.includes('#/newpassword')) {
+    return <NewPassword />;
+  }
+  if (hash.includes('#/forgotpassword')) {
+    if (fpStage === 'sent') {
+      return (
+        <ResetPasswordSent
+          email={fpEmail}
+          onBackToLogin={() => {
+            window.location.hash = '#/Login';
+          }}
+        />
+      );
+    }
+    return (
+      <ForgotPassword
+        onSendResetLink={(email) => {
+          setFpEmail(email);
+          setFpStage('sent');
+        }}
+        onBackToLogin={() => {
+          window.location.hash = '#/Login';
+        }}
+      />
+    );
+  }
+  // ────────────────────────────────────────────────────────────────────────────
 
   return (
     <AppProvider>
