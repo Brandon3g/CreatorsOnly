@@ -1,46 +1,41 @@
-// pages/Login.tsx
+// src/pages/Login.tsx
 import React, { useState } from 'react';
-import { useAppContext } from '../context/AppContext';
 import { supabase } from '../lib/supabaseClient';
 
-interface LoginProps {
+type LoginProps = {
   onForgotPassword: () => void;
-}
+};
 
 const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
-  const { startRegistration } = useAppContext();
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>('');
-  const [info, setInfo] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setInfo('');
     setPending(true);
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (error) throw error;
+    setError(null);
 
-      // Optional: small toast in console to verify
-      console.log('[Auth] Logged in as:', data.user?.id, data.user?.email);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
 
-      // Reload so AppProvider re-reads the Supabase session
-      window.location.reload();
-    } catch (err: any) {
-      setError(err?.message ?? 'Login failed. Please try again.');
-    } finally {
-      setPending(false);
+    setPending(false);
+
+    if (error) {
+      setError(error.message || 'Login failed. Please try again.');
+      return;
     }
+
+    // Success: route into the app (providers wrap non-auth routes)
+    window.location.hash = '#/Feed';
+    // Ensure providers read the fresh session
+    window.location.reload();
   };
 
-  const hasError = Boolean(error);
+  const hasError = !!error;
   const errorId = 'login-error';
 
   return (
@@ -111,11 +106,6 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
               {error}
             </p>
           )}
-          {info && (
-            <p role="status" className="text-sm text-primary text-center">
-              {info}
-            </p>
-          )}
 
           <div>
             <button
@@ -128,14 +118,9 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
           </div>
         </form>
 
-        <div className="text-sm text-center">
-          <button
-            type="button"
-            onClick={startRegistration}
-            className="font-medium text-text-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
-          >
-            Don&apos;t have an account? Create one
-          </button>
+        {/* Optional CTA — wire up later if you add a dedicated sign-up flow */}
+        <div className="text-sm text-center text-text-secondary">
+          Don’t have an account? Ask an admin to invite you.
         </div>
       </div>
     </div>
