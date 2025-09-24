@@ -21,7 +21,7 @@ import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 import TestAuth from './pages/TestAuth';
-import { supabase } from './supabaseClient'; // ✅ Auth check uses your existing client
+import { supabase } from './lib/supabaseClient'; // ✅ FIXED: point to lib
 
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
@@ -792,7 +792,6 @@ const AppWrapper: React.FC = () => {
         console.log('[Auth] Logged in as:', data.user.id, '(email:', data.user.email, ')');
       }
     }
-    // expose to console
     // @ts-ignore
     window.debugAuth = checkUser;
     checkUser();

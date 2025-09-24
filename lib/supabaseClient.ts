@@ -1,3 +1,4 @@
+// lib/supabaseClient.ts
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -19,7 +20,6 @@ export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKe
 // Realtime Subscriptions
 // -------------------------
 
-// Callback registry
 type ChangeCallback = (payload: any) => void;
 const listeners: Record<string, ChangeCallback[]> = {};
 
@@ -34,21 +34,32 @@ export function onTableChange(table: string, callback: ChangeCallback) {
   console.log(`[onTableChange] Listener added for ${table}`);
 }
 
-// Setup subscriptions for all key tables
-["users", "posts", "friend_requests", "messages", "feedback", "collabs"].forEach(
-  (table) => {
-    supabase
-      .channel(`public:${table}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table },
-        (payload) => {
-          console.log(`[Realtime] ${table} change:`, payload);
-          listeners[table]?.forEach((cb) => cb(payload));
-        }
-      )
-      .subscribe((status) => {
-        console.log(`[Realtime] Subscription for ${table}:`, status);
-      });
-  }
-);
+// -------------------------
+// Register Subscriptions
+// -------------------------
+
+const tables = [
+  "profiles",
+  "posts",
+  "requests",
+  "messages",
+  "feedback",
+  "collaborations",
+  "notifications",
+];
+
+tables.forEach((table) => {
+  supabase
+    .channel(`public:${table}`)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table },
+      (payload) => {
+        console.log(`[Realtime] ${table} change:`, payload);
+        listeners[table]?.forEach((cb) => cb(payload));
+      }
+    )
+    .subscribe((status) => {
+      console.log(`[Realtime] Subscription for ${table}:`, status);
+    });
+});
