@@ -10,6 +10,7 @@ import React, {
   PropsWithChildren,
 } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { useAppContext } from './AppContext';
 
 /**
  * Types from @supabase/supabase-js v2 for Postgres Changes payload.
@@ -179,7 +180,7 @@ export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
 }
 
 /**
- * Hook to consume the realtime API
+ * Core hook that returns the realtime API
  */
 export function useRealtime(): RealtimeAPI {
   const ctx = useContext(RealtimeContext);
@@ -190,11 +191,30 @@ export function useRealtime(): RealtimeAPI {
 }
 
 /**
- * Back-compat alias for existing code that imports `useRealtimeContext`.
- * (Maps to the new `useRealtime`.)
+ * Back-compat + extended data hook for existing screens.
+ *
+ * Many of your pages (e.g., Feed) currently do:
+ *   const { posts, profiles: users, isLoadingPosts, isLoadingProfiles } = useRealtimeContext();
+ *
+ * To avoid changing those pages right now, we expose the same keys here,
+ * backed by AppContext (local store), while also including the realtime API
+ * (on/useTableTick/connected) for new listeners.
  */
-export function useRealtimeContext(): RealtimeAPI {
-  return useRealtime();
+export function useRealtimeContext(): RealtimeAPI & {
+  posts: ReturnType<typeof useAppContext>['posts'];
+  profiles: ReturnType<typeof useAppContext>['users'];
+  isLoadingPosts: boolean;
+  isLoadingProfiles: boolean;
+} {
+  const api = useRealtime();
+  const { posts, users } = useAppContext();
+  return {
+    ...api,
+    posts,
+    profiles: users,
+    isLoadingPosts: false,
+    isLoadingProfiles: false,
+  };
 }
 
 /**
