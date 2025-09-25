@@ -61,9 +61,9 @@
       })();
     </script>
 
-    <!-- Normalize Supabase recovery links BEFORE React boots.
-         Put tokens FIRST in the hash so Supabase auto-detects them,
-         then route to "#/NewPassword". Also set a recovery guard flag. -->
+    <!-- 1) Normalize Supabase recovery links BEFORE React boots.
+           Put tokens FIRST in the hash so Supabase auto-detects them,
+           then route to "#/NewPassword". Also set a recovery guard flag. -->
     <script>
       (function () {
         try {
@@ -82,7 +82,12 @@
             qs.forEach(function (v, k) {
               merged.set(k, v);
             });
-            if (qs.has('access_token') || qs.has('refresh_token') || (qs.get('type') || '').toLowerCase() === 'recovery') {
+            if (
+              qs.has('access_token') ||
+              qs.has('refresh_token') ||
+              (qs.get('type') || '').toLowerCase() === 'recovery' ||
+              qs.has('code')
+            ) {
               sawToken = true;
             }
           }
@@ -90,7 +95,7 @@
           // If we have recovery tokens but the hash does NOT start with them, reorder to:
           //   #access_token=...&refresh_token=...&type=recovery#/NewPassword
           var hash = window.location.hash || '';
-          var startsWithTokens = /^#(access_token|id_token|refresh_token)=/i.test(hash);
+          var startsWithTokens = /^#(access_token|id_token|refresh_token|code)=/i.test(hash);
           if (sawToken && !startsWithTokens) {
             // Persist a session-scoped guard for the app context
             try { sessionStorage.setItem('co-recovery-active', '1'); } catch (e) {}
@@ -98,10 +103,47 @@
             var tokenFrag = merged.toString(); // includes all token params
             var base = window.location.origin + window.location.pathname;
             window.location.replace(base + '#' + tokenFrag + '#/NewPassword');
+            return; // stop here; page is reloading
           }
         } catch (e) {
           // non-fatal
         }
+      })();
+    </script>
+
+    <!-- 2) Short-lived guard: while recovery is active, keep the route on #/NewPassword.
+           If anything (app/router) tries to change the hash, bounce it back for a few seconds. -->
+    <script>
+      (function () {
+        try {
+          var guardOn = false;
+          try { guardOn = sessionStorage.getItem('co-recovery-active') === '1'; } catch (e) {}
+
+          if (!guardOn) return;
+
+          var TARGET = '#/NewPassword';
+          var ensureTarget = function () {
+            if (window.location.hash !== TARGET) {
+              window.location.hash = TARGET;
+            }
+          };
+
+          // Immediately ensure the route
+          ensureTarget();
+
+          // For ~8 seconds after load, prevent other code from navigating away
+          var endAt = Date.now() + 8000;
+          var handler = function () {
+            if (Date.now() < endAt) ensureTarget();
+            else window.removeEventListener('hashchange', handler);
+          };
+          window.addEventListener('hashchange', handler);
+
+          // Also re-assert once after a brief delay to cover late app redirects
+          setTimeout(ensureTarget, 150);
+          setTimeout(ensureTarget, 600);
+          setTimeout(ensureTarget, 1200);
+        } catch (e) {}
       })();
     </script>
   </head>
