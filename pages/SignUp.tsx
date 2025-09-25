@@ -1,33 +1,57 @@
 // src/pages/SignUp.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { ICONS, CREATOR_TYPES, US_STATES } from '../constants';
+import * as CONST from '../constants';
 import { trackEvent } from '../services/analytics';
 
 type CreatorType = string;
 
 const BIO_LIMIT = 150;
 
+/** Default fallbacks if constants aren't exported */
+const DEFAULT_CREATOR_TYPES: string[] = ['Model', 'Photographer', 'Videographer'];
+const DEFAULT_US_STATES: Array<
+  string | { code?: string; value?: string; name?: string; label?: string }
+> = [
+  { code: 'CA', name: 'California' },
+  { code: 'NY', name: 'New York' },
+  { code: 'TX', name: 'Texas' },
+  { code: 'FL', name: 'Florida' },
+  { code: 'WA', name: 'Washington' },
+];
+
 /**
- * County mapping (scoped locally to this page to avoid changing shared constants).
- * We start with a full CA list so the flow is functional immediately.
- * County select is disabled for states without an entry here.
+ * County mapping (scoped locally to this page).
+ * County select is disabled when a state has no entry here.
+ * CA provided fully so the flow is functional immediately.
  */
 const COUNTIES_BY_STATE: Record<string, string[]> = {
   CA: [
-    'Alameda','Alpine','Amador','Butte','Calaveras','Colusa','Contra Costa','Del Norte',
-    'El Dorado','Fresno','Glenn','Humboldt','Imperial','Inyo','Kern','Kings','Lake','Lassen',
-    'Los Angeles','Madera','Marin','Mariposa','Mendocino','Merced','Modoc','Mono','Monterey',
-    'Napa','Nevada','Orange','Placer','Plumas','Riverside','Sacramento','San Benito',
-    'San Bernardino','San Diego','San Francisco','San Joaquin','San Luis Obispo','San Mateo',
-    'Santa Barbara','Santa Clara','Santa Cruz','Shasta','Sierra','Siskiyou','Solano','Sonoma',
-    'Stanislaus','Sutter','Tehama','Trinity','Tulare','Tuolumne','Ventura','Yolo','Yuba',
+    'Alameda', 'Alpine', 'Amador', 'Butte', 'Calaveras', 'Colusa', 'Contra Costa', 'Del Norte',
+    'El Dorado', 'Fresno', 'Glenn', 'Humboldt', 'Imperial', 'Inyo', 'Kern', 'Kings', 'Lake',
+    'Lassen', 'Los Angeles', 'Madera', 'Marin', 'Mariposa', 'Mendocino', 'Merced', 'Modoc',
+    'Mono', 'Monterey', 'Napa', 'Nevada', 'Orange', 'Placer', 'Plumas', 'Riverside', 'Sacramento',
+    'San Benito', 'San Bernardino', 'San Diego', 'San Francisco', 'San Joaquin',
+    'San Luis Obispo', 'San Mateo', 'Santa Barbara', 'Santa Clara', 'Santa Cruz', 'Shasta',
+    'Sierra', 'Siskiyou', 'Solano', 'Sonoma', 'Stanislaus', 'Sutter', 'Tehama', 'Trinity',
+    'Tulare', 'Tuolumne', 'Ventura', 'Yolo', 'Yuba',
   ],
-  // Add additional states as needed, e.g.:
-  // NY: ['Albany', 'Allegany', ...],
-  // TX: ['Anderson', 'Andrews', ...],
-  // FL: ['Alachua', 'Baker', ...],
+  // Add more states as needed later (NY, TX, FL, etc.)
 };
+
+// Pull from constants if available; otherwise use fallbacks.
+const ICONS = CONST.ICONS;
+const CREATOR_TYPES_LIST =
+  (Array.isArray((CONST as any).CREATOR_TYPES) && (CONST as any).CREATOR_TYPES.length
+    ? (CONST as any).CREATOR_TYPES
+    : DEFAULT_CREATOR_TYPES) as string[];
+
+const US_STATES_LIST =
+  (Array.isArray((CONST as any).US_STATES) && (CONST as any).US_STATES.length
+    ? (CONST as any).US_STATES
+    : DEFAULT_US_STATES) as Array<
+    string | { code?: string; value?: string; name?: string; label?: string }
+  >;
 
 const SignUp: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -42,16 +66,12 @@ const SignUp: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
-  // Counties for selected state
   const countyOptions = useMemo<string[]>(
-    () => (stateCode ? (COUNTIES_BY_STATE[stateCode] || []) : []),
+    () => (stateCode ? COUNTIES_BY_STATE[stateCode] || [] : []),
     [stateCode]
   );
 
-  useEffect(() => {
-    // reset county when state changes
-    setCounty('');
-  }, [stateCode]);
+  useEffect(() => setCounty(''), [stateCode]);
 
   const toggleType = (t: CreatorType) => {
     setTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
@@ -71,7 +91,6 @@ const SignUp: React.FC = () => {
     setMsg(null);
 
     try {
-      // Create account and attach public user metadata we’ll read into the profile
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -89,29 +108,20 @@ const SignUp: React.FC = () => {
 
       if (error) throw error;
 
-      // Analytics
       trackEvent('signup_success', {
         method: 'email_password',
         userId: data.user?.id ?? 'n/a',
       });
 
-      // If your project requires email confirmation, Supabase may return no session.
-      // Either way, route into the app; the shell will link/finish profile.
       setMsg({
         type: 'success',
-        text:
-          data.session
-            ? 'Account created! Redirecting…'
-            : 'Account created. Check your email to confirm, then sign in.',
+        text: data.session
+          ? 'Account created! Redirecting…'
+          : 'Account created. Check your email to confirm, then sign in.',
       });
 
-      // Small delay to show success then move to feed or login
       setTimeout(() => {
-        if (data.session) {
-          window.location.hash = '#/Feed';
-        } else {
-          window.location.hash = '#/Login';
-        }
+        window.location.hash = data.session ? '#/Feed' : '#/Login';
       }, 700);
     } catch (err: any) {
       console.error('[SignUp] error', err);
@@ -170,7 +180,8 @@ const SignUp: React.FC = () => {
               className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
             />
             <p className="mt-1 text-xs text-text-secondary">
-              3–20 letters, digits, or underscores. Shown as <span className="opacity-80">@{username || 'username'}</span>
+              3–20 letters, digits, or underscores. Shown as{' '}
+              <span className="opacity-80">@{username || 'username'}</span>
             </p>
           </div>
 
@@ -192,7 +203,11 @@ const SignUp: React.FC = () => {
                 onPointerUp={() => setShowPwd((s) => !s)}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary"
               >
-                {showPwd ? ICONS.eyeOff ?? ICONS.close : ICONS.eye ?? ICONS.camera}
+                {(ICONS as any).eye
+                  ? (ICONS as any).eye
+                  : showPwd
+                  ? (ICONS as any).close
+                  : (ICONS as any).camera}
               </button>
             </div>
             <p className="mt-1 text-xs text-text-secondary">At least 8 characters.</p>
@@ -229,25 +244,23 @@ const SignUp: React.FC = () => {
             <label className="block text-sm font-medium">What kind of creator are you?</label>
             <p className="text-xs text-text-secondary mb-2">Select all that apply.</p>
             <div className="flex flex-wrap gap-2">
-              {(CREATOR_TYPES?.length ? CREATOR_TYPES : ['Model', 'Photographer', 'Videographer']).map(
-                (t) => {
-                  const active = types.includes(t);
-                  return (
-                    <button
-                      key={t}
-                      type="button"
-                      onPointerUp={() => toggleType(t)}
-                      className={`px-3 py-1.5 rounded-full border text-sm ${
-                        active
-                          ? 'bg-primary text-white border-primary'
-                          : 'bg-surface-light text-text-primary border-surface-light hover:bg-surface'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  );
-                }
-              )}
+              {CREATOR_TYPES_LIST.map((t) => {
+                const active = types.includes(t);
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onPointerUp={() => toggleType(t)}
+                    className={`px-3 py-1.5 rounded-full border text-sm ${
+                      active
+                        ? 'bg-primary text-white border-primary'
+                        : 'bg-surface-light text-text-primary border-surface-light hover:bg-surface'
+                    }`}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -261,7 +274,7 @@ const SignUp: React.FC = () => {
                 className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="">Select State</option>
-                {(US_STATES?.length ? US_STATES : []).map((s: any) =>
+                {US_STATES_LIST.map((s: any) =>
                   typeof s === 'string' ? (
                     <option key={s} value={s}>
                       {s}
