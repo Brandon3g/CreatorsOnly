@@ -1,266 +1,300 @@
-// pages/ProfileSetup.tsx
-import React, { useState, useEffect } from 'react';
+// src/pages/ProfileSetup.tsx
+import React, { useMemo, useState } from 'react';
 import { useAppContext } from '../context/AppContext';
-import { US_COUNTIES_BY_STATE } from '../data/locations';
+
+type CreatorRole = 'Model' | 'Photographer' | 'Videographer';
+
+const ROLE_OPTIONS: CreatorRole[] = ['Model', 'Photographer', 'Videographer'];
+
+// Small built-in list so the County select works out of the box.
+// If you later plug a full dataset, just expand this map.
+const STATES: { code: string; name: string }[] = [
+  { code: 'CA', name: 'California' },
+  { code: 'AZ', name: 'Arizona' },
+  { code: 'NV', name: 'Nevada' },
+  { code: 'NY', name: 'New York' },
+  { code: 'TX', name: 'Texas' },
+];
+
+const COUNTIES_BY_STATE: Record<string, string[]> = {
+  CA: [
+    'Los Angeles County',
+    'Orange County',
+    'San Diego County',
+    'Riverside County',
+    'San Bernardino County',
+  ],
+  AZ: ['Maricopa County', 'Pima County', 'Pinal County'],
+  NV: ['Clark County', 'Washoe County'],
+  NY: ['New York County', 'Kings County', 'Queens County'],
+  TX: ['Harris County', 'Dallas County', 'Tarrant County', 'Travis County'],
+};
+
+const MAX_BIO = 150;
+
+const chipBase =
+  'px-3 py-1 rounded-full text-sm border transition select-none';
+const chipOn =
+  chipBase + ' bg-primary text-white border-primary';
+const chipOff =
+  chipBase + ' bg-transparent text-foreground/80 border-border hover:bg-accent/20';
+
+const inputBase =
+  'w-full bg-muted/20 text-foreground placeholder-foreground/50 rounded-md px-3 py-2 outline-none border border-border focus:border-primary focus:ring-2 focus:ring-primary/30';
+
+const labelBase = 'block text-sm text-foreground/80 mb-1';
+
+const cardBase =
+  'w-full max-w-xl mx-auto bg-card text-card-foreground rounded-2xl shadow-lg border border-border p-6 md:p-8';
+
+const heading =
+  'text-2xl md:text-3xl font-semibold text-foreground mb-2 text-center';
+const subheading =
+  'text-sm text-foreground/70 text-center mb-6';
+
+const buttonPrimary =
+  'w-full py-3 rounded-xl font-semibold bg-primary hover:bg-primary/90 text-white disabled:opacity-60 disabled:cursor-not-allowed';
+
+const backLink =
+  'block text-center mt-4 text-sm text-foreground/70 hover:text-foreground';
+
+const errorText = 'text-red-500 text-sm mt-1';
+const hintText = 'text-xs text-foreground/60 mt-1';
 
 const ProfileSetup: React.FC = () => {
-  const { registerAndSetup, cancelRegistration } = useAppContext();
+  const { startRegistration, setPage } = useAppContext() as any;
 
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState(''); // required in this mock flow
-  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
+  const [roles, setRoles] = useState<CreatorRole[]>([]);
+  const [stateCode, setStateCode] = useState('');
+  const [county, setCounty] = useState('');
   const [bio, setBio] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
-  const [selectedState, setSelectedState] = useState('');
-  const [selectedCounty, setSelectedCounty] = useState('');
-  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const BIO_LIMIT = 150;
-  const availableTags = ['Model', 'Photographer', 'Videographer'];
+  const counties = useMemo(() => COUNTIES_BY_STATE[stateCode] ?? [], [stateCode]);
 
-  const states = Object.keys(US_COUNTIES_BY_STATE);
-  const counties = selectedState ? US_COUNTIES_BY_STATE[selectedState] : [];
-
-  useEffect(() => {
-    // Always start at the top on this page (helps Safari/iOS too)
-    window.scrollTo(0, 0);
-  }, []);
-
-  const handleTagToggle = (tag: string) => {
-    setTags(prev =>
-      prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+  const toggleRole = (role: CreatorRole) => {
+    setRoles((prev) =>
+      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
     );
   };
 
-  const handleStateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setSelectedState(e.target.value);
-    setSelectedCounty('');
-  };
+  const bioCount = `${bio.length}/${MAX_BIO}`;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setError(null);
 
-    const ok = registerAndSetup({
-      username,
-      password,
-      name,
-      email,
-      bio,
-      tags,
-      state: selectedState,
-      county: selectedCounty,
-      // customLink omitted here; add if you decide to collect it
-    });
+    if (!username.trim() || !password || !displayName.trim() || !email.trim()) {
+      setError('Please fill in Username, Password, Name, and Email.');
+      return;
+    }
+    if (bio.length > MAX_BIO) {
+      setError(`Bio must be ${MAX_BIO} characters or fewer.`);
+      return;
+    }
 
-    if (!ok) {
-      setError('This username is already taken. Please choose another.');
+    try {
+      setSubmitting(true);
+
+      // Shape a single payload your AppContext can use.
+      // If your context expects different keys, adjust here.
+      const payload = {
+        username: username.trim().replace(/^@?/, '@'),
+        password,
+        name: displayName.trim(),
+        email: email.trim(),
+        roles,
+        state: stateCode || null,
+        county: county || null,
+        bio: bio.trim() || null,
+      };
+
+      // startRegistration should create the user and route to feed/profile.
+      const ok = await Promise.resolve(startRegistration?.(payload));
+
+      if (!ok) {
+        setError('Could not create your account. Please try again.');
+        setSubmitting(false);
+        return;
+      }
+      // Success path is handled in AppContext (e.g., it sets auth + page).
+    } catch (err: any) {
+      setError(err?.message || 'Something went wrong.');
+      setSubmitting(false);
     }
   };
 
-  const inputCls =
-    'mt-1 block w-full px-3 py-3 rounded-md border border-surface-light bg-surface-light ' +
-    'placeholder-text-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-primary ' +
-    'appearance-none';
-
-  const selectCls =
-    'w-full px-3 py-3 rounded-md border border-surface-light bg-surface-light text-text-primary ' +
-    'focus:outline-none focus:ring-2 focus:ring-primary appearance-none disabled:opacity-50 disabled:cursor-not-allowed';
+  const goBackToLogin = () => {
+    if (typeof setPage === 'function') setPage('login');
+    else if (window?.history?.length) window.history.back();
+  };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background safe-pads">
-      <div className="w-full max-w-2xl p-8 space-y-8 bg-surface rounded-2xl shadow-lg">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-primary">Create Your Account</h1>
-          <p className="mt-2 text-text-secondary">Join the community for creators.</p>
+    <div className="min-h-screen w-full flex items-center justify-center px-4">
+      <form onSubmit={onSubmit} className={cardBase} aria-labelledby="create-title">
+        <h1 id="create-title" className={heading}>
+          Create Your Account
+        </h1>
+        <p className={subheading}>Join the community for creators.</p>
+
+        {/* Username */}
+        <label className={labelBase} htmlFor="username">Username</label>
+        <input
+          id="username"
+          type="text"
+          autoComplete="username"
+          placeholder="Your unique @username"
+          className={inputBase}
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+
+        {/* Password */}
+        <div className="mt-4">
+          <label className={labelBase} htmlFor="password">Password</label>
+          <input
+            id="password"
+            type="password"
+            autoComplete="new-password"
+            placeholder="Choose a secure password"
+            className={inputBase}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
         </div>
 
-        <form className="space-y-6" onSubmit={handleSubmit}>
-          {/* Top fields */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="username" className="block text-sm text-text-secondary mb-1">
-                Username *
-              </label>
-              <input
-                id="username"
-                name="username"
-                type="text"
-                autoComplete="username"
-                required
-                className={inputCls}
-                placeholder="yourhandle"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-              />
-            </div>
+        {/* Name */}
+        <div className="mt-4">
+          <label className={labelBase} htmlFor="displayName">Name</label>
+          <input
+            id="displayName"
+            type="text"
+            placeholder="Your display name"
+            className={inputBase}
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+        </div>
 
-            <div>
-              <label htmlFor="password" className="block text-sm text-text-secondary mb-1">
-                Password *
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="new-password"
-                required
-                className={inputCls}
-                placeholder="Choose a secure password"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-              />
-            </div>
+        {/* Email */}
+        <div className="mt-4">
+          <label className={labelBase} htmlFor="email">Email</label>
+          <input
+            id="email"
+            type="email"
+            autoComplete="email"
+            placeholder="you@example.com"
+            className={inputBase}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
 
-            <div>
-              <label htmlFor="name" className="block text-sm text-text-secondary mb-1">
-                Display Name *
-              </label>
-              <input
-                id="name"
-                name="name"
-                type="text"
-                autoComplete="name"
-                required
-                className={inputCls}
-                placeholder="Your name"
-                value={name}
-                onChange={e => setName(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="email" className="block text-sm text-text-secondary mb-1">
-                Email *
-              </label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                required
-                className={inputCls}
-                placeholder="you@example.com"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Tag picker */}
-          <div>
-            <label className="block text-sm text-text-secondary">What kind of creator are you?</label>
-            <p className="text-xs text-text-secondary mt-1">Select all that apply.</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {availableTags.map(tag => {
-                const selected = tags.includes(tag);
-                return (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => handleTagToggle(tag)}
-                    className={
-                      'px-4 py-2 rounded-full text-sm font-semibold transition-colors ' +
-                      (selected
-                        ? 'bg-primary text-white'
-                        : 'bg-surface-light text-text-primary border border-surface-light hover:bg-surface')
-                    }
-                    aria-pressed={selected}
-                  >
-                    {tag}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Location */}
-          <div>
-            <label className="block text-sm text-text-secondary">Location (Recommended)</label>
-            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <select
-                  id="state-select"
-                  value={selectedState}
-                  onChange={handleStateChange}
-                  className={selectCls}
+        {/* Roles */}
+        <div className="mt-6">
+          <p className="text-sm text-foreground/80">What kind of creator are you?</p>
+          <p className={hintText}>Select all that apply.</p>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {ROLE_OPTIONS.map((role) => {
+              const on = roles.includes(role);
+              return (
+                <button
+                  key={role}
+                  type="button"
+                  className={on ? chipOn : chipOff}
+                  onClick={() => toggleRole(role)}
+                  aria-pressed={on}
                 >
-                  <option value="">Select State</option>
-                  {states.map(s => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <select
-                  id="county-select"
-                  value={selectedCounty}
-                  onChange={e => setSelectedCounty(e.target.value)}
-                  disabled={!selectedState}
-                  className={selectCls}
-                >
-                  <option value="">Select County</option>
-                  {counties.map(c => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  {role}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Location */}
+        <div className="mt-6">
+          <p className="text-sm text-foreground/80">Location (Recommended)</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+            <div>
+              <label className={labelBase} htmlFor="state">State</label>
+              <select
+                id="state"
+                className={inputBase}
+                value={stateCode}
+                onChange={(e) => {
+                  setStateCode(e.target.value);
+                  setCounty('');
+                }}
+              >
+                <option value="">Select State</option>
+                {STATES.map((s) => (
+                  <option key={s.code} value={s.code}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className={labelBase} htmlFor="county">County</label>
+              <select
+                id="county"
+                className={inputBase}
+                value={county}
+                onChange={(e) => setCounty(e.target.value)}
+                disabled={!stateCode}
+              >
+                <option value="">{stateCode ? 'Select County' : 'Select State first'}</option>
+                {counties.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
+        </div>
 
-          {/* Bio */}
-          <div className="relative">
-            <label htmlFor="bio" className="block text-sm text-text-secondary mb-1">
-              Bio (Recommended)
-            </label>
-            <textarea
-              id="bio"
-              name="bio"
-              rows={4}
-              className={
-                'block w-full px-3 py-3 rounded-md border border-surface-light bg-surface-light ' +
-                'placeholder-text-secondary text-text-primary focus:outline-none focus:ring-2 focus:ring-primary resize-none'
-              }
-              placeholder="Tell us about yourself…"
-              value={bio}
-              onChange={e => {
-                if (e.target.value.length <= BIO_LIMIT) setBio(e.target.value);
-              }}
-            />
-            <span className="absolute bottom-2 right-2 text-xs text-text-secondary">
-              {bio.length}/{BIO_LIMIT}
-            </span>
+        {/* Bio */}
+        <div className="mt-6">
+          <label className={labelBase} htmlFor="bio">Bio (Recommended)</label>
+          <textarea
+            id="bio"
+            rows={4}
+            placeholder="Tell us about yourself..."
+            className={inputBase + ' resize-none'}
+            value={bio}
+            onChange={(e) => setBio(e.target.value.slice(0, MAX_BIO))}
+          />
+          <div className="flex justify-end text-xs text-foreground/60 mt-1">
+            {bioCount}
           </div>
+        </div>
 
-          {error && <p className="text-sm text-accent-red text-center">{error}</p>}
+        {error && <div className={errorText} role="alert">{error}</div>}
 
-          <div className="flex gap-3 justify-end">
-            <button
-              type="button"
-              onClick={cancelRegistration}
-              className="px-5 py-3 rounded-full border border-surface-light text-text-secondary hover:bg-surface-light"
-            >
-              Back to Login
-            </button>
-            <button
-              type="submit"
-              disabled={!username || !password || !name || !email || tags.length === 0}
-              className="px-5 py-3 rounded-full bg-primary text-white font-semibold hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Complete Setup &amp; Join
-            </button>
-          </div>
-        </form>
+        <button
+          type="submit"
+          className={buttonPrimary + ' mt-6'}
+          disabled={submitting}
+        >
+          {submitting ? 'Creating your account…' : 'Complete Setup & Join'}
+        </button>
 
-        <p className="text-xs text-text-secondary text-center">
-          By creating an account, you agree to our Terms of Service and Privacy Policy.
-        </p>
-      </div>
+        <button
+          type="button"
+          onClick={goBackToLogin}
+          className={backLink}
+        >
+          Back to Login
+        </button>
+      </form>
     </div>
   );
 };
