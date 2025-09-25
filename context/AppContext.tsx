@@ -42,23 +42,29 @@ import {
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 
-// ---------------------------------------------------------------------------
-// Simple event emitter to simulate realtime (wired up in App.tsx listener)
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Lightweight socket-style event emitter (simulated)
+ * -------------------------------------------------------------------------*/
 const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
   window.dispatchEvent(
-    new CustomEvent('socket-event', { detail: { userId, eventName, payload } })
+    new CustomEvent('socket-event', { detail: { userId, eventName, payload } }),
   );
 };
 
-// ---------------------------------------------------------------------------
-// Web Push (simulated)
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Simulated Web Push (uses SW message to show notification)
+ * -------------------------------------------------------------------------*/
 const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
-const sendWebPush = (userId: string, title: string, body: string, url: string) => {
+
+const sendWebPush = (
+  userId: string,
+  title: string,
+  body: string,
+  url: string,
+) => {
   console.log(`[PUSH_SIM] Sending push to user ${userId}: ${title}`);
   const subscriptions = JSON.parse(
-    localStorage.getItem(PUSH_SUBSCRIPTIONS_STORAGE_KEY) || '{}'
+    localStorage.getItem(PUSH_SUBSCRIPTIONS_STORAGE_KEY) || '{}',
   );
   if (subscriptions[userId]) {
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
@@ -75,9 +81,9 @@ const sendWebPush = (userId: string, title: string, body: string, url: string) =
   }
 };
 
-// ---------------------------------------------------------------------------
-// Storage Keys
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Storage keys
+ * -------------------------------------------------------------------------*/
 const USERS_STORAGE_KEY = 'creatorsOnlyUsers';
 const POSTS_STORAGE_KEY = 'creatorsOnlyPosts';
 const NOTIFICATIONS_STORAGE_KEY = 'creatorsOnlyNotifications';
@@ -88,9 +94,9 @@ const FRIEND_REQUESTS_STORAGE_KEY = 'creatorsOnlyFriendRequests';
 const AUTH_STORAGE_KEY = 'creatorsOnlyAuth';
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 
-// ---------------------------------------------------------------------------
-// Context Type
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Context type
+ * -------------------------------------------------------------------------*/
 interface AppContextType {
   // State
   users: User[];
@@ -110,6 +116,7 @@ interface AppContextType {
   viewingProfileId: string | null;
   viewingCollaborationId: string | null;
   history: NavigationEntry[];
+
   selectedConversationId: string | null;
   editingCollaborationId: string | null;
 
@@ -118,6 +125,7 @@ interface AppContextType {
   // Actions
   login: (username: string, password: string) => boolean;
   logout: () => void;
+
   startRegistration: () => void;
   cancelRegistration: () => void;
   registerAndSetup: (
@@ -132,6 +140,7 @@ interface AppContextType {
       | 'blockedUserIds'
     > & { password?: string }
   ) => boolean;
+
   updateUserProfile: (updatedUser: User) => void;
 
   sendFriendRequest: (toUserId: string) => void;
@@ -157,6 +166,7 @@ interface AppContextType {
   sendMessage: (conversationId: string, text: string) => void;
   viewConversation: (participantId: string) => void;
   setSelectedConversationId: (id: string | null) => void;
+
   setEditingCollaborationId: (id: string | null) => void;
   moveConversationToFolder: (conversationId: string, folder: ConversationFolder) => void;
 
@@ -173,35 +183,35 @@ interface AppContextType {
 
   registerScrollableNode: (node: HTMLDivElement) => void;
 
-  // 🔐 This is the one we’re fixing to actually send emails via Supabase
+  // Real email reset via Supabase (redirects to #/NewPassword)
   sendPasswordResetLink: (email: string) => void;
 
   subscribeToPushNotifications: (subscription: PushSubscriptionObject) => void;
+
   setTheme: (theme: 'light' | 'dark') => void;
 
   refreshData: () => Promise<void>;
 }
 
-// ---------------------------------------------------------------------------
-// Context
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Context
+ * -------------------------------------------------------------------------*/
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// ---------------------------------------------------------------------------
-// Provider
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Provider
+ * -------------------------------------------------------------------------*/
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Generic localStorage state helper
+  // localStorage state helper
   function useLocalStorage<T>(
     key: string,
-    initialValue: T
+    initialValue: T,
   ): [T, (value: T | ((val: T) => T)) => void] {
     const [storedValue, setStoredValue] = useState<T>(() => {
       try {
         const item = window.localStorage.getItem(key);
         return item ? JSON.parse(item) : initialValue;
-      } catch (error) {
-        console.error(error);
+      } catch {
         return initialValue;
       }
     });
@@ -211,9 +221,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const valueToStore = value instanceof Function ? value(storedValue) : value;
         setStoredValue(valueToStore);
         window.localStorage.setItem(key, JSON.stringify(valueToStore));
-      } catch (error) {
-        console.error(error);
-      }
+      } catch {}
     };
 
     return [storedValue, setValue];
@@ -224,54 +232,53 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [posts, setPosts] = useLocalStorage<Post[]>(POSTS_STORAGE_KEY, MOCK_POSTS);
   const [notifications, setNotifications] = useLocalStorage<Notification[]>(
     NOTIFICATIONS_STORAGE_KEY,
-    MOCK_NOTIFICATIONS
+    MOCK_NOTIFICATIONS,
   );
   const [conversations, setConversations] = useLocalStorage<Conversation[]>(
     CONVERSATIONS_STORAGE_KEY,
-    MOCK_CONVERSATIONS
+    MOCK_CONVERSATIONS,
   );
   const [collaborations, setCollaborations] = useLocalStorage<Collaboration[]>(
     COLLABORATIONS_STORAGE_KEY,
-    MOCK_COLLABORATIONS
+    MOCK_COLLABORATIONS,
   );
   const [feedback, setFeedback] = useLocalStorage<Feedback[]>(
     FEEDBACK_STORAGE_KEY,
-    MOCK_FEEDBACK
+    MOCK_FEEDBACK,
   );
   const [friendRequests, setFriendRequests] = useLocalStorage<FriendRequest[]>(
     FRIEND_REQUESTS_STORAGE_KEY,
-    MOCK_FRIEND_REQUESTS
+    MOCK_FRIEND_REQUESTS,
   );
 
-  // Start with no logged-in user on new devices
+  // App-level "auth" is just a pointer to a user id from the users array
   const [authData, setAuthData] = useLocalStorage<{ userId: string | null }>(
     AUTH_STORAGE_KEY,
-    { userId: null }
+    { userId: null },
   );
 
-  const [pushSubscriptions, setPushSubscriptions] = useLocalStorage<
-    Record<string, PushSubscriptionObject>
-  >(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
-
-  const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(
-    THEME_STORAGE_KEY,
-    'dark'
+  const [pushSubscriptions, setPushSubscriptions] = useLocalStorage<Record<string, PushSubscriptionObject>>(
+    PUSH_SUBSCRIPTIONS_STORAGE_KEY,
+    {},
   );
+
+  const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(THEME_STORAGE_KEY, 'dark');
 
   const [isRegistering, setIsRegistering] = useState(false);
+
   const [history, setHistory] = useState<NavigationEntry[]>([
     { page: 'feed', context: {} },
   ]);
-  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(
-    null
-  );
-  const [editingCollaborationId, setEditingCollaborationId] = useState<string | null>(
-    null
-  );
+
+  const [selectedConversationId, setSelectedConversationId] =
+    useState<string | null>(null);
+
+  const [editingCollaborationId, setEditingCollaborationId] =
+    useState<string | null>(null);
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
 
-  // --- Cross-tab sync (except auth) ---------------------------------------
+  // --- Cross-tab sync (except AUTH) ----------------------------------------
   useEffect(() => {
     const syncState = (event: StorageEvent) => {
       if (event.key === AUTH_STORAGE_KEY) return;
@@ -304,8 +311,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           case THEME_STORAGE_KEY:
             setThemeState(value);
             break;
-          default:
-            break;
         }
       } catch (err) {
         console.error(`Error syncing state for key ${event.key}:`, err);
@@ -332,14 +337,55 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const currentEntry = history[history.length - 1] || { page: 'feed', context: {} };
   const currentPage = currentEntry.page;
-  const viewingProfileId = (currentEntry.context as PageContext).viewingProfileId || null;
+  const viewingProfileId =
+    (currentEntry.context as PageContext).viewingProfileId ?? null;
   const viewingCollaborationId =
-    (currentEntry.context as PageContext).viewingCollaborationId || null;
+    (currentEntry.context as PageContext).viewingCollaborationId ?? null;
+
+  // --- Supabase → AppContext **BRIDGE** -----------------------------------
+  // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
+  useEffect(() => {
+    let unsub = () => {};
+
+    (async () => {
+      // initial check
+      const { data } = await supabase.auth.getSession();
+      const hasSession = !!data.session?.user;
+      if (hasSession) {
+        if (authData.userId !== MASTER_USER_ID) {
+          setAuthData({ userId: MASTER_USER_ID });
+          setHistory([{ page: 'feed', context: {} }]);
+          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+        }
+      } else if (authData.userId !== null) {
+        setAuthData({ userId: null });
+        setHistory([{ page: 'feed', context: {} }]);
+      }
+
+      // subscribe
+      const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+        if (session?.user) {
+          setAuthData({ userId: MASTER_USER_ID });
+          setHistory([{ page: 'feed', context: {} }]);
+          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+        } else {
+          setAuthData({ userId: null });
+          setHistory([{ page: 'feed', context: {} }]);
+          trackEvent('logout', { via: 'supabase' });
+        }
+      });
+
+      unsub = () => sub.subscription.unsubscribe();
+    })();
+
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
-    console.log('Simulating data refresh…');
-    await new Promise((res) => setTimeout(res, 1000));
+    // simulate a network refresh
+    await new Promise((res) => setTimeout(res, 600));
     trackEvent('data_refreshed');
   }, []);
 
@@ -354,7 +400,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setThemeState(newTheme);
       trackEvent('theme_changed', { theme: newTheme });
     },
-    [setThemeState]
+    [setThemeState],
   );
 
   // --- Scrolling container -------------------------------------------------
@@ -369,7 +415,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (scrollableNodeRef.current) {
         last.scrollTop = scrollableNodeRef.current.scrollTop;
       }
-
       // Avoid pushing duplicates
       if (
         last.page === page &&
@@ -377,11 +422,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ) {
         return;
       }
-
       setHistory((prev) => [...prev, { page, context, scrollTop: 0 }]);
       if (scrollableNodeRef.current) scrollableNodeRef.current.scrollTop = 0;
     },
-    [history]
+    [history],
   );
 
   const updateCurrentContext = useCallback((newContext: Partial<PageContext>) => {
@@ -404,16 +448,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const viewProfile = (userId: string) => navigate('profile', { viewingProfileId: userId });
 
-  // --- Auth (demo login w/ mock users) ------------------------------------
+  // --- Demo login (username)  ---------------------------------------------
+  // Left in place for dev; Supabase login happens in /pages/Login.tsx
   const login = (username: string, _password: string) => {
     const user = users.find(
-      (u) => u.username.toLowerCase() === username.toLowerCase()
+      (u) => u.username.toLowerCase() === username.toLowerCase(),
     );
     if (user) {
       setAuthData({ userId: user.id });
       setIsRegistering(false);
       setHistory([{ page: 'feed', context: {} }]); // reset history
-      trackEvent('login_success', { userId: user.id });
+      trackEvent('login_success', { userId: user.id, via: 'demo' });
       return true;
     }
     trackEvent('login_failed', { username });
@@ -423,17 +468,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const logout = () => {
     setAuthData({ userId: null });
     setHistory([{ page: 'feed', context: {} }]);
-    trackEvent('logout', { userId: currentUser?.id });
+    trackEvent('logout', { userId: currentUser?.id, via: 'demo' });
   };
 
-  // 🔐 Real email via Supabase (hash-route redirect to #/NewPassword)
+  // --- Password reset (real; Supabase) ------------------------------------
   const sendPasswordResetLink = (email: string) => {
     const base =
-      typeof window !== 'undefined'
-        ? window.location.origin
-        : 'https://creatorzonly.com';
+      typeof window !== 'undefined' ? window.location.origin : 'https://creatorzonly.com';
     const redirectTo = `${base}/#/NewPassword`;
-
     supabase.auth
       .resetPasswordForEmail(email, { redirectTo })
       .then(({ error }) => {
@@ -446,6 +488,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
   };
 
+  // --- Registration (mock) ------------------------------------------------
   const startRegistration = () => setIsRegistering(true);
   const cancelRegistration = () => setIsRegistering(false);
 
@@ -460,11 +503,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         | 'friendIds'
         | 'platformLinks'
         | 'blockedUserIds'
-      > & { password?: string }
+      > & { password?: string },
     ) => {
       if (
         users.some(
-          (u) => u.username.toLowerCase() === data.username.toLowerCase()
+          (u) => u.username.toLowerCase() === data.username.toLowerCase(),
         )
       ) {
         trackEvent('registration_failed', { reason: 'username_taken' });
@@ -497,7 +540,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       trackEvent('registration_success', { userId: newUser.id });
       return true;
     },
-    [users, setUsers, setAuthData]
+    [users, setUsers, setAuthData],
   );
 
   const updateUserProfile = useCallback(
@@ -505,20 +548,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
       trackEvent('profile_updated', { userId: updatedUser.id });
     },
-    [setUsers]
+    [setUsers],
   );
 
   // --- Social --------------------------------------------------------------
   const getUserById = useCallback(
     (id: string) => users.find((u) => u.id === id),
-    [users]
+    [users],
   );
 
   const getFriendRequest = (userId1: string, userId2: string) =>
     friendRequests.find(
       (fr) =>
         (fr.fromUserId === userId1 && fr.toUserId === userId2) ||
-        (fr.fromUserId === userId2 && fr.toUserId === userId1)
+        (fr.fromUserId === userId2 && fr.toUserId === userId1),
     );
 
   const getFriendRequestById = (id: string) =>
@@ -558,9 +601,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         toUserId,
         'New Friend Request',
         notification.message,
-        `/profile/${currentUser.username}`
+        `/profile/${currentUser.username}`,
       );
-
       trackEvent('friend_request_sent', { from: fromUserId, to: toUserId });
     },
     [
@@ -570,7 +612,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       notifications,
       setNotifications,
       getFriendRequest,
-    ]
+    ],
   );
 
   const cancelFriendRequest = useCallback(
@@ -583,15 +625,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               fr.fromUserId === currentUser.id &&
               fr.toUserId === toUserId &&
               fr.status === FriendRequestStatus.PENDING
-            )
-        )
+            ),
+        ),
       );
       trackEvent('friend_request_cancelled', {
         from: currentUser.id,
         to: toUserId,
       });
     },
-    [currentUser, setFriendRequests]
+    [currentUser, setFriendRequests],
   );
 
   const acceptFriendRequest = useCallback(
@@ -602,8 +644,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // Update request status
       setFriendRequests((prev) =>
         prev.map((fr) =>
-          fr.id === requestId ? { ...fr, status: FriendRequestStatus.ACCEPTED } : fr
-        )
+          fr.id === requestId ? { ...fr, status: FriendRequestStatus.ACCEPTED } : fr,
+        ),
       );
 
       // Connect both users
@@ -614,7 +656,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           if (user.id === request.toUserId)
             return { ...user, friendIds: [...user.friendIds, request.fromUserId] };
           return user;
-        })
+        }),
       );
 
       // Notify requester
@@ -637,7 +679,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           request.fromUserId,
           'Friend Request Accepted',
           notification.message,
-          `/profile/${currentUser.username}`
+          `/profile/${currentUser.username}`,
         );
       }
 
@@ -654,15 +696,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       notifications,
       setNotifications,
       getUserById,
-    ]
+    ],
   );
 
   const declineFriendRequest = useCallback(
     (requestId: string) => {
       setFriendRequests((prev) =>
         prev.map((fr) =>
-          fr.id === requestId ? { ...fr, status: FriendRequestStatus.DECLINED } : fr
-        )
+          fr.id === requestId ? { ...fr, status: FriendRequestStatus.DECLINED } : fr,
+        ),
       );
       const request = friendRequests.find((fr) => fr.id === requestId);
       if (request) {
@@ -672,7 +714,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
       }
     },
-    [setFriendRequests, friendRequests]
+    [setFriendRequests, friendRequests],
   );
 
   const removeFriend = useCallback(
@@ -683,13 +725,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUsers((prev) =>
         prev.map((user) => {
           if (user.id === currentUserId) {
-            return { ...user, friendIds: user.friendIds.filter((id) => id !== friendId) };
+            return {
+              ...user,
+              friendIds: user.friendIds.filter((id) => id !== friendId),
+            };
           }
           if (user.id === friendId) {
-            return { ...user, friendIds: user.friendIds.filter((id) => id !== currentUserId) };
+            return {
+              ...user,
+              friendIds: user.friendIds.filter((id) => id !== currentUserId),
+            };
           }
           return user;
-        })
+        }),
       );
 
       // Also strip any requests
@@ -699,13 +747,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             !(
               (fr.fromUserId === currentUserId && fr.toUserId === friendId) ||
               (fr.fromUserId === friendId && fr.toUserId === currentUserId)
-            )
-        )
+            ),
+        ),
       );
 
       trackEvent('friend_removed', { remover: currentUserId, removed: friendId });
     },
-    [currentUser, setUsers, setFriendRequests]
+    [currentUser, setUsers, setFriendRequests],
   );
 
   const toggleBlockUser = useCallback(
@@ -724,7 +772,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return { ...u, blockedUserIds: nextBlocked };
           }
           return u;
-        })
+        }),
       );
 
       // If newly blocking, also remove friendship
@@ -735,7 +783,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         blocked: userIdToBlock,
       });
     },
-    [currentUser, setUsers, removeFriend]
+    [currentUser, setUsers, removeFriend],
   );
 
   // --- Posts ---------------------------------------------------------------
@@ -756,7 +804,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setPosts((prev) => [newPost, ...prev]);
       trackEvent('post_created', { userId: currentUser.id, postId: newPost.id });
     },
-    [currentUser, posts, setPosts]
+    [currentUser, posts, setPosts],
   );
 
   const deletePost = useCallback(
@@ -764,7 +812,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setPosts((prev) => prev.filter((p) => p.id !== postId));
       trackEvent('post_deleted', { userId: currentUser?.id, postId });
     },
-    [setPosts, currentUser]
+    [setPosts, currentUser],
   );
 
   // --- Collaborations ------------------------------------------------------
@@ -773,7 +821,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       collabData: Omit<
         Collaboration,
         'id' | 'authorId' | 'timestamp' | 'interestedUserIds'
-      >
+      >,
     ) => {
       if (!currentUser) return;
       const newCollab: Collaboration = {
@@ -789,20 +837,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         collabId: newCollab.id,
       });
     },
-    [currentUser, collaborations, setCollaborations]
+    [currentUser, collaborations, setCollaborations],
   );
 
   const updateCollaboration = useCallback(
     (updatedCollab: Collaboration) => {
       setCollaborations((prev) =>
-        prev.map((c) => (c.id === updatedCollab.id ? updatedCollab : c))
+        prev.map((c) => (c.id === updatedCollab.id ? updatedCollab : c)),
       );
       trackEvent('collaboration_updated', {
         userId: currentUser?.id,
         collabId: updatedCollab.id,
       });
     },
-    [setCollaborations, currentUser]
+    [setCollaborations, currentUser],
   );
 
   const deleteCollaboration = useCallback(
@@ -810,7 +858,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setCollaborations((prev) => prev.filter((c) => c.id !== collabId));
       trackEvent('collaboration_deleted', { userId: currentUser?.id, collabId });
     },
-    [setCollaborations, currentUser]
+    [setCollaborations, currentUser],
   );
 
   const toggleCollaborationInterest = useCallback(
@@ -820,6 +868,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!collab) return;
 
       const isInterested = collab.interestedUserIds.includes(currentUser.id);
+
       setCollaborations((prev) =>
         prev.map((c) => {
           if (c.id !== collabId) return c;
@@ -827,7 +876,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             ? c.interestedUserIds.filter((id) => id !== currentUser.id)
             : [...c.interestedUserIds, currentUser.id];
           return { ...c, interestedUserIds: updatedIds };
-        })
+        }),
       );
 
       if (!isInterested) {
@@ -848,7 +897,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           collab.authorId,
           'New Interest in Opportunity',
           notification.message,
-          `/collaborations`
+          `/collaborations`,
         );
       }
 
@@ -858,13 +907,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isInterested: !isInterested,
       });
     },
-    [currentUser, collaborations, setCollaborations, notifications, setNotifications]
+    [
+      currentUser,
+      collaborations,
+      setCollaborations,
+      notifications,
+      setNotifications,
+    ],
   );
 
   // --- Messaging -----------------------------------------------------------
   const sendMessage = useCallback(
     (conversationId: string, text: string) => {
       if (!currentUser) return;
+
       const conversation = conversations.find((c) => c.id === conversationId);
       if (!conversation) return;
 
@@ -881,8 +937,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === conversationId ? { ...c, messages: [...c.messages, newMessage] } : c
-        )
+          c.id === conversationId ? { ...c, messages: [...c.messages, newMessage] } : c,
+        ),
       );
 
       const notification: Notification = {
@@ -896,14 +952,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isRead: false,
         timestamp: new Date().toISOString(),
       };
-
       setNotifications((p) => [...p, notification]);
       emitSocketEvent(other, 'notification:new', notification);
       sendWebPush(other, `New message from ${currentUser.name}`, text, `/messages`);
 
       trackEvent('message_sent', { from: currentUser.id, to: other });
     },
-    [currentUser, conversations, setConversations, notifications, setNotifications]
+    [
+      currentUser,
+      conversations,
+      setConversations,
+      notifications,
+      setNotifications,
+    ],
   );
 
   const viewConversation = useCallback(
@@ -913,7 +974,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       let conversation = conversations.find(
         (c) =>
           c.participantIds.includes(currentUser.id) &&
-          c.participantIds.includes(participantId)
+          c.participantIds.includes(participantId),
       );
 
       if (!conversation) {
@@ -929,17 +990,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setSelectedConversationId(conversation.id);
       navigate('messages');
     },
-    [currentUser, conversations, setConversations, navigate]
+    [currentUser, conversations, setConversations, navigate],
   );
 
   const moveConversationToFolder = useCallback(
     (conversationId: string, folder: ConversationFolder) => {
       setConversations((prev) =>
-        prev.map((c) => (c.id === conversationId ? { ...c, folder } : c))
+        prev.map((c) => (c.id === conversationId ? { ...c, folder } : c)),
       );
       trackEvent('conversation_moved', { conversationId, folder });
     },
-    [setConversations]
+    [setConversations],
   );
 
   // --- Notifications -------------------------------------------------------
@@ -947,11 +1008,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     (ids: string[]) => {
       setTimeout(() => {
         setNotifications((prev) =>
-          prev.map((n) => (ids.includes(n.id) ? { ...n, isRead: true } : n))
+          prev.map((n) => (ids.includes(n.id) ? { ...n, isRead: true } : n)),
         );
       }, 500); // small delay for UX
     },
-    [setNotifications]
+    [setNotifications],
   );
 
   // --- Feedback ------------------------------------------------------------
@@ -968,18 +1029,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setFeedback((prev) => [newFeedback, ...prev]);
       trackEvent('feedback_sent', { userId: currentUser.id, type });
     },
-    [currentUser, feedback, setFeedback]
+    [currentUser, feedback, setFeedback],
   );
 
   // --- Push subscriptions --------------------------------------------------
   const subscribeToPushNotifications = useCallback(
     (subscription: PushSubscriptionObject) => {
       if (!currentUser) return;
-      setPushSubscriptions((prev) => ({ ...prev, [currentUser.id]: subscription }));
+      setPushSubscriptions((prev) => ({
+        ...prev,
+        [currentUser.id]: subscription,
+      }));
       console.log(`[PUSH_SIM] User ${currentUser.id} subscribed.`);
       trackEvent('push_subscribed', { userId: currentUser.id });
     },
-    [currentUser, setPushSubscriptions]
+    [currentUser, setPushSubscriptions],
   );
 
   // --- Context value -------------------------------------------------------
@@ -1001,6 +1065,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     viewingProfileId,
     viewingCollaborationId,
     history,
+
     selectedConversationId,
     editingCollaborationId,
 
@@ -1008,9 +1073,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     login,
     logout,
+
     startRegistration,
     cancelRegistration,
     registerAndSetup,
+
     updateUserProfile,
 
     sendFriendRequest,
@@ -1034,6 +1101,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     sendMessage,
     viewConversation,
     setSelectedConversationId,
+
     setEditingCollaborationId,
     moveConversationToFolder,
 
@@ -1051,20 +1119,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     registerScrollableNode,
 
-    // ✅ real email, redirects to #/NewPassword
+    // Real email reset (Supabase)
     sendPasswordResetLink,
 
     subscribeToPushNotifications,
+
     setTheme,
+
     refreshData,
   };
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return (
+    <AppContext.Provider value={value}>{children}</AppContext.Provider>
+  );
 };
 
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Hook
+ * -------------------------------------------------------------------------*/
 export const useAppContext = () => {
   const context = useContext(AppContext);
   if (context === undefined) {
