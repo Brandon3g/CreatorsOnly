@@ -30,6 +30,9 @@ import { ICONS } from './constants';
 import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 
+/* -----------------------------
+   THEME
+----------------------------- */
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
 
@@ -47,6 +50,9 @@ function useThemeBoot() {
   }, []);
 }
 
+/* -----------------------------
+   PUSH / VAPID
+----------------------------- */
 const VAPID_PUBLIC_KEY =
   'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
 
@@ -83,6 +89,39 @@ const requestNotificationPermission = async (
   }
 };
 
+/* -----------------------------
+   ERROR BOUNDARY (prevents blank screen)
+----------------------------- */
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(err: unknown) {
+    console.error('[App ErrorBoundary]', err);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6 text-center">
+          <div>
+            <div className="mb-3 text-3xl">😬</div>
+            <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
+            <p className="text-text-secondary">Try refreshing. If this keeps happening, check the last change you made.</p>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children as React.ReactElement;
+  }
+}
+
+/* -----------------------------
+   TOAST
+----------------------------- */
 type ToastProps = {
   notification: Notification | null;
   onClose: () => void;
@@ -129,8 +168,6 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
     handleClose();
   };
 
-  const stop = (e: React.SyntheticEvent) => e.stopPropagation();
-
   return (
     <div
       onPointerUp={openNotifications}
@@ -152,7 +189,7 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
           <div className="ml-4 flex-shrink-0 flex">
             <button
               onPointerUp={(e) => {
-                stop(e);
+                e.stopPropagation();
                 handleClose();
               }}
               className="rounded-md inline-flex text-text-secondary hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
@@ -167,6 +204,9 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
   );
 };
 
+/* -----------------------------
+   CREATE MODAL
+----------------------------- */
 type CreateModalProps = {
   isOpen: boolean;
   onClose: () => void;
@@ -496,6 +536,9 @@ const CreateModal: React.FC<CreateModalProps> = ({
   );
 };
 
+/* -----------------------------
+   FEEDBACK MODAL
+----------------------------- */
 type FeedbackModalProps = { isOpen: boolean; onClose: () => void };
 
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
@@ -593,6 +636,9 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   );
 };
 
+/* -----------------------------
+   MAIN APP CONTENT (inside providers)
+----------------------------- */
 const AppContent: React.FC = () => {
   const {
     currentPage,
@@ -667,15 +713,23 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // If user is not authenticated here, bounce them to the Login route
+  // If user is not authenticated here, redirect but DO NOT render null (prevents black screen).
   useEffect(() => {
     if (!isAuthenticated) {
       window.location.hash = '#/Login';
     }
   }, [isAuthenticated]);
 
-  // While redirecting unauthenticated users, render nothing
-  if (!isAuthenticated) return null;
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 text-center">
+        <div>
+          <div className="mb-3 text-2xl">↪️</div>
+          <p className="text-text-secondary">Redirecting to login…</p>
+        </div>
+      </div>
+    );
+  }
 
   const renderPage = () => {
     switch (currentPage) {
@@ -770,10 +824,10 @@ const AppContent: React.FC = () => {
   );
 };
 
-/** ---------------------------
- *  Auth router rendered WITHOUT providers
- *  --------------------------- */
-const AuthPagesRouter: React.FC = () => {
+/* -----------------------------
+   AUTH ROUTER (no providers)
+----------------------------- */
+const AuthPagesRouter: React.FC<{}> = () => {
   const [hash, setHash] = useState<string>(
     typeof window !== 'undefined' ? window.location.hash : ''
   );
@@ -814,9 +868,9 @@ const AuthPagesRouter: React.FC = () => {
   );
 };
 
-/** ---------------------------
- *  App wrapper
- *  --------------------------- */
+/* -----------------------------
+   APP WRAPPER
+----------------------------- */
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
@@ -839,19 +893,16 @@ const AppWrapper: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
 
-    // 1) immediate check (fresh reloads with session already in storage)
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (!cancelled && data.session && isAuthRoute()) goToApp();
     })();
 
-    // 2) slight delayed re-check (handles init races)
     const t = setTimeout(async () => {
       const { data } = await supabase.auth.getSession();
       if (!cancelled && data.session && isAuthRoute()) goToApp();
     }, 400);
 
-    // 3) react to future changes (first login without reload)
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
       if (session && isAuthRoute()) goToApp();
     });
@@ -862,32 +913,6 @@ const AppWrapper: React.FC = () => {
       sub.subscription.unsubscribe();
     };
   }, []);
-
-  // Debug helper in console to check auth
-  useEffect(() => {
-    async function checkUser() {
-      const { data, error } = await supabase.auth.getUser();
-      if (error || !data.user) {
-        console.warn('[Auth] Not logged in:', error?.message ?? 'no session');
-      } else {
-        console.log('[Auth] Logged in as:', data.user.id, '(email:', data.user.email, ')');
-      }
-    }
-    // @ts-ignore
-    (window as any).debugAuth = checkUser;
-    checkUser();
-  }, []);
-
-  const toggleTheme = React.useCallback(() => {
-    const current = (localStorage.getItem(THEME_KEY) as Theme) ?? 'dark';
-    applyTheme(current === 'dark' ? 'light' : 'dark');
-  }, []);
-
-  React.useEffect(() => {
-    const handler = () => toggleTheme();
-    window.addEventListener('co:toggle-theme', handler);
-    return () => window.removeEventListener('co:toggle-theme', handler);
-  }, [toggleTheme]);
 
   const [hash, setHash] = useState<string>(
     typeof window !== 'undefined' ? window.location.hash : ''
@@ -900,17 +925,23 @@ const AppWrapper: React.FC = () => {
   const onAuthScreen = /#\/(login|forgotpassword|newpassword|signup)/i.test(hash);
 
   if (onAuthScreen) {
-    return <AuthPagesRouter />;
+    return (
+      <ErrorBoundary>
+        <AuthPagesRouter />
+      </ErrorBoundary>
+    );
   }
 
   return (
-    <AppProvider>
-      <RealtimeProvider>
-        {/* Optionally render ProfileSetup for new accounts */}
-        {/* {isRegistering && <ProfileSetup />} */}
-        <AppContent />
-      </RealtimeProvider>
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <RealtimeProvider>
+          {/* Optionally render ProfileSetup for new accounts */}
+          {/* {isRegistering && <ProfileSetup />} */}
+          <AppContent />
+        </RealtimeProvider>
+      </AppProvider>
+    </ErrorBoundary>
   );
 };
 
