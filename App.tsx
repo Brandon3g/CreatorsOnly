@@ -16,7 +16,7 @@ import Collaborations from './pages/Collaborations';
 import Admin from './pages/Admin';
 import InterestedUsers from './pages/InterestedUsers';
 
-// Auth pages (rendered outside providers)
+// Auth pages
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import NewPassword from './pages/NewPassword';
@@ -27,12 +27,7 @@ import ProfileSetup from './pages/ProfileSetup';
 import TestAuth from './pages/TestAuth';
 import { supabase } from './lib/supabaseClient';
 import { ICONS } from './constants';
-import type {
-  Collaboration,
-  User,
-  Notification,
-  PushSubscriptionObject,
-} from './types';
+import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 
 /* ----------------------------- THEME ----------------------------- */
@@ -54,7 +49,6 @@ function useThemeBoot() {
 /* ----------------------------- PUSH / VAPID ----------------------------- */
 const VAPID_PUBLIC_KEY =
   'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
-
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -63,10 +57,7 @@ function urlBase64ToUint8Array(base64String: string) {
   for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
 }
-
-const requestNotificationPermission = async (
-  subscribeFn: (sub: PushSubscriptionObject) => void
-) => {
+const requestNotificationPermission = async (subscribeFn: (sub: PushSubscriptionObject) => void) => {
   if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
   const permission = await Notification.requestPermission();
   if (permission === 'granted') {
@@ -89,10 +80,7 @@ const requestNotificationPermission = async (
 };
 
 /* ----------------------------- ERROR BOUNDARY ----------------------------- */
-class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean }
-> {
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false };
@@ -326,9 +314,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
     }
   };
 
-  const handleContentChange = (
-    e: React.ChangeEvent<HTMLTextAreaElement>
-  ) => {
+  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const text = e.target.value;
     setPostContent(text);
     const caret = e.target.selectionStart;
@@ -347,8 +333,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
     const at = before.match(/@(\w+)$/);
     if (at) {
       const start = at.index || 0;
-      const newText =
-        text.substring(0, start) + `@${username} ` + text.substring(caret);
+      const newText = text.substring(0, start) + `@${username} ` + text.substring(caret);
       setPostContent(newText);
       const newCaret = start + `@${username} `.length;
       setTimeout(() => {
@@ -425,16 +410,10 @@ const CreateModal: React.FC<CreateModalProps> = ({
                           onPointerUp={() => handleSelectMention(user.username)}
                           className="flex items-center space-x-3 p-2 hover:bg-surface-light cursor-pointer"
                         >
-                          <img
-                            src={user.avatar}
-                            alt={user.name}
-                            className="w-8 h-8 rounded-full"
-                          />
+                          <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full" />
                           <div>
                             <p className="font-bold text-sm">{user.name}</p>
-                            <p className="text-xs text-text-secondary">
-                              @{user.username}
-                            </p>
+                            <p className="text-xs text-text-secondary">@{user.username}</p>
                           </div>
                         </div>
                       ))}
@@ -487,9 +466,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
             ) : (
               <form onSubmit={handleProjectSubmit} className="space-y-4">
                 <div>
-                  <label className="text-sm text-text-secondary">
-                    Opportunity Title
-                  </label>
+                  <label className="text-sm text-text-secondary">Opportunity Title</label>
                   <input
                     type="text"
                     value={projectTitle}
@@ -498,9 +475,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-text-secondary">
-                    Description
-                  </label>
+                  <label className="text-sm text-text-secondary">Description</label>
                   <textarea
                     value={projectDesc}
                     onChange={(e) => setProjectDesc(e.target.value)}
@@ -560,13 +535,9 @@ const CreateModal: React.FC<CreateModalProps> = ({
 
 /* ----------------------------- FEEDBACK MODAL ----------------------------- */
 type FeedbackModalProps = { isOpen: boolean; onClose: () => void };
-const FeedbackModal: React.FC<FeedbackModalProps> = ({
-  isOpen,
-  onClose,
-}) => {
+const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   const { sendFeedback } = useAppContext();
-  const [feedbackType, setFeedbackType] =
-    useState<'Bug Report' | 'Suggestion'>('Suggestion');
+  const [feedbackType, setFeedbackType] = useState<'Bug Report' | 'Suggestion'>('Suggestion');
   const [feedbackContent, setFeedbackContent] = useState('');
 
   if (!isOpen) return null;
@@ -581,14 +552,8 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4"
-      onPointerUp={onClose}
-    >
-      <div
-        className="bg-surface rounded-2xl w-full max-w-md relative"
-        onPointerUp={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onPointerUp={onClose}>
+      <div className="bg-surface rounded-2xl w-full max-w-md relative" onPointerUp={(e) => e.stopPropagation()}>
         <button
           onPointerUp={onClose}
           className="absolute top-4 right-4 text-text-secondary hover:text-text-primary"
@@ -608,9 +573,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({
                     name="feedbackType"
                     value="Suggestion"
                     checked={feedbackType === 'Suggestion'}
-                    onChange={(e) =>
-                      setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')
-                    }
+                    onChange={(e) => setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')}
                     className="form-radio bg-surface-light border-surface-light text-primary focus:ring-primary"
                   />
                   <span>Suggestion</span>
@@ -621,9 +584,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({
                     name="feedbackType"
                     value="Bug Report"
                     checked={feedbackType === 'Bug Report'}
-                    onChange={(e) =>
-                      setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')
-                    }
+                    onChange={(e) => setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')}
                     className="form-radio bg-surface-light border-surface-light text-primary focus:ring-primary"
                   />
                   <span>Bug Report</span>
@@ -631,10 +592,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({
               </div>
             </div>
             <div>
-              <label
-                htmlFor="feedbackContent"
-                className="text-sm text-text-secondary"
-              >
+              <label htmlFor="feedbackContent" className="text-sm text-text-secondary">
                 Details
               </label>
               <textarea
@@ -662,13 +620,12 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({
   );
 };
 
-/* ----------------------------- MAIN APP CONTENT (inside providers) ----------------------------- */
+/* ----------------------------- APP CONTENT (inside providers) ----------------------------- */
 const AppContent: React.FC = () => {
   const {
     currentPage,
     viewingProfileId,
     isAuthenticated,
-    isRegistering,
     registerScrollableNode,
     currentUser,
     history,
@@ -686,8 +643,7 @@ const AppContent: React.FC = () => {
     useState<'post' | 'project'>('post');
 
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
-  const [toastNotification, setToastNotification] =
-    useState<Notification | null>(null);
+  const [toastNotification, setToastNotification] = useState<Notification | null>(null);
 
   const editingCollab = collaborations.find((c) => c.id === editingCollaborationId);
   const isEditCollabModalOpen = !!editingCollab;
@@ -743,20 +699,25 @@ const AppContent: React.FC = () => {
     );
   }
 
-  /** IMPORTANT CHANGE:
-   * If the AppContext says we are NOT authenticated, show the Auth router UI
-   * right here instead of a static "Redirecting…" placeholder.
-   * This prevents the stuck state when Supabase reports a stale local session.
-   */
   if (!isAuthenticated) {
-    // optional: keep hash in sync
+    // Keep hash in sync with the auth pages
     if (typeof window !== 'undefined') {
       const h = window.location.hash.toLowerCase();
-      if (!h.includes('/login') && !h.includes('/forgotpassword') && !h.includes('/newpassword') && !h.includes('/signup')) {
+      if (
+        !h.includes('/login') &&
+        !h.includes('/forgotpassword') &&
+        !h.includes('/newpassword') &&
+        !h.includes('/signup')
+      ) {
         window.location.hash = '#/Login';
       }
     }
-    return <AuthPagesRouter />;
+    return (
+      // IMPORTANT: Wrap auth pages in AppProvider so useAppContext() is available to Login.
+      <AppProvider>
+        <AuthPagesRouter />
+      </AppProvider>
+    );
   }
 
   const renderPage = () => {
@@ -793,10 +754,7 @@ const AppContent: React.FC = () => {
     return (
       <>
         <div className="flex full-height overflow-hidden safe-pads">
-          <Sidebar
-            openCreateModal={openCreateModal}
-            onOpenFeedbackModal={openFeedbackModal}
-          />
+          <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
           <main className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding">
             <Messages />
           </main>
@@ -813,10 +771,7 @@ const AppContent: React.FC = () => {
           />
         </div>
 
-        <Toast
-          notification={toastNotification}
-          onClose={() => setToastNotification(null)}
-        />
+        <Toast notification={toastNotification} onClose={() => setToastNotification(null)} />
       </>
     );
   }
@@ -824,15 +779,9 @@ const AppContent: React.FC = () => {
   return (
     <>
       <div className="flex full-height overflow-hidden safe-pads">
-        <Sidebar
-          openCreateModal={openCreateModal}
-          onOpenFeedbackModal={openFeedbackModal}
-        />
+        <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
 
-        <main
-          ref={mainContentRef}
-          className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding"
-        >
+        <main ref={mainContentRef} className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding">
           <div className="max-w-5xl mx-auto">
             <div className="md:grid md:grid-cols-3">
               <div className="md:col-span-2 border-l border-r md:border-l-0 border-surface-light min-h-screen">
@@ -859,19 +808,14 @@ const AppContent: React.FC = () => {
         />
       </div>
 
-      <Toast
-        notification={toastNotification}
-        onClose={() => setToastNotification(null)}
-      />
+      <Toast notification={toastNotification} onClose={() => setToastNotification(null)} />
     </>
   );
 };
 
-/* ----------------------------- AUTH ROUTER (no providers) ----------------------------- */
+/* ----------------------------- AUTH ROUTER ----------------------------- */
 const AuthPagesRouter: React.FC = () => {
-  const [hash, setHash] = useState<string>(
-    typeof window !== 'undefined' ? window.location.hash : ''
-  );
+  const [hash, setHash] = useState<string>(typeof window !== 'undefined' ? window.location.hash : '');
 
   useEffect(() => {
     const onHashChange = () => setHash(window.location.hash);
@@ -884,6 +828,7 @@ const AuthPagesRouter: React.FC = () => {
   const sendResetLink = async (email: string) => {
     const redirectTo = `${location.origin}/#/NewPassword`;
     return supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    // Supabase will create a temporary session and redirect back to NewPassword
   };
 
   if (lower.includes('signup')) return <SignUp />;
@@ -941,9 +886,13 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
-  // If not logged in, show the auth router UI immediately
+  // If not logged in, show the auth router wrapped in AppProvider
   if (!hasSession) {
-    return <AuthPagesRouter />;
+    return (
+      <AppProvider>
+        <AuthPagesRouter />
+      </AppProvider>
+    );
   }
 
   // Logged in -> show the full app providers + content
@@ -960,10 +909,7 @@ const AppWrapper: React.FC = () => {
     if (/access_token=|refresh_token=/.test(h)) {
       const keepNewPassword = h.toLowerCase().includes('/newpassword');
       const clean = keepNewPassword ? '#/NewPassword' : '#/Login';
-      setTimeout(
-        () => history.replaceState(null, '', `${location.origin}/${clean}`),
-        0
-      );
+      setTimeout(() => history.replaceState(null, '', `${location.origin}/${clean}`), 0);
     }
   }, []);
 
