@@ -2,9 +2,9 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-type Props = { onForgotPassword: () => void };
+type LoginProps = { onForgotPassword: () => void };
 
-const Login: React.FC<Props> = ({ onForgotPassword }) => {
+const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
@@ -14,6 +14,7 @@ const Login: React.FC<Props> = ({ onForgotPassword }) => {
     e.preventDefault();
     setError('');
     setPending(true);
+
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -22,8 +23,9 @@ const Login: React.FC<Props> = ({ onForgotPassword }) => {
       if (error) throw error;
       if (!data.session) throw new Error('No session returned');
 
-      // leave the auth router immediately
-      location.replace('/#/Feed');
+      // Move off the auth route and reload so the app shell mounts with the session.
+      window.location.hash = '#/Feed';
+      window.location.reload();
     } catch (err: any) {
       setError(err?.message ?? 'Login failed. Please try again.');
     } finally {
@@ -42,27 +44,39 @@ const Login: React.FC<Props> = ({ onForgotPassword }) => {
         <form className="space-y-6" onSubmit={handleLogin} noValidate>
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
-              <label htmlFor="email-login" className="sr-only">Email</label>
+              <label htmlFor="email-login" className="sr-only">
+                Email
+              </label>
               <input
                 id="email-login"
                 type="email"
+                autoComplete="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                inputMode="email"
+                spellCheck={false}
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-t-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
                 placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                disabled={pending}
               />
             </div>
             <div>
-              <label htmlFor="password-login" className="sr-only">Password</label>
+              <label htmlFor="password-login" className="sr-only">
+                Password
+              </label>
               <input
                 id="password-login"
                 type="password"
+                autoComplete="current-password"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-b-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={pending}
               />
             </div>
           </div>
@@ -72,19 +86,22 @@ const Login: React.FC<Props> = ({ onForgotPassword }) => {
               type="button"
               onClick={onForgotPassword}
               className="font-medium text-text-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+              disabled={pending}
             >
               Forgot Password?
             </button>
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-accent-red text-center">{error}</p>
+            <p role="alert" className="text-sm text-accent-red text-center">
+              {error}
+            </p>
           )}
 
           <div>
             <button
               type="submit"
-              disabled={pending}
+              disabled={pending || !email || !password}
               className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-full text-white bg-primary hover:bg-primary-hover disabled:opacity-60"
             >
               {pending ? 'Signing in…' : 'Log In'}
