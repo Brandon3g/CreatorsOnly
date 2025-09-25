@@ -1,162 +1,203 @@
-// src/context/RealtimeProvider.tsx
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+// context/RealtimeProvider.tsx
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  PropsWithChildren,
+} from 'react';
 import { supabase } from '../lib/supabaseClient';
-import type { MyProfile } from '../services/profile';
-import type { Post } from '../services/posts';
-import type { FriendRequest } from '../services/friendRequests';
 
-type RealtimeContextType = {
-  profiles: MyProfile[];
-  posts: Post[];
-  requests: FriendRequest[];
-  user: any | null;
-  isLoadingProfiles: boolean;
-  isLoadingPosts: boolean;
-  isLoadingRequests: boolean;
+/**
+ * Types from @supabase/supabase-js v2 for Postgres Changes payload.
+ * We inline a lightweight shape to avoid tight coupling to internal types.
+ */
+type PgEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
+type RealtimePayload<T = any> = {
+  schema: string;
+  table: string;
+  commit_timestamp: string;
+  eventType: Exclude<PgEvent, '*'>;
+  new: T | null;
+  old: T | null;
+  errors?: any;
 };
 
-const RealtimeContext = createContext<RealtimeContextType>({
-  profiles: [],
-  posts: [],
-  requests: [],
-  user: null,
-  isLoadingProfiles: true,
-  isLoadingPosts: true,
-  isLoadingRequests: true,
-});
+/**
+ * Listener registration
+ */
+type Listener = {
+  id: number;
+  table?: string;              // optional table filter
+  event?: PgEvent;             // optional event filter
+  handler: (payload: RealtimePayload) => void;
+  filter?: (payload: RealtimePayload) => boolean; // optional custom predicate
+};
 
-const DEBUG = localStorage.getItem('DEBUG_REALTIME') === '1';
-const DISABLE_REALTIME = localStorage.getItem('CO_DISABLE_REALTIME') === '1';
+type RealtimeAPI = {
+  /**
+   * Subscribe to realtime changes.
+   * Example:
+   *  on({ table: 'posts', event: 'INSERT' }, (p) => { ... })
+   */
+  on: (
+    opts: { table?: string; event?: PgEvent; filter?: (p: RealtimePayload) => boolean },
+    handler: (payload: RealtimePayload) => void
+  ) => () => void;
 
-export function RealtimeProvider({ children }: { children: React.ReactNode }) {
-  const [profiles, setProfiles] = useState<MyProfile[]>([]);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [requests, setRequests] = useState<FriendRequest[]>([]);
-  const [user, setUser] = useState<any | null>(null);
+  /**
+   * A simple refetch signal. Returns a number that bumps when that table changes.
+   * Usage: const tick = useTableTick('posts'); useEffect(() => refetch(), [tick]);
+   */
+  useTableTick: (table: string) => number;
 
-  const [isLoadingProfiles, setIsLoadingProfiles] = useState(true);
-  const [isLoadingPosts, setIsLoadingPosts] = useState(true);
-  const [isLoadingRequests, setIsLoadingRequests] = useState(true);
+  /**
+   * Whether the single global channel is currently subscribed.
+   */
+  connected: boolean;
+};
 
-  const booted = useRef(false);
+const RealtimeContext = createContext<RealtimeAPI | null>(null);
+
+/**
+ * RealtimeProvider
+ * Subscribes once to all public schema changes and fan-outs payloads to listeners.
+ */
+export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const refetchTimer = useRef<number | null>(null);
+  const nextId = useRef(1);
+  const listenersRef = useRef<Map<number, Listener>>(new Map());
+  const [connected, setConnected] = useState(false);
 
-  // Debounced table refetch to avoid thrashing
-  const scheduleRefetch = (table: 'profiles' | 'posts' | 'requests') => {
-    if (refetchTimer.current) window.clearTimeout(refetchTimer.current);
-    refetchTimer.current = window.setTimeout(async () => {
-      try {
-        if (table === 'profiles') {
-          const { data } = await supabase.from('profiles').select('*').order('updated_at', { ascending: false }).limit(200);
-          if (data) setProfiles(data as any);
-        } else if (table === 'posts') {
-          const { data } = await supabase.from('posts').select('*').order('created_at', { ascending: false }).limit(200);
-          if (data) setPosts(data as any);
-        } else {
-          const { data } = await supabase.from('requests').select('*').order('created_at', { ascending: false }).limit(200);
-          if (data) setRequests(data as any);
-        }
-      } catch (_) {
-        // swallow — we don’t want loops
-      }
-    }, 300);
-  };
+  // Per-table tick counters so views can "refetch on change" without bespoke handlers.
+  const [tableTicks, setTableTicks] = useState<Record<string, number>>({});
 
-  useEffect(() => {
-    if (booted.current) return;
-    booted.current = true;
-
-    let cancelled = false;
-
-    (async () => {
-      // 1) Session
-      const { data: sess } = await supabase.auth.getSession();
-      if (!cancelled) setUser(sess?.session?.user ?? null);
-      const { data: authSub } = supabase.auth.onAuthStateChange((_e, s) => {
-        if (!cancelled) setUser(s?.user ?? null);
-      });
-
-      // 2) Initial fetches (once)
-      try {
-        const [p1, p2, p3] = await Promise.allSettled([
-          supabase.from('profiles').select('*').order('updated_at', { ascending: false }).limit(200),
-          supabase.from('posts').select('*').order('created_at', { ascending: false }).limit(200),
-          supabase.from('requests').select('*').order('created_at', { ascending: false }).limit(200),
-        ]);
-
-        if (!cancelled) {
-          if (p1.status === 'fulfilled' && p1.value.data) setProfiles(p1.value.data as any);
-          if (p2.status === 'fulfilled' && p2.value.data) setPosts(p2.value.data as any);
-          if (p3.status === 'fulfilled' && p3.value.data) setRequests(p3.value.data as any);
-
-          // Always clear loading flags so the UI can render even if fetch failed
-          setIsLoadingProfiles(false);
-          setIsLoadingPosts(false);
-          setIsLoadingRequests(false);
-        }
-      } catch (err) {
-        if (DEBUG) console.warn('[Realtime] initial fetch failed:', err);
-        if (!cancelled) {
-          setIsLoadingProfiles(false);
-          setIsLoadingPosts(false);
-          setIsLoadingRequests(false);
-        }
-      }
-
-      // 3) Realtime (guarded + debounced)
-      if (!DISABLE_REALTIME && !cancelled) {
-        const ch = supabase.channel('co_realtime');
-        channelRef.current = ch;
-
-        ch.on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'profiles' },
-          () => scheduleRefetch('profiles')
-        )
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'posts' },
-            () => scheduleRefetch('posts')
-          )
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'requests' },
-            () => scheduleRefetch('requests')
-          )
-          .subscribe((status) => {
-            if (DEBUG) console.debug('[Realtime] channel status:', status);
-          });
-      }
-
-      // Cleanup
-      return () => {
-        cancelled = true;
-        authSub?.subscription?.unsubscribe();
-        if (refetchTimer.current) window.clearTimeout(refetchTimer.current);
-        if (channelRef.current) channelRef.current.unsubscribe();
-        channelRef.current = null;
-      };
-    })();
+  const bumpTick = useCallback((table: string) => {
+    setTableTicks((prev) => ({ ...prev, [table]: (prev[table] ?? 0) + 1 }));
   }, []);
 
-  return (
-    <RealtimeContext.Provider
-      value={{
-        profiles,
-        posts,
-        requests,
-        user,
-        isLoadingProfiles,
-        isLoadingPosts,
-        isLoadingRequests,
-      }}
-    >
-      {children}
-    </RealtimeContext.Provider>
+  const dispatch = useCallback(
+    (payload: RealtimePayload) => {
+      // Fan out to registered listeners (copy to array to be safe during iteration).
+      const all = Array.from(listenersRef.current.values());
+      for (const l of all) {
+        if (l.table && l.table !== payload.table) continue;
+        if (l.event && l.event !== '*' && l.event !== payload.eventType) continue;
+        if (l.filter && !l.filter(payload)) continue;
+        try {
+          l.handler(payload);
+        } catch (err) {
+          // Avoid breaking the bus if a listener throws
+          console.error('[RealtimeProvider] listener error:', err);
+        }
+      }
+      // Always bump the table tick so components can refetch easily.
+      bumpTick(payload.table);
+    },
+    [bumpTick]
   );
+
+  // Establish single global channel
+  useEffect(() => {
+    const ch = supabase
+      .channel('co-global-realtime', {
+        config: {
+          broadcast: { ack: false },
+          presence: { key: undefined as any },
+        },
+      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public' }, // <-- all public tables, all events
+        (payload: any) => {
+          // Normalize to our payload shape
+          const p: RealtimePayload = {
+            schema: payload.schema,
+            table: payload.table,
+            commit_timestamp: payload.commit_timestamp,
+            eventType: payload.eventType,
+            new: payload.new ?? null,
+            old: payload.old ?? null,
+          };
+          dispatch(p);
+        }
+      )
+      .subscribe((status) => {
+        // status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR'
+        setConnected(status === 'SUBSCRIBED');
+        if (status !== 'SUBSCRIBED') {
+          console.warn('[RealtimeProvider] channel status:', status);
+        }
+      });
+
+    channelRef.current = ch;
+
+    return () => {
+      try {
+        setConnected(false);
+        channelRef.current?.unsubscribe();
+      } catch {}
+      channelRef.current = null;
+    };
+  }, [dispatch]);
+
+  const on = useCallback<RealtimeAPI['on']>((opts, handler) => {
+    const id = nextId.current++;
+    const l: Listener = { id, handler, table: opts.table, event: opts.event, filter: opts.filter };
+    listenersRef.current.set(id, l);
+    // Return unsubscribe
+    return () => {
+      listenersRef.current.delete(id);
+    };
+  }, []);
+
+  const useTableTick = useCallback<RealtimeAPI['useTableTick']>(
+    (table: string) => {
+      // We want components to re-render when a single table's tick changes.
+      const [tick, setTick] = useState(() => tableTicks[table] ?? 0);
+      useEffect(() => {
+        setTick(tableTicks[table] ?? 0);
+      }, [table, tableTicks[table]]);
+      return tick;
+    },
+    [tableTicks]
+  );
+
+  const value = useMemo<RealtimeAPI>(
+    () => ({
+      on,
+      useTableTick,
+      connected,
+    }),
+    [on, useTableTick, connected]
+  );
+
+  return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
 }
 
-export function useRealtimeContext() {
-  return useContext(RealtimeContext);
+/**
+ * Hook to consume the realtime API
+ */
+export function useRealtime(): RealtimeAPI {
+  const ctx = useContext(RealtimeContext);
+  if (!ctx) {
+    throw new Error('useRealtime must be used within a RealtimeProvider');
+  }
+  return ctx;
+}
+
+/**
+ * Convenience hook: subscribe within a component lifecycle.
+ * Example:
+ *   useRealtimeOn({ table: 'posts', event: 'INSERT' }, (p) => { ... })
+ */
+export function useRealtimeOn(
+  opts: { table?: string; event?: PgEvent; filter?: (p: RealtimePayload) => boolean },
+  handler: (payload: RealtimePayload) => void
+) {
+  const { on } = useRealtime();
+  useEffect(() => on(opts, handler), [on, opts.table, opts.event, handler, opts.filter]);
 }
