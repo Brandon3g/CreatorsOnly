@@ -117,7 +117,6 @@ async function fetchCountiesForState(abbr: string, signal?: AbortSignal): Promis
     '2019/acs/acs5',
   ];
 
-  // try each dataset until success
   for (const src of SOURCES) {
     try {
       const url = `https://api.census.gov/data/${src}?get=NAME&for=county:*&in=state:${fips}`;
@@ -143,7 +142,6 @@ async function fetchCountiesForState(abbr: string, signal?: AbortSignal): Promis
     }
   }
 
-  // final fallback (offline seed for CA)
   return LOCAL_FALLBACK_COUNTIES[abbr] ?? [];
 }
 
@@ -211,6 +209,7 @@ const SignUp: React.FC = () => {
     setTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
   };
 
+  // Required-field validation
   const usernameValid = /^[a-zA-Z0-9_]{3,20}$/.test(username);
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const pwdValid = password.length >= 8;
@@ -219,7 +218,19 @@ const SignUp: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formValid || submitting) return;
+    if (!formValid) {
+      const problems = [
+        !usernameValid && 'Username (3–20 letters/digits/underscore)',
+        !pwdValid && 'Password (min 8 characters)',
+        !nameValid && 'Name (min 2 characters)',
+        !emailValid && 'Valid email',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      setMsg({ type: 'error', text: `Please complete required fields: ${problems}.` });
+      return;
+    }
+    if (submitting) return;
 
     setSubmitting(true);
     setMsg(null);
@@ -298,7 +309,7 @@ const SignUp: React.FC = () => {
         )}
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           {/* Username */}
           <div>
             <label className="block text-sm font-medium mb-1">Username</label>
@@ -311,6 +322,12 @@ const SignUp: React.FC = () => {
               placeholder="Your unique @username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
+              required
+              minLength={3}
+              maxLength={20}
+              pattern="[A-Za-z0-9_]{3,20}"
+              title="3–20 characters: letters, digits, or underscores"
+              aria-invalid={!usernameValid}
               className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
             />
             <p className="mt-1 text-xs text-text-secondary">
@@ -329,6 +346,9 @@ const SignUp: React.FC = () => {
                 placeholder="Choose a secure password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={8}
+                aria-invalid={!pwdValid}
                 className="w-full bg-surface-light p-3 rounded-md pr-10 focus:outline-none focus:ring-2 focus:ring-primary"
               />
               <button
@@ -356,6 +376,9 @@ const SignUp: React.FC = () => {
               placeholder="Your display name"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              required
+              minLength={2}
+              aria-invalid={!nameValid}
               className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
@@ -369,6 +392,8 @@ const SignUp: React.FC = () => {
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              required
+              aria-invalid={!emailValid}
               className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
