@@ -157,9 +157,9 @@ export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
   const useTableTick = useCallback<RealtimeAPI['useTableTick']>(
     (table: string) => {
       // We want components to re-render when a single table's tick changes.
-      const [tick, setTick] = useState(() => tableTicks[table] ?? 0);
+      const [tick, setTick] = useState(0);
       useEffect(() => {
-        setTick(tableTicks[table] ?? 0);
+        setTick((prev) => (prev !== (tableTicks[table] ?? 0) ? tableTicks[table] ?? 0 : prev));
       }, [table, tableTicks[table]]);
       return tick;
     },
@@ -187,6 +187,14 @@ export function useRealtime(): RealtimeAPI {
     throw new Error('useRealtime must be used within a RealtimeProvider');
   }
   return ctx;
+}
+
+/**
+ * Back-compat alias for existing code that imports `useRealtimeContext`.
+ * (Maps to the new `useRealtime`.)
+ */
+export function useRealtimeContext(): RealtimeAPI {
+  return useRealtime();
 }
 
 /**
