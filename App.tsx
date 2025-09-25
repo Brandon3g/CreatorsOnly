@@ -620,12 +620,12 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   );
 };
 
-/* ----------------------------- APP CONTENT (inside providers) ----------------------------- */
+/* ----------------------------- APP CONTENT (assumes authenticated via AuthGate) ----------------------------- */
 const AppContent: React.FC = () => {
   const {
     currentPage,
     viewingProfileId,
-    isAuthenticated,
+    // isAuthenticated,  // no longer gating here
     registerScrollableNode,
     currentUser,
     history,
@@ -676,7 +676,7 @@ const AppContent: React.FC = () => {
   }, [currentPage, viewingProfileId, history]);
 
   useEffect(() => {
-    if (!isAuthenticated || !currentUser) return;
+    if (!currentUser) return;
 
     const handleSocketEvent = (event: Event) => {
       const { userId, eventName, payload } = (event as CustomEvent).detail;
@@ -688,7 +688,7 @@ const AppContent: React.FC = () => {
     window.addEventListener('socket-event', handleSocketEvent);
     requestNotificationPermission(subscribeToPushNotifications);
     return () => window.removeEventListener('socket-event', handleSocketEvent);
-  }, [isAuthenticated, currentUser, subscribeToPushNotifications]);
+  }, [currentUser, subscribeToPushNotifications]);
 
   // Debug page: #/test-auth
   if (typeof window !== 'undefined' && window.location.hash.includes('test-auth')) {
@@ -696,26 +696,6 @@ const AppContent: React.FC = () => {
       <div className="p-4">
         <TestAuth />
       </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    if (typeof window !== 'undefined') {
-      const h = window.location.hash.toLowerCase();
-      if (
-        !h.includes('/login') &&
-        !h.includes('/forgotpassword') &&
-        !h.includes('/newpassword') &&
-        !h.includes('/signup')
-      ) {
-        window.location.hash = '#/Login';
-      }
-    }
-    // Wrap auth pages so useAppContext() is available inside Login
-    return (
-      <AppProvider>
-        <AuthPagesRouter />
-      </AppProvider>
     );
   }
 
@@ -884,7 +864,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
-  // If not logged in, show the auth router wrapped in AppProvider
+  // Not logged in → show auth pages
   if (!hasSession) {
     return (
       <AppProvider>
@@ -893,7 +873,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
-  // Logged in -> show the full app providers + content
+  // Logged in → render the app shell
   return <>{children}</>;
 };
 
@@ -901,8 +881,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
-  // IMPORTANT: Do NOT strip tokens here.
-  // NewPassword.tsx now reads tokens from the hash and then cleans the URL itself.
+  // Do NOT strip tokens here; NewPassword handles its own token cleanup.
 
   return (
     <ErrorBoundary>
