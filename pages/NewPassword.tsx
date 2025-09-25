@@ -5,16 +5,18 @@ import { ICONS } from '../constants';
 
 /**
  * NewPassword
- * - Handles Supabase "recovery" links that redirect back with tokens in the URL hash.
- * - We explicitly parse `access_token` & `refresh_token` from the hash and hydrate a session
- *   via `supabase.auth.setSession(...)` so updateUser({ password }) succeeds reliably.
- * - After success, we sign out the temporary session and route back to #/Login.
+ * - Reads `access_token` & `refresh_token` from the URL hash (Supabase recovery link),
+ *   hydrates a session with `supabase.auth.setSession(...)`,
+ *   then lets the user set a new password.
+ * - On success, we SHOW a clear success state and a button to go back to Login.
+ *   (No auto-redirect; avoids the “did it work?” confusion.)
  */
 
 function parseHashTokens() {
   const h = (typeof window !== 'undefined' ? window.location.hash : '') || '';
-  // Expect something like: #/NewPassword&access_token=...&refresh_token=...&type=recovery
-  // or older shapes like: #access_token=...&refresh_token=...&type=recovery
+  // Accept shapes:
+  //   #/NewPassword&access_token=...&refresh_token=...&type=recovery
+  //   #access_token=...&refresh_token=...&type=recovery
   const q = h.replace(/^#\/?NewPassword?\/?/, '').replace(/^#/, '');
   const params = new URLSearchParams(q);
   const access_token = params.get('access_token') || '';
@@ -30,6 +32,7 @@ const NewPassword: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
 
   // Ensure a valid session exists by hydrating from hash tokens if present.
   useEffect(() => {
@@ -37,19 +40,18 @@ const NewPassword: React.FC = () => {
 
     (async () => {
       try {
-        // 1) If tokens exist in the hash, seed a session explicitly.
         const { access_token, refresh_token } = parseHashTokens();
+
+        // 1) If tokens exist in the hash, seed a session explicitly.
         if (access_token && refresh_token) {
-          const { data, error } = await supabase.auth.setSession({
+          const { error } = await supabase.auth.setSession({
             access_token,
             refresh_token,
           });
-          if (error) {
-            console.error('[NewPassword] setSession error:', error);
-          } else {
-            // Clean the token-y hash so it doesn’t linger in history bar
-            history.replaceState(null, '', `${location.origin}/#/NewPassword`);
-          }
+          if (error) console.error('[NewPassword] setSession error:', error);
+
+          // Clean the URL so tokens don't linger in history
+          history.replaceState(null, '', `${location.origin}/#/NewPassword`);
         }
 
         // 2) Check if we have a session (either pre-existing or just set)
@@ -97,7 +99,6 @@ const NewPassword: React.FC = () => {
 
     setSubmitting(true);
     try {
-      // Double-check session before update
       const { data: sess } = await supabase.auth.getSession();
       if (!sess.session) {
         setError('Auth session missing! Please request a new reset link.');
@@ -113,20 +114,30 @@ const NewPassword: React.FC = () => {
         return;
       }
 
-      setMsg('Password updated! Redirecting you to sign in…');
+      // Clear inputs, show success UI (no auto-redirect).
+      setPw1('');
+      setPw2('');
+      setMsg('Your password has been updated.');
+      setSuccess(true);
+      // Store a small flag so Login can optionally show a tiny toast/banner
+      try {
+        localStorage.setItem('co-pw-reset-success', Date.now().toString());
+      } catch {}
 
-      // End the temporary recovery session
-      await supabase.auth.signOut();
-
-      setTimeout(() => {
-        window.location.hash = '#/Login';
-      }, 1200);
     } catch (err: any) {
       console.error('[NewPassword] unexpected:', err);
       setError('Something went wrong while updating your password.');
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const goToLogin = async () => {
+    // End the temporary recovery session then route to Login.
+    try {
+      await supabase.auth.signOut();
+    } catch {}
+    window.location.hash = '#/Login';
   };
 
   if (!ready) {
@@ -142,7 +153,7 @@ const NewPassword: React.FC = () => {
       <div className="w-full max-w-md bg-surface border border-surface-light rounded-2xl p-6 shadow-lg">
         <button
           type="button"
-          onClick={() => (window.location.hash = '#/Login')}
+          onClick={goToLogin}
           className="mb-4 inline-flex items-center text-text-secondary hover:text-text-primary"
         >
           <span className="mr-2">{ICONS.arrowLeft}</span>
@@ -160,61 +171,79 @@ const NewPassword: React.FC = () => {
           Enter and confirm your new password below.
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm text-text-secondary mb-1">
-              New password
-            </label>
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={pw1}
-              onChange={(e) => setPw1(e.target.value)}
-              className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="At least 8 characters"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm text-text-secondary mb-1">
-              Confirm new password
-            </label>
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={pw2}
-              onChange={(e) => setPw2(e.target.value)}
-              className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="Re-enter password"
-            />
-          </div>
-
-          {error && (
+        {success ? (
+          <>
             <div
-              className="text-sm text-red-400 bg-red-900/20 border border-red-900/40 rounded-md px-3 py-2"
-              role="alert"
-            >
-              {error}
-            </div>
-          )}
-
-          {msg && (
-            <div
-              className="text-sm text-green-300 bg-green-900/20 border border-green-900/40 rounded-md px-3 py-2"
+              className="text-sm text-green-300 bg-green-900/20 border border-green-900/40 rounded-md px-3 py-2 mb-4"
               role="status"
             >
-              {msg}
+              {msg ?? 'Password updated.'}
             </div>
-          )}
+            <button
+              type="button"
+              onClick={goToLogin}
+              className="w-full bg-primary text-white font-bold py-2 rounded-lg hover:bg-primary-hover"
+            >
+              Return to sign in
+            </button>
+          </>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm text-text-secondary mb-1">
+                New password
+              </label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={pw1}
+                onChange={(e) => setPw1(e.target.value)}
+                className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="At least 8 characters"
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full bg-primary text-white font-bold py-2 rounded-lg hover:bg-primary-hover disabled:opacity-60"
-          >
-            {submitting ? 'Updating…' : 'Update password'}
-          </button>
-        </form>
+            <div>
+              <label className="block text-sm text-text-secondary mb-1">
+                Confirm new password
+              </label>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={pw2}
+                onChange={(e) => setPw2(e.target.value)}
+                className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Re-enter password"
+              />
+            </div>
+
+            {error && (
+              <div
+                className="text-sm text-red-400 bg-red-900/20 border border-red-900/40 rounded-md px-3 py-2"
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
+
+            {msg && !success && (
+              <div
+                className="text-sm text-green-300 bg-green-900/20 border border-green-900/40 rounded-md px-3 py-2"
+                role="status"
+              >
+                {msg}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full bg-primary text-white font-bold py-2 rounded-lg hover:bg-primary-hover disabled:opacity-60"
+            >
+              {submitting ? 'Updating…' : 'Update password'}
+            </button>
+          </form>
+        )}
 
         <div className="text-xs text-text-secondary mt-4">
           Tip: If this still says “Auth session missing,” go back to{' '}
