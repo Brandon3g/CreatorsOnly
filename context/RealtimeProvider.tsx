@@ -1,7 +1,6 @@
 // src/context/RealtimeProvider.tsx
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { useRealtime } from '../services/hooks/useRealtime';
 import type { MyProfile } from '../services/profile';
 import type { Post } from '../services/posts';
 import type { FriendRequest } from '../services/friendRequests';
@@ -26,6 +25,9 @@ const RealtimeContext = createContext<RealtimeContextType>({
   isLoadingRequests: true,
 });
 
+const DEBUG = localStorage.getItem('DEBUG_REALTIME') === '1';
+const DISABLE_REALTIME = localStorage.getItem('CO_DISABLE_REALTIME') === '1';
+
 export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = useState<MyProfile[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -36,46 +38,106 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const [isLoadingPosts, setIsLoadingPosts] = useState(true);
   const [isLoadingRequests, setIsLoadingRequests] = useState(true);
 
-  const [isAuthed, setIsAuthed] = useState(false);
+  const booted = useRef(false);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const refetchTimer = useRef<number | null>(null);
 
-  // Determine auth on mount and react to changes
+  // Debounced table refetch to avoid thrashing
+  const scheduleRefetch = (table: 'profiles' | 'posts' | 'requests') => {
+    if (refetchTimer.current) window.clearTimeout(refetchTimer.current);
+    refetchTimer.current = window.setTimeout(async () => {
+      try {
+        if (table === 'profiles') {
+          const { data } = await supabase.from('profiles').select('*').order('updated_at', { ascending: false }).limit(200);
+          if (data) setProfiles(data as any);
+        } else if (table === 'posts') {
+          const { data } = await supabase.from('posts').select('*').order('created_at', { ascending: false }).limit(200);
+          if (data) setPosts(data as any);
+        } else {
+          const { data } = await supabase.from('requests').select('*').order('created_at', { ascending: false }).limit(200);
+          if (data) setRequests(data as any);
+        }
+      } catch (_) {
+        // swallow — we don’t want loops
+      }
+    }, 300);
+  };
+
   useEffect(() => {
-    let mounted = true;
+    if (booted.current) return;
+    booted.current = true;
+
+    let cancelled = false;
 
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-      setIsAuthed(!!data?.session);
-      setUser(data?.session?.user ?? null);
-      if (!data?.session) {
-        // Signed out → keep things lightweight
-        setProfiles([]);
-        setPosts([]);
-        setRequests([]);
-        setIsLoadingProfiles(true);
-        setIsLoadingPosts(true);
-        setIsLoadingRequests(true);
+      // 1) Session
+      const { data: sess } = await supabase.auth.getSession();
+      if (!cancelled) setUser(sess?.session?.user ?? null);
+      const { data: authSub } = supabase.auth.onAuthStateChange((_e, s) => {
+        if (!cancelled) setUser(s?.user ?? null);
+      });
+
+      // 2) Initial fetches (once)
+      try {
+        const [p1, p2, p3] = await Promise.allSettled([
+          supabase.from('profiles').select('*').order('updated_at', { ascending: false }).limit(200),
+          supabase.from('posts').select('*').order('created_at', { ascending: false }).limit(200),
+          supabase.from('requests').select('*').order('created_at', { ascending: false }).limit(200),
+        ]);
+
+        if (!cancelled) {
+          if (p1.status === 'fulfilled' && p1.value.data) setProfiles(p1.value.data as any);
+          if (p2.status === 'fulfilled' && p2.value.data) setPosts(p2.value.data as any);
+          if (p3.status === 'fulfilled' && p3.value.data) setRequests(p3.value.data as any);
+
+          // Always clear loading flags so the UI can render even if fetch failed
+          setIsLoadingProfiles(false);
+          setIsLoadingPosts(false);
+          setIsLoadingRequests(false);
+        }
+      } catch (err) {
+        if (DEBUG) console.warn('[Realtime] initial fetch failed:', err);
+        if (!cancelled) {
+          setIsLoadingProfiles(false);
+          setIsLoadingPosts(false);
+          setIsLoadingRequests(false);
+        }
       }
+
+      // 3) Realtime (guarded + debounced)
+      if (!DISABLE_REALTIME && !cancelled) {
+        const ch = supabase.channel('co_realtime');
+        channelRef.current = ch;
+
+        ch.on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'profiles' },
+          () => scheduleRefetch('profiles')
+        )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'posts' },
+            () => scheduleRefetch('posts')
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'requests' },
+            () => scheduleRefetch('requests')
+          )
+          .subscribe((status) => {
+            if (DEBUG) console.debug('[Realtime] channel status:', status);
+          });
+      }
+
+      // Cleanup
+      return () => {
+        cancelled = true;
+        authSub?.subscription?.unsubscribe();
+        if (refetchTimer.current) window.clearTimeout(refetchTimer.current);
+        if (channelRef.current) channelRef.current.unsubscribe();
+        channelRef.current = null;
+      };
     })();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsAuthed(!!session);
-      setUser(session?.user ?? null);
-      if (!session) {
-        // Signed out → reset and avoid network spam
-        setProfiles([]);
-        setPosts([]);
-        setRequests([]);
-        setIsLoadingProfiles(true);
-        setIsLoadingPosts(true);
-        setIsLoadingRequests(true);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
   }, []);
 
   return (
@@ -90,68 +152,11 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
         isLoadingRequests,
       }}
     >
-      {/* Only render realtime subscriptions when authenticated.
-          This avoids any network churn on Login / ForgotPassword screens. */}
-      {isAuthed && (
-        <RealtimeSubscriptions
-          setProfiles={setProfiles}
-          setPosts={setPosts}
-          setRequests={setRequests}
-          setIsLoadingProfiles={setIsLoadingProfiles}
-          setIsLoadingPosts={setIsLoadingPosts}
-          setIsLoadingRequests={setIsLoadingRequests}
-          setUser={setUser}
-        />
-      )}
       {children}
     </RealtimeContext.Provider>
   );
 }
 
-// A small inner component that actually calls the hook.
-// Rendering it conditionally is the safe way to “gate” a hook.
-function RealtimeSubscriptions(props: {
-  setProfiles: React.Dispatch<React.SetStateAction<MyProfile[]>>;
-  setPosts: React.Dispatch<React.SetStateAction<Post[]>>;
-  setRequests: React.Dispatch<React.SetStateAction<FriendRequest[]>>;
-  setIsLoadingProfiles: React.Dispatch<React.SetStateAction<boolean>>;
-  setIsLoadingPosts: React.Dispatch<React.SetStateAction<boolean>>;
-  setIsLoadingRequests: React.Dispatch<React.SetStateAction<boolean>>;
-  setUser: React.Dispatch<React.SetStateAction<any | null>>;
-}) {
-  const {
-    setProfiles,
-    setPosts,
-    setRequests,
-    setIsLoadingProfiles,
-    setIsLoadingPosts,
-    setIsLoadingRequests,
-    setUser,
-  } = props;
-
-  useRealtime({
-    refreshProfiles: (data) => {
-      setProfiles(data);
-      setIsLoadingProfiles(false);
-    },
-    refreshPosts: (data) => {
-      setPosts(data);
-      setIsLoadingPosts(false);
-    },
-    refreshFriendRequests: (data) => {
-      setRequests(data);
-      setIsLoadingRequests(false);
-    },
-    onAuthChange: (_event, session) => {
-      setUser(session?.user ?? null);
-    },
-  });
-
-  return null;
-}
-
 export function useRealtimeContext() {
   return useContext(RealtimeContext);
 }
-
-export default RealtimeProvider;
