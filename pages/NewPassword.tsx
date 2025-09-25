@@ -4,61 +4,126 @@ import { supabase } from '../lib/supabaseClient';
 import { ICONS } from '../constants';
 import { trackEvent } from '../services/analytics';
 
+/**
+ * Parse ANY hash segments (works with "#/Route#access_token=...").
+ * We merge params from all fragments after the first '#'.
+ */
+function parseAllHashParams(): Record<string, string> {
+  const href = window.location.href || '';
+  const parts = href.split('#').slice(1); // drop everything before first '#'
+  const params: Record<string, string> = {};
+  for (const frag of parts) {
+    const qs = new URLSearchParams(frag);
+    for (const [k, v] of qs.entries()) params[k] = v;
+  }
+  return params;
+}
+
 const NewPassword: React.FC = () => {
   const [pw1, setPw1] = useState('');
   const [pw2, setPw2] = useState('');
   const [showPw, setShowPw] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [hasSession, setHasSession] = useState<boolean | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [hasSession, setHasSession] = useState<boolean>(false);
 
-  const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ type: 'error' | 'ok'; text: string } | null>(null);
 
-  // If Supabase redirected with an error in the URL hash (common on expired links)
-  const hashError = useMemo(() => {
-    const h = window.location.hash || '';
-    if (!h.includes('error=')) return null;
-    // strip leading #
-    const qs = new URLSearchParams(h.slice(1));
-    const desc = qs.get('error_description') || qs.get('error');
-    if (!desc) return 'This reset link is invalid or has expired.';
-    return decodeURIComponent(desc.replace(/\+/g, ' '));
+  // Detect explicit Supabase error passed in the URL (expired link, etc.)
+  const urlErrorText = useMemo(() => {
+    const params = parseAllHashParams();
+    const err = params['error_description'] || params['error'];
+    return err ? decodeURIComponent(err.replace(/\+/g, ' ')) : null;
   }, []);
 
   useEffect(() => {
-    // Check if we have an authenticated recovery session
-    const run = async () => {
+    let alive = true;
+
+    (async () => {
       try {
+        // 1) If Supabase already established a session, we're good.
         const { data } = await supabase.auth.getSession();
-        setHasSession(!!data.session);
-        if (!data.session && !hashError) {
-          // Not an error in hash, just a stale page open
-          setError('This reset link is invalid or has expired. Please request a new one.');
+        if (!alive) return;
+
+        if (data.session) {
+          setHasSession(true);
+          setChecking(false);
+          return;
         }
-      } catch {
+
+        // 2) If no session yet, try to set it from hash tokens (works with "#/route#access_token=...")
+        const params = parseAllHashParams();
+        const access_token = params['access_token'];
+        const refresh_token = params['refresh_token'];
+
+        if (access_token && refresh_token) {
+          const { data: setData, error: setErr } = await supabase.auth.setSession({
+            access_token,
+            refresh_token,
+          });
+          if (!alive) return;
+
+          if (setErr) {
+            setHasSession(false);
+            setMessage({
+              type: 'error',
+              text:
+                urlErrorText ||
+                setErr.message ||
+                'This reset link is invalid or has expired. Please request a new one.',
+            });
+          } else if (setData.session) {
+            setHasSession(true);
+          } else {
+            setHasSession(false);
+          }
+        } else {
+          // No tokens present; likely an old/invalid link
+          setHasSession(false);
+          if (urlErrorText) {
+            setMessage({ type: 'error', text: urlErrorText });
+          } else {
+            setMessage({
+              type: 'error',
+              text: 'This reset link is invalid or has expired. Please request a new one.',
+            });
+          }
+        }
+      } catch (e: any) {
+        if (!alive) return;
         setHasSession(false);
-        setError('Unable to verify reset link. Please request a new one.');
+        setMessage({
+          type: 'error',
+          text: 'Unable to verify reset link. Please request a new one.',
+        });
+      } finally {
+        if (alive) setChecking(false);
       }
+    })();
+
+    return () => {
+      alive = false;
     };
-    run();
-  }, [hashError]);
+  }, [urlErrorText]);
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setOk(null);
+    setMessage(null);
 
     if (!hasSession) {
-      setError('Auth session missing! Go back to Forgot password and open a fresh link.');
+      setMessage({
+        type: 'error',
+        text: 'Auth session missing! Go back to Forgot password and open a fresh link.',
+      });
       return;
     }
     if (pw1.length < 8) {
-      setError('Password must be at least 8 characters.');
+      setMessage({ type: 'error', text: 'Password must be at least 8 characters.' });
       return;
     }
     if (pw1 !== pw2) {
-      setError('Passwords do not match.');
+      setMessage({ type: 'error', text: 'Passwords do not match.' });
       return;
     }
 
@@ -66,17 +131,17 @@ const NewPassword: React.FC = () => {
     try {
       const { error: upErr } = await supabase.auth.updateUser({ password: pw1 });
       if (upErr) {
-        setError(upErr.message || 'Could not update password.');
+        setMessage({ type: 'error', text: upErr.message || 'Could not update password.' });
         trackEvent('password_update_failed', { message: upErr.message });
         return;
       }
-      setOk('Your password has been updated.');
+      setMessage({ type: 'ok', text: 'Your password has been updated.' });
       trackEvent('password_update_success', {});
       setPw1('');
       setPw2('');
     } catch (err) {
       console.error('[NewPassword] update error', err);
-      setError('Unexpected error. Please try again.');
+      setMessage({ type: 'error', text: 'Unexpected error. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -88,38 +153,7 @@ const NewPassword: React.FC = () => {
     } catch {}
     location.hash = '#/Login';
   };
-
   const goForgot = () => (location.hash = '#/ForgotPassword');
-
-  // Early error from the hash (expired link) overrides everything
-  if (hashError) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-surface rounded-2xl border border-surface-light p-6 shadow-lg">
-          <div className="flex items-center justify-center mb-4">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 grid place-items-center text-primary">
-              {ICONS.camera}
-            </div>
-          </div>
-          <h1 className="text-2xl font-bold text-center mb-2">Set a new password</h1>
-          <p className="text-center text-text-secondary mb-4">
-            Enter and confirm your new password below.
-          </p>
-          <div className="text-sm bg-red-500/10 text-red-300 border border-red-500/30 rounded-md p-3 mb-4">
-            {hashError}
-          </div>
-          <div className="flex justify-between">
-            <button onClick={goForgot} className="px-4 py-2 rounded-md border border-surface-light hover:bg-surface-light">
-              Forgot password
-            </button>
-            <button onClick={goLogin} className="px-4 py-2 rounded-md bg-primary text-white hover:bg-primary-hover">
-              Back to sign in
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
@@ -144,23 +178,29 @@ const NewPassword: React.FC = () => {
           Enter and confirm your new password below.
         </p>
 
-        {/* If we already checked and there's no session, show inline guidance */}
-        {hasSession === false && (
-          <div className="text-sm bg-red-500/10 text-red-300 border border-red-500/30 rounded-md p-3 mb-4">
-            This reset link is invalid or has expired. Please request a new one on the{' '}
-            <button onClick={goForgot} className="underline hover:text-red-200">Forgot password</button> page.
-          </div>
-        )}
-
-        {ok && (
-          <div className="text-sm bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 rounded-md p-3 mb-4">
-            {ok}
-          </div>
-        )}
-
-        {error && (
-          <div className="text-sm bg-red-500/10 text-red-300 border border-red-500/30 rounded-md p-3 mb-4">
-            {error}
+        {/* Single consolidated alert (no duplicates) */}
+        {message && (
+          <div
+            className={`text-sm rounded-md p-3 mb-4 border ${
+              message.type === 'error'
+                ? 'bg-red-500/10 text-red-300 border-red-500/30'
+                : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+            }`}
+          >
+            {message.text}{' '}
+            {message.type === 'error' && (
+              <>
+                {message.text.includes('Forgot') ? null : (
+                  <>
+                    You can request a new link on the{' '}
+                    <button onClick={goForgot} className="underline hover:opacity-80">
+                      Forgot password
+                    </button>{' '}
+                    page.
+                  </>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -175,7 +215,7 @@ const NewPassword: React.FC = () => {
                 placeholder="At least 8 characters"
                 className="w-full bg-surface-light p-3 pr-11 rounded-lg outline-none focus:ring-2 focus:ring-primary"
                 autoComplete="new-password"
-                disabled={!!ok}
+                disabled={checking || message?.type === 'ok' || !hasSession}
               />
               <button
                 type="button"
@@ -198,13 +238,13 @@ const NewPassword: React.FC = () => {
               placeholder="Re-enter password"
               className="w-full bg-surface-light p-3 rounded-lg outline-none focus:ring-2 focus:ring-primary"
               autoComplete="new-password"
-              disabled={!!ok}
+              disabled={checking || message?.type === 'ok' || !hasSession}
             />
           </div>
 
           <button
             type="submit"
-            disabled={loading || !!ok || hasSession === false}
+            disabled={checking || loading || message?.type === 'ok' || !hasSession}
             className="w-full bg-primary text-white font-bold py-3 rounded-lg hover:bg-primary-hover disabled:opacity-60"
           >
             {loading ? 'Updating…' : 'Update password'}
@@ -212,7 +252,7 @@ const NewPassword: React.FC = () => {
         </form>
 
         <p className="mt-4 text-xs text-text-secondary">
-          Tip: If this still says “Auth session missing,” go back to{' '}
+          Tip: If this says “Auth session missing,” go back to{' '}
           <button onClick={goForgot} className="underline hover:text-text-primary">
             Forgot password
           </button>{' '}
