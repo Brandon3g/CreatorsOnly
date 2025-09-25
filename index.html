@@ -61,27 +61,24 @@
       })();
     </script>
 
-    <!-- Normalize & PERSIST Supabase recovery tokens BEFORE React boots.
-         1) Merge params from ALL hash fragments (supports "#/NewPassword#access_token=...").
-         2) If tokens are present, store them in sessionStorage:
-              - co-recovery-active = '1'
-              - co-recovery-at / co-recovery-rt / co-recovery-ts
-              - (if provided) co-recovery-code
-         3) Ensure the hash starts with tokens (so Supabase can see them) and then route to "#/NewPassword".
-         4) Short-lived guard keeps the route on "#/NewPassword" while the app initializes. -->
+    <!-- Token normalizer (trimmed guard)
+         - Merge params from ALL hash fragments
+         - Persist recovery tokens to sessionStorage
+         - Normalize to "<tokens>#/NewPassword"
+         - Keep the route on "#/NewPassword" briefly (~1s) while the app boots -->
     <script>
       (function () {
         try {
           var href = String(window.location.href || '');
           if (href.indexOf('#') === -1) return;
 
-          var fragments = href.split('#').slice(1); // everything after first '#'
-          if (!fragments.length) return;
+          var frags = href.split('#').slice(1);
+          if (!frags.length) return;
 
-          // Merge every hash fragment into one param bag
+          // Merge all fragments
           var merged = new URLSearchParams();
-          for (var i = 0; i < fragments.length; i++) {
-            var qs = new URLSearchParams(fragments[i]);
+          for (var i = 0; i < frags.length; i++) {
+            var qs = new URLSearchParams(frags[i]);
             qs.forEach(function (v, k) { merged.set(k, v); });
           }
 
@@ -91,7 +88,7 @@
           var isRecoveryType = (merged.get('type') || '').toLowerCase() === 'recovery';
           var sawRecovery = hasAT || hasRT || hasCode || isRecoveryType;
 
-          // Persist tokens for NewPassword page to use if Supabase clears the hash
+          // Persist tokens for NewPassword page fallback
           if (sawRecovery) {
             try {
               sessionStorage.setItem('co-recovery-active', '1');
@@ -102,27 +99,30 @@
             } catch (e) {}
           }
 
-          // If we have recovery indicators but the hash doesn't START with tokens/code,
-          // reorder to:  #<tokens or code>&type=recovery#/NewPassword
+          // If the hash does not start with tokens/code, normalize it so Supabase can see them
           var startsWithTokens = /^#(access_token|id_token|refresh_token|code)=/i.test(window.location.hash || '');
           if (sawRecovery && !startsWithTokens) {
-            var tokenFrag = merged.toString(); // includes all merged params we saw
+            var tokenFrag = merged.toString();
             var base = window.location.origin + window.location.pathname;
             window.location.replace(base + '#' + tokenFrag + '#/NewPassword');
-            return; // stop; page will reload with normalized hash
+            return; // page reloads with normalized hash
           }
 
-          // If we're in recovery, keep the route on #/NewPassword briefly so nothing can redirect away.
+          // Light guard: keep hash on #/NewPassword for ~1 second only
           if (sawRecovery) {
             var TARGET = '#/NewPassword';
-            var ensureTarget = function () { if (window.location.hash !== TARGET) window.location.hash = TARGET; };
-            ensureTarget();
-            var endAt = Date.now() + 8000;
-            var handler = function () { if (Date.now() < endAt) ensureTarget(); else window.removeEventListener('hashchange', handler); };
+            var ensure = function () { if (window.location.hash !== TARGET) window.location.hash = TARGET; };
+            ensure();
+
+            var endAt = Date.now() + 1000; // 1s
+            var handler = function () {
+              if (Date.now() < endAt) ensure();
+              else window.removeEventListener('hashchange', handler);
+            };
             window.addEventListener('hashchange', handler);
-            setTimeout(ensureTarget, 120);
-            setTimeout(ensureTarget, 600);
-            setTimeout(ensureTarget, 1200);
+
+            setTimeout(ensure, 120);
+            setTimeout(ensure, 500);
           }
         } catch (e) {
           // non-fatal
