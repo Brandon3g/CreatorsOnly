@@ -13,8 +13,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useAppContext } from './AppContext';
 
 /**
- * Types from @supabase/supabase-js v2 for Postgres Changes payload.
- * We inline a lightweight shape to avoid tight coupling to internal types.
+ * Lightweight payload type for Supabase realtime
  */
 type PgEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 type RealtimePayload<T = any> = {
@@ -27,53 +26,31 @@ type RealtimePayload<T = any> = {
   errors?: any;
 };
 
-/**
- * Listener registration
- */
 type Listener = {
   id: number;
-  table?: string;              // optional table filter
-  event?: PgEvent;             // optional event filter
+  table?: string;
+  event?: PgEvent;
   handler: (payload: RealtimePayload) => void;
-  filter?: (payload: RealtimePayload) => boolean; // optional custom predicate
+  filter?: (payload: RealtimePayload) => boolean;
 };
 
 type RealtimeAPI = {
-  /**
-   * Subscribe to realtime changes.
-   * Example:
-   *  on({ table: 'posts', event: 'INSERT' }, (p) => { ... })
-   */
   on: (
     opts: { table?: string; event?: PgEvent; filter?: (p: RealtimePayload) => boolean },
     handler: (payload: RealtimePayload) => void
   ) => () => void;
-
-  /**
-   * A simple refetch signal. Returns a number that bumps when that table changes.
-   * Usage: const tick = useTableTick('posts'); useEffect(() => refetch(), [tick]);
-   */
   useTableTick: (table: string) => number;
-
-  /**
-   * Whether the single global channel is currently subscribed.
-   */
   connected: boolean;
 };
 
 const RealtimeContext = createContext<RealtimeAPI | null>(null);
 
-/**
- * RealtimeProvider
- * Subscribes once to all public schema changes and fan-outs payloads to listeners.
- */
 export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const nextId = useRef(1);
   const listenersRef = useRef<Map<number, Listener>>(new Map());
   const [connected, setConnected] = useState(false);
 
-  // Per-table tick counters so views can "refetch on change" without bespoke handlers.
   const [tableTicks, setTableTicks] = useState<Record<string, number>>({});
 
   const bumpTick = useCallback((table: string) => {
@@ -82,7 +59,6 @@ export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
 
   const dispatch = useCallback(
     (payload: RealtimePayload) => {
-      // Fan out to registered listeners (copy to array to be safe during iteration).
       const all = Array.from(listenersRef.current.values());
       for (const l of all) {
         if (l.table && l.table !== payload.table) continue;
@@ -91,30 +67,23 @@ export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
         try {
           l.handler(payload);
         } catch (err) {
-          // Avoid breaking the bus if a listener throws
           console.error('[RealtimeProvider] listener error:', err);
         }
       }
-      // Always bump the table tick so components can refetch easily.
       bumpTick(payload.table);
     },
     [bumpTick]
   );
 
-  // Establish single global channel
   useEffect(() => {
     const ch = supabase
       .channel('co-global-realtime', {
-        config: {
-          broadcast: { ack: false },
-          presence: { key: undefined as any },
-        },
+        config: { broadcast: { ack: false }, presence: { key: undefined as any } },
       })
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public' }, // <-- all public tables, all events
+        { event: '*', schema: 'public' },
         (payload: any) => {
-          // Normalize to our payload shape
           const p: RealtimePayload = {
             schema: payload.schema,
             table: payload.table,
@@ -127,7 +96,6 @@ export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
         }
       )
       .subscribe((status) => {
-        // status: 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR'
         setConnected(status === 'SUBSCRIBED');
         if (status !== 'SUBSCRIBED') {
           console.warn('[RealtimeProvider] channel status:', status);
@@ -135,7 +103,6 @@ export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
       });
 
     channelRef.current = ch;
-
     return () => {
       try {
         setConnected(false);
@@ -147,17 +114,18 @@ export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
 
   const on = useCallback<RealtimeAPI['on']>((opts, handler) => {
     const id = nextId.current++;
-    const l: Listener = { id, handler, table: opts.table, event: opts.event, filter: opts.filter };
-    listenersRef.current.set(id, l);
-    // Return unsubscribe
-    return () => {
-      listenersRef.current.delete(id);
-    };
+    listenersRef.current.set(id, {
+      id,
+      handler,
+      table: opts.table,
+      event: opts.event,
+      filter: opts.filter,
+    });
+    return () => listenersRef.current.delete(id);
   }, []);
 
   const useTableTick = useCallback<RealtimeAPI['useTableTick']>(
     (table: string) => {
-      // We want components to re-render when a single table's tick changes.
       const [tick, setTick] = useState(0);
       useEffect(() => {
         setTick((prev) => (prev !== (tableTicks[table] ?? 0) ? tableTicks[table] ?? 0 : prev));
@@ -179,48 +147,44 @@ export function RealtimeProvider({ children }: PropsWithChildren<{}>) {
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
 }
 
-/**
- * Core hook that returns the realtime API
- */
 export function useRealtime(): RealtimeAPI {
   const ctx = useContext(RealtimeContext);
-  if (!ctx) {
-    throw new Error('useRealtime must be used within a RealtimeProvider');
-  }
+  if (!ctx) throw new Error('useRealtime must be used within a RealtimeProvider');
   return ctx;
 }
 
 /**
- * Back-compat + extended data hook for existing screens.
- *
- * Many of your pages (e.g., Feed) currently do:
- *   const { posts, profiles: users, isLoadingPosts, isLoadingProfiles } = useRealtimeContext();
- *
- * To avoid changing those pages right now, we expose the same keys here,
- * backed by AppContext (local store), while also including the realtime API
- * (on/useTableTick/connected) for new listeners.
+ * Back-compat + data bridge for existing screens (Feed, Notifications, etc.)
+ * We provide the old keys expected by pages while enabling the new realtime API.
  */
 export function useRealtimeContext(): RealtimeAPI & {
   posts: ReturnType<typeof useAppContext>['posts'];
   profiles: ReturnType<typeof useAppContext>['users'];
   isLoadingPosts: boolean;
   isLoadingProfiles: boolean;
+
+  // ✅ Added for Notifications page compatibility:
+  requests: ReturnType<typeof useAppContext>['friendRequests'];
+  isLoadingRequests: boolean;
 } {
   const api = useRealtime();
-  const { posts, users } = useAppContext();
+  const { posts, users, friendRequests } = useAppContext();
+
   return {
     ...api,
     posts,
     profiles: users,
     isLoadingPosts: false,
     isLoadingProfiles: false,
+
+    // ✅ New (keeps existing Notifications.tsx working):
+    requests: friendRequests,
+    isLoadingRequests: false,
   };
 }
 
 /**
- * Convenience hook: subscribe within a component lifecycle.
- * Example:
- *   useRealtimeOn({ table: 'posts', event: 'INSERT' }, (p) => { ... })
+ * Convenience hook
  */
 export function useRealtimeOn(
   opts: { table?: string; event?: PgEvent; filter?: (p: RealtimePayload) => boolean },
