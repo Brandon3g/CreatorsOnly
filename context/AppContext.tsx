@@ -43,6 +43,26 @@ import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 
 /* ---------------------------------------------------------------------------
+ * Helpers
+ * -------------------------------------------------------------------------*/
+// Detect if current URL is part of a password recovery/reset flow.
+// Works with "#/NewPassword" as well as "#/NewPassword#access_token=...&type=recovery"
+function isRecoveryUrl(): boolean {
+  try {
+    const href = window.location.href || '';
+    const hash = window.location.hash || '';
+    if (/#\/NewPassword/i.test(hash)) return true;
+    const fragments = href.split('#').slice(1);
+    for (const frag of fragments) {
+      const qs = new URLSearchParams(frag);
+      const type = (qs.get('type') || '').toLowerCase();
+      if (qs.has('access_token') || type === 'recovery') return true;
+    }
+  } catch {}
+  return false;
+}
+
+/* ---------------------------------------------------------------------------
  * Lightweight socket-style event emitter (simulated)
  * -------------------------------------------------------------------------*/
 const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
@@ -346,6 +366,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
   useEffect(() => {
     let unsub = () => {};
+    const recoveryNow = isRecoveryUrl();
 
     (async () => {
       // initial check
@@ -354,9 +375,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (hasSession) {
         if (authData.userId !== MASTER_USER_ID) {
           setAuthData({ userId: MASTER_USER_ID });
-          setHistory([{ page: 'feed', context: {} }]);
-          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
         }
+        // If we are in a password recovery URL, DO NOT clobber the route/history.
+        if (recoveryNow) {
+          if (!/#\/NewPassword/i.test(window.location.hash)) {
+            window.location.hash = '#/NewPassword';
+          }
+        } else {
+          setHistory([{ page: 'feed', context: {} }]);
+        }
+        trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
       } else if (authData.userId !== null) {
         setAuthData({ userId: null });
         setHistory([{ page: 'feed', context: {} }]);
@@ -364,9 +392,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       // subscribe
       const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+        const inRecovery = isRecoveryUrl();
         if (session?.user) {
           setAuthData({ userId: MASTER_USER_ID });
-          setHistory([{ page: 'feed', context: {} }]);
+          if (inRecovery) {
+            if (!/#\/NewPassword/i.test(window.location.hash)) {
+              window.location.hash = '#/NewPassword';
+            }
+          } else {
+            setHistory([{ page: 'feed', context: {} }]);
+          }
           trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
         } else {
           setAuthData({ userId: null });
@@ -465,11 +500,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return false;
   };
 
-  // ✅ UPDATED: also sign out from Supabase so refresh doesn't auto-login
+  // Also sign out from Supabase so refresh doesn't auto-login
   const logout = () => {
     try {
-      // fire-and-forget; our onAuthStateChange will also clear local state
-      supabase.auth.signOut().catch((e) => console.warn('[logout] supabase signOut error:', e));
+      supabase.auth.signOut().catch((e) =>
+        console.warn('[logout] supabase signOut error:', e),
+      );
     } finally {
       setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
