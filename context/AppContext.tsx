@@ -43,23 +43,49 @@ import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 
 /* ---------------------------------------------------------------------------
- * Helpers
+ * Recovery helpers
  * -------------------------------------------------------------------------*/
+// Read/write a session-scoped flag so recovery survives Supabase's hash cleaning
+const RECOVERY_FLAG = 'co-recovery-active';
+
+function getRecoveryFlag(): boolean {
+  try {
+    return sessionStorage.getItem(RECOVERY_FLAG) === '1';
+  } catch {
+    return false;
+  }
+}
+function setRecoveryFlag(on: boolean) {
+  try {
+    if (on) sessionStorage.setItem(RECOVERY_FLAG, '1');
+    else sessionStorage.removeItem(RECOVERY_FLAG);
+  } catch {}
+}
+
 // Detect if current URL is part of a password recovery/reset flow.
-// Works with "#/NewPassword" as well as "#/NewPassword#access_token=...&type=recovery"
-function isRecoveryUrl(): boolean {
+// Works with "#/NewPassword", "#access_token=...&type=recovery", and multi-hash variants.
+function urlLooksLikeRecovery(): boolean {
   try {
     const href = window.location.href || '';
     const hash = window.location.hash || '';
+
     if (/#\/NewPassword/i.test(hash)) return true;
-    const fragments = href.split('#').slice(1);
+
+    const fragments = href.split('#').slice(1); // after first '#'
     for (const frag of fragments) {
       const qs = new URLSearchParams(frag);
       const type = (qs.get('type') || '').toLowerCase();
-      if (qs.has('access_token') || type === 'recovery') return true;
+      if (qs.has('access_token') || qs.has('refresh_token') || type === 'recovery') {
+        return true;
+      }
     }
   } catch {}
   return false;
+}
+
+// Single source of truth: either URL looks like recovery OR a pre-boot script set the flag
+function isRecoveryActive(): boolean {
+  return urlLooksLikeRecovery() || getRecoveryFlag();
 }
 
 /* ---------------------------------------------------------------------------
@@ -366,46 +392,57 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
   useEffect(() => {
     let unsub = () => {};
-    const recoveryNow = isRecoveryUrl();
 
     (async () => {
+      // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
+      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
+
       // initial check
       const { data } = await supabase.auth.getSession();
       const hasSession = !!data.session?.user;
+      const recovering = isRecoveryActive();
+
       if (hasSession) {
         if (authData.userId !== MASTER_USER_ID) {
           setAuthData({ userId: MASTER_USER_ID });
         }
-        // If we are in a password recovery URL, DO NOT clobber the route/history.
-        if (recoveryNow) {
+
+        // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
+        if (recovering) {
           if (!/#\/NewPassword/i.test(window.location.hash)) {
             window.location.hash = '#/NewPassword';
           }
         } else {
           setHistory([{ page: 'feed', context: {} }]);
         }
+
         trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
       } else if (authData.userId !== null) {
         setAuthData({ userId: null });
         setHistory([{ page: 'feed', context: {} }]);
       }
 
-      // subscribe
+      // subscribe to future changes
       const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-        const inRecovery = isRecoveryUrl();
+        const recoveringNow = isRecoveryActive();
+
         if (session?.user) {
           setAuthData({ userId: MASTER_USER_ID });
-          if (inRecovery) {
+
+          if (recoveringNow) {
             if (!/#\/NewPassword/i.test(window.location.hash)) {
               window.location.hash = '#/NewPassword';
             }
           } else {
             setHistory([{ page: 'feed', context: {} }]);
           }
+
           trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
         } else {
           setAuthData({ userId: null });
           setHistory([{ page: 'feed', context: {} }]);
+          // Leaving auth state; clear recovery guard just in case
+          setRecoveryFlag(false);
           trackEvent('logout', { via: 'supabase' });
         }
       });
@@ -419,7 +456,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
-    // simulate a network refresh
     await new Promise((res) => setTimeout(res, 600));
     trackEvent('data_refreshed');
   }, []);
@@ -450,7 +486,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (scrollableNodeRef.current) {
         last.scrollTop = scrollableNodeRef.current.scrollTop;
       }
-      // Avoid pushing duplicates
       if (
         last.page === page &&
         JSON.stringify(last.context) === JSON.stringify(context)
@@ -484,7 +519,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const viewProfile = (userId: string) => navigate('profile', { viewingProfileId: userId });
 
   // --- Demo login (username)  ---------------------------------------------
-  // Left in place for dev; Supabase login happens in /pages/Login.tsx
   const login = (username: string, _password: string) => {
     const user = users.find(
       (u) => u.username.toLowerCase() === username.toLowerCase(),
@@ -492,7 +526,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (user) {
       setAuthData({ userId: user.id });
       setIsRegistering(false);
-      setHistory([{ page: 'feed', context: {} }]); // reset history
+      setHistory([{ page: 'feed', context: {} }]);
       trackEvent('login_success', { userId: user.id, via: 'demo' });
       return true;
     }
@@ -509,6 +543,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } finally {
       setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
+      // Leaving the app → clear any lingering recovery guard
+      setRecoveryFlag(false);
       trackEvent('logout', { userId: currentUser?.id, via: 'app_context' });
     }
   };
@@ -817,7 +853,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }),
       );
 
-      // If newly blocking, also remove friendship
       if (!isBlocked) removeFriend(userIdToBlock);
 
       trackEvent(isBlocked ? 'user_unblocked' : 'user_blocked', {
@@ -1052,7 +1087,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setNotifications((prev) =>
           prev.map((n) => (ids.includes(n.id) ? { ...n, isRead: true } : n)),
         );
-      }, 500); // small delay for UX
+      }, 500);
     },
     [setNotifications],
   );
