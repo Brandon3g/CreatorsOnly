@@ -1,12 +1,33 @@
 // src/pages/SignUp.tsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { ICONS, CREATOR_TYPES, US_STATES, COUNTIES_BY_STATE } from '../constants';
+import { ICONS, CREATOR_TYPES, US_STATES } from '../constants';
 import { trackEvent } from '../services/analytics';
 
 type CreatorType = string;
 
 const BIO_LIMIT = 150;
+
+/**
+ * County mapping (scoped locally to this page to avoid changing shared constants).
+ * We start with a full CA list so the flow is functional immediately.
+ * County select is disabled for states without an entry here.
+ */
+const COUNTIES_BY_STATE: Record<string, string[]> = {
+  CA: [
+    'Alameda','Alpine','Amador','Butte','Calaveras','Colusa','Contra Costa','Del Norte',
+    'El Dorado','Fresno','Glenn','Humboldt','Imperial','Inyo','Kern','Kings','Lake','Lassen',
+    'Los Angeles','Madera','Marin','Mariposa','Mendocino','Merced','Modoc','Mono','Monterey',
+    'Napa','Nevada','Orange','Placer','Plumas','Riverside','Sacramento','San Benito',
+    'San Bernardino','San Diego','San Francisco','San Joaquin','San Luis Obispo','San Mateo',
+    'Santa Barbara','Santa Clara','Santa Cruz','Shasta','Sierra','Siskiyou','Solano','Sonoma',
+    'Stanislaus','Sutter','Tehama','Trinity','Tulare','Tuolumne','Ventura','Yolo','Yuba',
+  ],
+  // Add additional states as needed, e.g.:
+  // NY: ['Albany', 'Allegany', ...],
+  // TX: ['Anderson', 'Andrews', ...],
+  // FL: ['Alachua', 'Baker', ...],
+};
 
 const SignUp: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -87,7 +108,6 @@ const SignUp: React.FC = () => {
       // Small delay to show success then move to feed or login
       setTimeout(() => {
         if (data.session) {
-          // user is logged in right away
           window.location.hash = '#/Feed';
         } else {
           window.location.hash = '#/Login';
