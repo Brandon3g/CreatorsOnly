@@ -2,9 +2,21 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-type LoginProps = { onForgotPassword: () => void };
+type Props = { onForgotPassword: () => void };
 
-const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
+async function waitForSession(timeoutMs = 1500): Promise<boolean> {
+  const start = Date.now();
+  const first = await supabase.auth.getSession();
+  if (first.data.session) return true;
+  while (Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, 120));
+    const { data } = await supabase.auth.getSession();
+    if (data.session) return true;
+  }
+  return false;
+}
+
+const Login: React.FC<Props> = ({ onForgotPassword }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
@@ -14,18 +26,17 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
     e.preventDefault();
     setError('');
     setPending(true);
-
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
       if (error) throw error;
-      if (!data.session) throw new Error('No session returned');
 
-      // Move off the auth route and reload so the app shell mounts with the session.
-      window.location.hash = '#/Feed';
-      window.location.reload();
+      const ok = await waitForSession(2000);
+      if (!ok) throw new Error('Auth session not established yet. Please try again.');
+
+      location.replace('/#/Feed?fresh=' + Date.now());
     } catch (err: any) {
       setError(err?.message ?? 'Login failed. Please try again.');
     } finally {
@@ -44,39 +55,30 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
         <form className="space-y-6" onSubmit={handleLogin} noValidate>
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
-              <label htmlFor="email-login" className="sr-only">
-                Email
-              </label>
+              <label htmlFor="email-login" className="sr-only">Email</label>
               <input
                 id="email-login"
                 type="email"
-                autoComplete="email"
-                autoCapitalize="none"
-                autoCorrect="off"
-                inputMode="email"
-                spellCheck={false}
                 required
+                autoComplete="email"
+                inputMode="email"
                 className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-t-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
                 placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                disabled={pending}
               />
             </div>
             <div>
-              <label htmlFor="password-login" className="sr-only">
-                Password
-              </label>
+              <label htmlFor="password-login" className="sr-only">Password</label>
               <input
                 id="password-login"
                 type="password"
-                autoComplete="current-password"
                 required
+                autoComplete="current-password"
                 className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-b-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                disabled={pending}
               />
             </div>
           </div>
@@ -86,22 +88,19 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
               type="button"
               onClick={onForgotPassword}
               className="font-medium text-text-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
-              disabled={pending}
             >
               Forgot Password?
             </button>
           </div>
 
           {error && (
-            <p role="alert" className="text-sm text-accent-red text-center">
-              {error}
-            </p>
+            <p role="alert" className="text-sm text-accent-red text-center">{error}</p>
           )}
 
           <div>
             <button
               type="submit"
-              disabled={pending || !email || !password}
+              disabled={pending}
               className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-full text-white bg-primary hover:bg-primary-hover disabled:opacity-60"
             >
               {pending ? 'Signing in…' : 'Log In'}
@@ -109,9 +108,15 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
           </div>
         </form>
 
-        <p className="text-sm text-center text-text-secondary">
-          Don’t have an account? Ask an admin to invite you.
-        </p>
+        <div className="text-sm text-center">
+          <button
+            type="button"
+            onClick={() => (location.hash = '#/SignUp')}
+            className="font-medium text-text-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+          >
+            Don’t have an account? Create one
+          </button>
+        </div>
       </div>
     </div>
   );

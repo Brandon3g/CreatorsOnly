@@ -20,6 +20,7 @@ import InterestedUsers from './pages/InterestedUsers';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
 import NewPassword from './pages/NewPassword';
+import SignUp from './pages/SignUp';
 
 // Misc
 import ProfileSetup from './pages/ProfileSetup';
@@ -790,6 +791,7 @@ const AuthPagesRouter: React.FC = () => {
     return supabase.auth.resetPasswordForEmail(email, { redirectTo });
   };
 
+  if (lower.includes('signup')) return <SignUp />;
   if (lower.includes('newpassword')) return <NewPassword />;
 
   if (lower.includes('forgotpassword')) {
@@ -818,8 +820,9 @@ const AuthPagesRouter: React.FC = () => {
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
-  // Helper
-  const isAuthRoute = () => /#\/(login|forgotpassword|newpassword)/i.test(location.hash || '');
+  // Helpers
+  const isAuthRoute = () =>
+    /#\/(login|forgotpassword|newpassword|signup)/i.test(location.hash || '');
   const goToApp = () => location.replace('/#/feed'); // lowercase to match our router
 
   // Normalize Supabase implicit hash tokens once parsed
@@ -894,7 +897,7 @@ const AppWrapper: React.FC = () => {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
-  const onAuthScreen = /#\/(login|forgotpassword|newpassword)/i.test(hash);
+  const onAuthScreen = /#\/(login|forgotpassword|newpassword|signup)/i.test(hash);
 
   if (onAuthScreen) {
     return <AuthPagesRouter />;
