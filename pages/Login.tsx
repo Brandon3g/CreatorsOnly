@@ -1,51 +1,103 @@
 // src/pages/Login.tsx
-import React, { useState, useEffect } from 'react';
-import { useAppContext } from '../context/AppContext';
+import React, { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
 import { ICONS } from '../constants';
 
 interface LoginProps {
   onForgotPassword: () => void;
 }
 
-const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
-  const { login, isAuthenticated } = useAppContext();
+async function waitForSession(timeoutMs = 2000): Promise<boolean> {
+  const start = Date.now();
+  const first = await supabase.auth.getSession();
+  if (first.data.session) return true;
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 120));
+    const { data } = await supabase.auth.getSession();
+    if (data.session) return true;
+  }
+  return false;
+}
 
-  const [usernameOrEmail, setUsernameOrEmail] = useState('');
+const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // If we somehow get here while already authenticated, just send to feed.
+  // If we already have a session, bounce to Feed.
   useEffect(() => {
-    if (isAuthenticated && typeof window !== 'undefined') {
-      window.location.hash = '#/Feed';
-    }
-  }, [isAuthenticated]);
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        window.location.hash = '#/Feed';
+      }
+    })();
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    const u = usernameOrEmail.trim();
-    const p = password;
+    const id = identifier.trim();
+    const pw = password;
 
-    if (!u || !p) {
-      setError('Please enter both your username/email and password.');
+    if (!id || !pw) {
+      setError('Please enter both your email/username and password.');
       return;
     }
 
     setSubmitting(true);
     try {
-      const ok = await Promise.resolve(login(u, p));
-      if (!ok) {
-        setError('Invalid credentials. Double-check and try again.');
-        return;
+      let emailToUse = id;
+
+      // If the user typed a username (no "@"), try to resolve it to an email.
+      if (!id.includes('@')) {
+        try {
+          // Assumes a "profiles" table with a "username" and "email" column.
+          // If this query fails in your project, it will simply fall back to using
+          // the identifier as an email.
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('email')
+            .ilike('username', id)
+            .maybeSingle();
+
+          if (!error && data?.email) {
+            emailToUse = data.email;
+          }
+        } catch {
+          // ignore, we'll just try the identifier as an email
+        }
       }
-      // AppContext will flip isAuthenticated -> App routes will take over
+
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: emailToUse,
+        password: pw,
+      });
+      if (signInErr) {
+        // If we tried mapping a username and it failed, one more try as raw email
+        if (emailToUse !== id) {
+          const { error: secondErr } = await supabase.auth.signInWithPassword({
+            email: id,
+            password: pw,
+          });
+          if (secondErr) throw secondErr;
+        } else {
+          throw signInErr;
+        }
+      }
+
+      // Wait until the session is actually established so the app routes correctly.
+      const ok = await waitForSession(2500);
+      if (!ok) throw new Error('Auth session not established yet. Try again.');
+
+      // Hand off to the app; AuthGate/AppContext will pick up the session.
+      window.location.hash = '#/Feed';
     } catch (err: any) {
-      console.error('[Login] unexpected error:', err);
-      setError('Something went wrong while signing you in.');
+      console.error('[Login] error:', err);
+      setError(err?.message ?? 'Invalid credentials. Double-check and try again.');
     } finally {
       setSubmitting(false);
     }
@@ -76,10 +128,10 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
               autoCapitalize="none"
               autoCorrect="off"
               autoComplete="username"
-              value={usernameOrEmail}
-              onChange={(e) => setUsernameOrEmail(e.target.value)}
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="e.g. elena or elena@example.com"
+              placeholder="e.g. yourname or you@example.com"
             />
           </div>
 
