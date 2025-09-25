@@ -11,10 +11,15 @@ const BIO_LIMIT = 150;
 /** Icons from your constants */
 const ICONS = CONST.ICONS;
 
-/** Creator types + States: use repo constants if present, else fallbacks */
+/** Creator types: use repo constant if present, else fallbacks */
 const DEFAULT_CREATOR_TYPES: string[] = ['Model', 'Photographer', 'Videographer'];
+const CREATOR_TYPES_LIST =
+  Array.isArray((CONST as any).CREATOR_TYPES) && (CONST as any).CREATOR_TYPES.length
+    ? ((CONST as any).CREATOR_TYPES as string[])
+    : DEFAULT_CREATOR_TYPES;
 
-const FULL_US_STATES: Array<{ code: string; name: string }> = [
+/** Canonical 50 states + DC with USPS codes (we’ll always use codes to match county data) */
+const US_STATES_LIST: Array<{ code: string; name: string }> = [
   { code: 'AL', name: 'Alabama' },
   { code: 'AK', name: 'Alaska' },
   { code: 'AZ', name: 'Arizona' },
@@ -65,28 +70,10 @@ const FULL_US_STATES: Array<{ code: string; name: string }> = [
   { code: 'WV', name: 'West Virginia' },
   { code: 'WI', name: 'Wisconsin' },
   { code: 'WY', name: 'Wyoming' },
-  { code: 'DC', name: 'District of Columbia' }, // optional but handy
+  { code: 'DC', name: 'District of Columbia' },
 ];
 
-const CREATOR_TYPES_LIST =
-  Array.isArray((CONST as any).CREATOR_TYPES) && (CONST as any).CREATOR_TYPES.length
-    ? ((CONST as any).CREATOR_TYPES as string[])
-    : DEFAULT_CREATOR_TYPES;
-
-const US_STATES_LIST =
-  Array.isArray((CONST as any).US_STATES) && (CONST as any).US_STATES.length
-    ? ((CONST as any).US_STATES as Array<{ code?: string; value?: string; name?: string; label?: string }>)
-        .map((s) =>
-          typeof s === 'string'
-            ? { code: s, name: s }
-            : { code: (s.code || s.value) as string, name: (s.name || s.label) as string }
-        )
-    : FULL_US_STATES;
-
-/**
- * FIPS → state abbreviation mapping for Census responses.
- * (Census returns two-digit FIPS state codes as strings.)
- */
+/** FIPS → state abbreviation mapping used by the Census API response */
 const STATE_ABBR_BY_FIPS: Record<string, string> = {
   '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT',
   '10': 'DE', '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL',
@@ -98,7 +85,7 @@ const STATE_ABBR_BY_FIPS: Record<string, string> = {
   '55': 'WI', '56': 'WY',
 };
 
-/** Small local fallback so the selector still works offline */
+/** Local fallback so the selector still works offline */
 const LOCAL_FALLBACK_COUNTIES: Record<string, string[]> = {
   CA: [
     'Alameda', 'Alpine', 'Amador', 'Butte', 'Calaveras', 'Colusa', 'Contra Costa', 'Del Norte',
@@ -125,56 +112,53 @@ const SignUp: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
-  /** Dynamic counties map, populated from Census API */
+  /** Counties map, populated from Census API (fallback seeded with CA) */
   const [countiesByState, setCountiesByState] = useState<Record<string, string[]>>(
     LOCAL_FALLBACK_COUNTIES
   );
+  const [countiesLoaded, setCountiesLoaded] = useState(false);
 
-  // Fetch all U.S. counties (parishes/boroughs) and group by state abbreviation.
+  // Fetch all U.S. counties/boroughs/parishes once and group by state code.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        // NAME + for=county:* returns: ["NAME","state","county"] header then rows.
-        const url =
-          'https://api.census.gov/data/2023/pep/population?get=NAME&for=county:*';
-        const res = await fetch(url, { cache: 'force-cache' });
+        const url = 'https://api.census.gov/data/2023/pep/population?get=NAME&for=county:*';
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`Census API ${res.status}`);
-        const data: string[][] = await res.json();
-        if (!Array.isArray(data) || data.length < 2) throw new Error('Bad Census response');
+        const rows: string[][] = await res.json();
 
-        const header = data[0].map((h) => h.toLowerCase());
+        const header = rows[0].map((h) => h.toLowerCase());
         const nameIdx = header.indexOf('name');
         const stateIdx = header.indexOf('state');
         if (nameIdx === -1 || stateIdx === -1) throw new Error('Unexpected header');
 
-        const map: Record<string, string[]> = {};
+        const next: Record<string, string[]> = {};
 
-        for (let i = 1; i < data.length; i++) {
-          const row = data[i];
-          const stateFips = row[stateIdx].padStart(2, '0');
-          const abbr = STATE_ABBR_BY_FIPS[stateFips];
-          if (!abbr) continue;
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          const stateFips = row[stateIdx]?.toString().padStart(2, '0');
+          const code = STATE_ABBR_BY_FIPS[stateFips];
+          if (!code) continue;
 
-          // "Autauga County, Alabama" -> "Autauga County"
-          // "Aleutians East Borough, Alaska" -> "Aleutians East Borough"
-          // "Fairfax city, Virginia" -> "Fairfax city"
-          const name = (row[nameIdx] || '').replace(/,.*$/, '').trim();
-          if (!name) continue;
+          // "X County, State" / "Y Borough, Alaska" / "Z Parish, Louisiana" / "Fairfax city, Virginia"
+          const label = (row[nameIdx] || '').replace(/,.*$/, '').trim();
+          if (!label) continue;
 
-          if (!map[abbr]) map[abbr] = [];
-          map[abbr].push(name);
+          if (!next[code]) next[code] = [];
+          next[code].push(label);
         }
 
-        // sort each list for UX
-        Object.keys(map).forEach((k) => map[k].sort((a, b) => a.localeCompare(b)));
+        // Sort for UX
+        for (const k of Object.keys(next)) next[k].sort((a, b) => a.localeCompare(b));
 
         if (!cancelled) {
-          setCountiesByState((prev) => ({ ...prev, ...map }));
+          setCountiesByState((prev) => ({ ...prev, ...next }));
+          setCountiesLoaded(true);
         }
       } catch (err) {
-        console.warn('[SignUp] county load failed, using fallback', err);
-        // keep LOCAL_FALLBACK_COUNTIES only
+        console.warn('[SignUp] county load failed, using fallback only', err);
+        if (!cancelled) setCountiesLoaded(true);
       }
     })();
     return () => {
@@ -182,7 +166,7 @@ const SignUp: React.FC = () => {
     };
   }, []);
 
-  // reset county when state changes
+  // Reset county when state changes
   useEffect(() => setCounty(''), [stateCode]);
 
   const countyOptions = useMemo(
@@ -401,11 +385,19 @@ const SignUp: React.FC = () => {
               <select
                 value={county}
                 onChange={(e) => setCounty(e.target.value)}
-                disabled={!stateCode || countyOptions.length === 0}
+                disabled={!stateCode || (!countiesLoaded && !countiesByState[stateCode]) || (countiesLoaded && (countiesByState[stateCode]?.length ?? 0) === 0)}
                 className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
               >
-                <option value="">{stateCode ? 'Select County' : 'Select State first'}</option>
-                {countyOptions.map((c) => (
+                <option value="">
+                  {!stateCode
+                    ? 'Select State first'
+                    : !countiesLoaded && !countiesByState[stateCode]
+                    ? 'Loading counties…'
+                    : (countiesByState[stateCode]?.length ?? 0) > 0
+                    ? 'Select County'
+                    : 'No counties found'}
+                </option>
+                {(countiesByState[stateCode] || []).map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
