@@ -61,89 +61,72 @@
       })();
     </script>
 
-    <!-- 1) Normalize Supabase recovery links BEFORE React boots.
-           Put tokens FIRST in the hash so Supabase auto-detects them,
-           then route to "#/NewPassword". Also set a recovery guard flag. -->
+    <!-- Normalize & PERSIST Supabase recovery tokens BEFORE React boots.
+         1) Merge params from ALL hash fragments (supports "#/NewPassword#access_token=...").
+         2) If tokens are present, store them in sessionStorage:
+              - co-recovery-active = '1'
+              - co-recovery-at / co-recovery-rt / co-recovery-ts
+              - (if provided) co-recovery-code
+         3) Ensure the hash starts with tokens (so Supabase can see them) and then route to "#/NewPassword".
+         4) Short-lived guard keeps the route on "#/NewPassword" while the app initializes. -->
     <script>
       (function () {
         try {
           var href = String(window.location.href || '');
           if (href.indexOf('#') === -1) return;
 
-          var frags = href.split('#').slice(1); // everything after the first '#'
-          if (!frags.length) return;
+          var fragments = href.split('#').slice(1); // everything after first '#'
+          if (!fragments.length) return;
 
-          // Pull params from ALL fragments
+          // Merge every hash fragment into one param bag
           var merged = new URLSearchParams();
-          var sawToken = false;
-
-          for (var i = 0; i < frags.length; i++) {
-            var qs = new URLSearchParams(frags[i]);
-            qs.forEach(function (v, k) {
-              merged.set(k, v);
-            });
-            if (
-              qs.has('access_token') ||
-              qs.has('refresh_token') ||
-              (qs.get('type') || '').toLowerCase() === 'recovery' ||
-              qs.has('code')
-            ) {
-              sawToken = true;
-            }
+          for (var i = 0; i < fragments.length; i++) {
+            var qs = new URLSearchParams(fragments[i]);
+            qs.forEach(function (v, k) { merged.set(k, v); });
           }
 
-          // If we have recovery tokens but the hash does NOT start with them, reorder to:
-          //   #access_token=...&refresh_token=...&type=recovery#/NewPassword
-          var hash = window.location.hash || '';
-          var startsWithTokens = /^#(access_token|id_token|refresh_token|code)=/i.test(hash);
-          if (sawToken && !startsWithTokens) {
-            // Persist a session-scoped guard for the app context
-            try { sessionStorage.setItem('co-recovery-active', '1'); } catch (e) {}
+          var hasAT = merged.has('access_token');
+          var hasRT = merged.has('refresh_token');
+          var hasCode = merged.has('code');
+          var isRecoveryType = (merged.get('type') || '').toLowerCase() === 'recovery';
+          var sawRecovery = hasAT || hasRT || hasCode || isRecoveryType;
 
-            var tokenFrag = merged.toString(); // includes all token params
+          // Persist tokens for NewPassword page to use if Supabase clears the hash
+          if (sawRecovery) {
+            try {
+              sessionStorage.setItem('co-recovery-active', '1');
+              if (hasAT) sessionStorage.setItem('co-recovery-at', merged.get('access_token') || '');
+              if (hasRT) sessionStorage.setItem('co-recovery-rt', merged.get('refresh_token') || '');
+              if (hasAT || hasRT) sessionStorage.setItem('co-recovery-ts', String(Date.now()));
+              if (hasCode) sessionStorage.setItem('co-recovery-code', merged.get('code') || '');
+            } catch (e) {}
+          }
+
+          // If we have recovery indicators but the hash doesn't START with tokens/code,
+          // reorder to:  #<tokens or code>&type=recovery#/NewPassword
+          var startsWithTokens = /^#(access_token|id_token|refresh_token|code)=/i.test(window.location.hash || '');
+          if (sawRecovery && !startsWithTokens) {
+            var tokenFrag = merged.toString(); // includes all merged params we saw
             var base = window.location.origin + window.location.pathname;
             window.location.replace(base + '#' + tokenFrag + '#/NewPassword');
-            return; // stop here; page is reloading
+            return; // stop; page will reload with normalized hash
+          }
+
+          // If we're in recovery, keep the route on #/NewPassword briefly so nothing can redirect away.
+          if (sawRecovery) {
+            var TARGET = '#/NewPassword';
+            var ensureTarget = function () { if (window.location.hash !== TARGET) window.location.hash = TARGET; };
+            ensureTarget();
+            var endAt = Date.now() + 8000;
+            var handler = function () { if (Date.now() < endAt) ensureTarget(); else window.removeEventListener('hashchange', handler); };
+            window.addEventListener('hashchange', handler);
+            setTimeout(ensureTarget, 120);
+            setTimeout(ensureTarget, 600);
+            setTimeout(ensureTarget, 1200);
           }
         } catch (e) {
           // non-fatal
         }
-      })();
-    </script>
-
-    <!-- 2) Short-lived guard: while recovery is active, keep the route on #/NewPassword.
-           If anything (app/router) tries to change the hash, bounce it back for a few seconds. -->
-    <script>
-      (function () {
-        try {
-          var guardOn = false;
-          try { guardOn = sessionStorage.getItem('co-recovery-active') === '1'; } catch (e) {}
-
-          if (!guardOn) return;
-
-          var TARGET = '#/NewPassword';
-          var ensureTarget = function () {
-            if (window.location.hash !== TARGET) {
-              window.location.hash = TARGET;
-            }
-          };
-
-          // Immediately ensure the route
-          ensureTarget();
-
-          // For ~8 seconds after load, prevent other code from navigating away
-          var endAt = Date.now() + 8000;
-          var handler = function () {
-            if (Date.now() < endAt) ensureTarget();
-            else window.removeEventListener('hashchange', handler);
-          };
-          window.addEventListener('hashchange', handler);
-
-          // Also re-assert once after a brief delay to cover late app redirects
-          setTimeout(ensureTarget, 150);
-          setTimeout(ensureTarget, 600);
-          setTimeout(ensureTarget, 1200);
-        } catch (e) {}
       })();
     </script>
   </head>
