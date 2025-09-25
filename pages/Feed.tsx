@@ -1,7 +1,7 @@
 // src/pages/Feed.tsx
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useAppContext } from '../context/AppContext';
-import { useRealtimeContext } from '../context/RealtimeProvider'; // ✅ NEW
+import { useRealtimeContext } from '../context/RealtimeProvider';
 import PostCard from '../components/PostCard';
 import { ICONS } from '../constants';
 import { User, NotificationType } from '../types';
@@ -22,11 +22,13 @@ const Feed: React.FC = () => {
 
   const {
     posts,
-    profiles: users, // ✅ replace users from realtime
+    profiles: users, // users from realtime-backed context
     isLoadingPosts,
     isLoadingProfiles,
+    on, // <-- NEW: realtime subscription API
   } = useRealtimeContext();
 
+  // Pull-to-refresh
   const { isRefreshing, pullDistance, isPulling, handlers } = usePullToRefresh({
     onRefresh: refreshData,
   });
@@ -36,10 +38,10 @@ const Feed: React.FC = () => {
   // New Post State
   const [newPostContent, setNewPostContent] = useState('');
   const [newPostImage, setNewPostImage] = useState<string | null>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const newPostTextAreaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const newPostTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Mention State
+  // Mentions
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<User[]>([]);
 
@@ -50,37 +52,52 @@ const Feed: React.FC = () => {
       !n.isRead
   );
 
+  // ——— Realtime: refetch feed when posts change ———
+  useEffect(() => {
+    // Listen to all INSERT/UPDATE/DELETE on public.posts
+    const off = on({ table: 'posts', event: '*' }, () => {
+      // Keep it simple: call your existing loader
+      refreshData();
+    });
+    return off;
+  }, [on, refreshData]);
+
+  // Mentions: recompute suggestions as the user types "@…"
   useEffect(() => {
     if (mentionQuery === null) {
       setSuggestions([]);
       return;
     }
     if (!currentUser) return;
-    const filteredUsers = users
+
+    const q = mentionQuery.toLowerCase();
+    const filtered = users
       .filter(
         (user) =>
           user.id !== currentUser.id &&
-          (user.username?.toLowerCase().includes(mentionQuery.toLowerCase()) ||
-            user.name?.toLowerCase().includes(mentionQuery.toLowerCase()))
+          (user.username?.toLowerCase().includes(q) ||
+            user.name?.toLowerCase().includes(q))
       )
       .slice(0, 5);
-    setSuggestions(filteredUsers as User[]);
+
+    setSuggestions(filtered as User[]);
   }, [mentionQuery, users, currentUser]);
 
-  // ✅ Memoize feed posts so sort/filter recalcs only on change
+  // Efficiently compute the feed list
   const feedPosts = useMemo(() => {
     if (!currentUser) return [];
     const base = isMasterUser
       ? posts
       : posts.filter(
-          (post) =>
+          (post: any) =>
             currentUser.friendIds.includes(post.authorId) ||
             post.authorId === currentUser.id
         );
+
     return base
-      .filter((post) => !currentUser.blockedUserIds?.includes(post.authorId))
+      .filter((post: any) => !currentUser.blockedUserIds?.includes(post.authorId))
       .sort(
-        (a, b) =>
+        (a: any, b: any) =>
           new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
   }, [posts, isMasterUser, currentUser]);
@@ -89,7 +106,8 @@ const Feed: React.FC = () => {
     const shareUrl = window.location.origin;
     const shareData = {
       title: 'CreatorsOnly',
-      text: 'Join me on CreatorsOnly, the platform for creators to connect, collaborate, and grow!',
+      text:
+        'Join me on CreatorsOnly, the platform for creators to connect, collaborate, and grow!',
       url: shareUrl,
     };
     try {
@@ -112,6 +130,7 @@ const Feed: React.FC = () => {
       addPost(newPostContent, newPostImage || undefined);
       setNewPostContent('');
       setNewPostImage(null);
+      setMentionQuery(null);
     }
   };
 
@@ -120,7 +139,7 @@ const Feed: React.FC = () => {
       const file = e.target.files[0];
       const reader = new FileReader();
       reader.onload = (event) => {
-        setNewPostImage(event.target?.result as string);
+        setNewPostImage((event.target?.result as string) || null);
       };
       reader.readAsDataURL(file);
     }
@@ -130,10 +149,9 @@ const Feed: React.FC = () => {
     const text = e.target.value;
     setNewPostContent(text);
 
-    const caretPos = e.target.selectionStart;
+    const caretPos = e.target.selectionStart || 0;
     const textBeforeCaret = text.substring(0, caretPos);
     const atMatch = textBeforeCaret.match(/@(\w+)$/);
-
     if (atMatch) {
       setMentionQuery(atMatch[1]);
     } else {
@@ -146,147 +164,169 @@ const Feed: React.FC = () => {
     if (!textarea) return;
 
     const text = textarea.value;
-    const caretPos = textarea.selectionStart;
-
+    const caretPos = textarea.selectionStart || 0;
     const textBeforeCaret = text.substring(0, caretPos);
     const atMatch = textBeforeCaret.match(/@(\w+)$/);
 
     if (atMatch) {
-      const mentionStartIndex = atMatch.index || 0;
+      const mentionStartIndex = atMatch.index ?? 0;
+      const injected = `@${username} `;
       const newText =
-        text.substring(0, mentionStartIndex) +
-        `@${username} ` +
-        text.substring(caretPos);
+        text.substring(0, mentionStartIndex) + injected + text.substring(caretPos);
       setNewPostContent(newText);
 
-      const newCaretPos = mentionStartIndex + `@${username} `.length;
+      const newCaretPos = mentionStartIndex + injected.length;
       setTimeout(() => {
         textarea.focus();
         textarea.setSelectionRange(newCaretPos, newCaretPos);
       }, 0);
     }
+
     setMentionQuery(null);
   };
 
   return (
-    <div className="w-full">
-      <header className="app-header flex items-center space-x-4">
-        {history.length > 1 && (
-          <button
-            onClick={goBack}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              goBack();
-            }}
-            aria-label="Go back"
-            className="text-text-secondary hover:text-primary p-2 rounded-full -ml-2"
-          >
-            {ICONS.arrowLeft}
-          </button>
-        )}
-        <div className="flex-grow flex items-center space-x-4">
-          {/* Mobile & Tablet Title */}
-          <h1 className="text-xl font-bold text-primary lg:hidden">CreatorsOnly</h1>
-          {/* Desktop Title */}
-          <h1 className="hidden lg:block text-xl font-bold">Home</h1>
-          {isMasterUser && (
-            <span className="text-xs font-bold bg-accent-blue text-white px-2 py-1 rounded-full">
-              Master Profile
-            </span>
-          )}
-        </div>
-        <div className="flex-shrink-0 flex items-center space-x-4 md:hidden">
-          <button
-            onClick={handleShareApp}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              handleShareApp();
-            }}
-            aria-label="Share App"
-          >
-            {copied ? ICONS.copy : ICONS.share}
-          </button>
-          <button
-            onClick={() => navigate('search')}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              navigate('search');
-            }}
-            aria-label="Search"
-          >
-            {ICONS.search}
-          </button>
-          <button
-            onClick={() => navigate('notifications')}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              navigate('notifications');
-            }}
-            aria-label="Notifications"
-            className="relative"
-          >
-            {ICONS.notifications}
-            {hasOtherNotifications && (
-              <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-accent-red ring-2 ring-background" />
-            )}
-          </button>
-        </div>
-      </header>
-      <div className="relative">
+    <div className="min-h-screen w-full">
+      {/* Pull-to-refresh area */}
+      <div {...handlers} className="w-full">
         <PullToRefreshIndicator
-          isRefreshing={isRefreshing}
-          pullDistance={pullDistance}
+          distance={pullDistance}
+          pulling={isPulling}
+          refreshing={isRefreshing}
         />
-        <div
-          {...handlers}
-          style={{
-            transform: `translateY(${isRefreshing ? 60 : pullDistance}px)`,
-            transition: isPulling ? 'none' : 'transform 0.3s ease-out',
-          }}
-        >
-          <div className="p-4 border-b border-surface-light">
-            <div className="flex space-x-4">
-              <img
-                src={currentUser.avatar}
-                alt="Your avatar"
-                className="w-12 h-12 rounded-full cursor-pointer"
-                onClick={() => viewProfile(currentUser.id)}
-                onTouchStart={() => viewProfile(currentUser.id)}
-              />
-              <div className="flex-1 relative">
-                <textarea
-                  ref={newPostTextAreaRef}
-                  placeholder="What's happening? Mention others with @"
-                  className="w-full bg-transparent text-xl placeholder-text-secondary focus:outline-none resize-none"
-                  rows={2}
-                  value={newPostContent}
-                  onChange={handleContentChange}
-                  onBlur={() => setTimeout(() => setMentionQuery(null), 200)}
-                />
-                {suggestions.length > 0 && (
-                  <div className="absolute top-full left-0 w-full bg-surface rounded-md shadow-lg border border-surface-light mt-1 z-10 max-h-48 overflow-y-auto">
-                    {suggestions.map((user) => (
-                      <div
-                        key={user.id}
-                        onClick={() => handleSelectMention(user.username)}
-                        onTouchStart={() => handleSelectMention(user.username)}
-                        className="flex items-center space-x-3 p-2 hover:bg-surface-light cursor-pointer"
-                      >
-                        <img
-                          src={user.avatar}
-                          alt={user.name}
-                          className="w-8 h-8 rounded-full"
-                        />
-                        <div>
-                          <p className="font-bold text-sm">{user.name}</p>
-                          <p className="text-xs text-text-secondary">
-                            @{user.username}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+
+        <div className="px-4 md:px-6 py-4 max-w-2xl mx-auto">
+          {/* Header */}
+          <div className="flex items-center gap-2 mb-4">
+            {history.length > 1 && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  goBack();
+                }}
+                aria-label="Go back"
+                className="text-text-secondary hover:text-primary p-2 rounded-full -ml-2"
+              >
+                {ICONS.arrowLeft}
+              </button>
+            )}
+
+            {/* Titles */}
+            <div className="flex items-baseline gap-2">
+              <h1 className="text-xl font-extrabold md:hidden">CreatorsOnly</h1>
+              <h1 className="hidden md:block text-2xl font-extrabold">Home</h1>
+              {isMasterUser && (
+                <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/30">
+                  Master Profile
+                </span>
+              )}
+            </div>
+
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleShareApp();
+                }}
+                aria-label="Share App"
+                className="p-2 rounded-full hover:bg-surface-light"
+                title="Share"
+              >
+                {copied ? ICONS.copy : ICONS.share}
+              </button>
+
+              <button
+                onClick={() => navigate('search')}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  navigate('search');
+                }}
+                aria-label="Search"
+                className="p-2 rounded-full hover:bg-surface-light"
+                title="Search"
+              >
+                {ICONS.search}
+              </button>
+
+              <button
+                onClick={() => navigate('notifications')}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  navigate('notifications');
+                }}
+                aria-label="Notifications"
+                className="relative p-2 rounded-full hover:bg-surface-light"
+                title="Notifications"
+              >
+                {ICONS.notifications}
+                {hasOtherNotifications && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-primary ring-2 ring-surface" />
                 )}
+              </button>
+
+              {currentUser && (
+                <button
+                  onClick={() => viewProfile(currentUser.id)}
+                  onTouchStart={() => viewProfile(currentUser.id)}
+                  aria-label="Your profile"
+                  className="p-1.5 rounded-full hover:bg-surface-light"
+                  title="Profile"
+                >
+                  <img
+                    src={currentUser.avatar}
+                    alt={currentUser.name}
+                    className="w-8 h-8 rounded-full object-cover"
+                  />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Composer */}
+          <div className="rounded-xl border border-surface-light bg-surface p-4 mb-6">
+            <div className="flex gap-3">
+              <img
+                src={currentUser?.avatar}
+                alt={currentUser?.name || 'You'}
+                className="w-10 h-10 rounded-full object-cover"
+                onClick={() => currentUser && viewProfile(currentUser.id)}
+                onTouchStart={() => currentUser && viewProfile(currentUser.id)}
+              />
+              <div className="flex-1">
+                <div className="relative">
+                  <textarea
+                    ref={newPostTextAreaRef}
+                    value={newPostContent}
+                    onChange={handleContentChange}
+                    placeholder="Share something… @mention people"
+                    className="w-full bg-surface-light rounded-lg p-3 min-h-[84px] focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                  {/* Mention dropdown */}
+                  {suggestions.length > 0 && (
+                    <div className="absolute top-full left-0 w-full bg-surface rounded-md shadow-lg border border-surface-light mt-1 z-10 max-h-48 overflow-y-auto">
+                      {suggestions.map((user) => (
+                        <div
+                          key={user.id}
+                          onClick={() => handleSelectMention(user.username)}
+                          onTouchStart={() => handleSelectMention(user.username)}
+                          className="flex items-center space-x-3 p-2 hover:bg-surface-light cursor-pointer"
+                        >
+                          <img
+                            src={user.avatar}
+                            alt={user.name}
+                            className="w-8 h-8 rounded-full"
+                          />
+                          <div>
+                            <p className="font-bold text-sm">{user.name}</p>
+                            <p className="text-xs text-text-secondary">@{user.username}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Image preview */}
                 {newPostImage && (
                   <div className="mt-2 relative">
                     <img
@@ -307,6 +347,7 @@ const Feed: React.FC = () => {
                     </button>
                   </div>
                 )}
+
                 <div className="flex justify-between items-center mt-2">
                   <input
                     type="file"
@@ -343,18 +384,16 @@ const Feed: React.FC = () => {
             </div>
           </div>
 
+          {/* Feed list */}
           <div>
             {isLoadingPosts || isLoadingProfiles ? (
               <div className="p-8 text-center text-text-secondary">Loading feed…</div>
             ) : feedPosts.length > 0 ? (
-              feedPosts.map((post) => <PostCard key={post.id} post={post} />)
+              feedPosts.map((post: any) => <PostCard key={post.id} post={post} />)
             ) : (
               <div className="p-8 text-center text-text-secondary">
                 <h2 className="text-xl font-bold mb-2">Your Feed is Quiet</h2>
-                <p>
-                  Posts from your friends will appear here. Go to the Explore page
-                  to find new creators to connect with!
-                </p>
+                <p>Posts from your friends will appear here. Go to the Explore page to find new creators to connect with!</p>
               </div>
             )}
           </div>
