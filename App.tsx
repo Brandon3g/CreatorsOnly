@@ -700,7 +700,6 @@ const AppContent: React.FC = () => {
   }
 
   if (!isAuthenticated) {
-    // Keep hash in sync with the auth pages
     if (typeof window !== 'undefined') {
       const h = window.location.hash.toLowerCase();
       if (
@@ -712,8 +711,8 @@ const AppContent: React.FC = () => {
         window.location.hash = '#/Login';
       }
     }
+    // Wrap auth pages so useAppContext() is available inside Login
     return (
-      // IMPORTANT: Wrap auth pages in AppProvider so useAppContext() is available to Login.
       <AppProvider>
         <AuthPagesRouter />
       </AppProvider>
@@ -828,7 +827,6 @@ const AuthPagesRouter: React.FC = () => {
   const sendResetLink = async (email: string) => {
     const redirectTo = `${location.origin}/#/NewPassword`;
     return supabase.auth.resetPasswordForEmail(email, { redirectTo });
-    // Supabase will create a temporary session and redirect back to NewPassword
   };
 
   if (lower.includes('signup')) return <SignUp />;
@@ -903,15 +901,8 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 const AppWrapper: React.FC = () => {
   useThemeBoot();
 
-  // Normalize Supabase implicit hash tokens once parsed
-  useEffect(() => {
-    const h = window.location.hash;
-    if (/access_token=|refresh_token=/.test(h)) {
-      const keepNewPassword = h.toLowerCase().includes('/newpassword');
-      const clean = keepNewPassword ? '#/NewPassword' : '#/Login';
-      setTimeout(() => history.replaceState(null, '', `${location.origin}/${clean}`), 0);
-    }
-  }, []);
+  // IMPORTANT: Do NOT strip tokens here.
+  // NewPassword.tsx now reads tokens from the hash and then cleans the URL itself.
 
   return (
     <ErrorBoundary>
