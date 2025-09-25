@@ -465,10 +465,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return false;
   };
 
+  // ✅ UPDATED: also sign out from Supabase so refresh doesn't auto-login
   const logout = () => {
-    setAuthData({ userId: null });
-    setHistory([{ page: 'feed', context: {} }]);
-    trackEvent('logout', { userId: currentUser?.id, via: 'demo' });
+    try {
+      // fire-and-forget; our onAuthStateChange will also clear local state
+      supabase.auth.signOut().catch((e) => console.warn('[logout] supabase signOut error:', e));
+    } finally {
+      setAuthData({ userId: null });
+      setHistory([{ page: 'feed', context: {} }]);
+      trackEvent('logout', { userId: currentUser?.id, via: 'app_context' });
+    }
   };
 
   // --- Password reset (real; Supabase) ------------------------------------
