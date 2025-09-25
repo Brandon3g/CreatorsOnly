@@ -1,122 +1,146 @@
-// pages/Login.tsx
-import React, { useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
+// src/pages/Login.tsx
+import React, { useState, useEffect } from 'react';
+import { useAppContext } from '../context/AppContext';
+import { ICONS } from '../constants';
 
-type Props = { onForgotPassword: () => void };
-
-async function waitForSession(timeoutMs = 1500): Promise<boolean> {
-  const start = Date.now();
-  const first = await supabase.auth.getSession();
-  if (first.data.session) return true;
-  while (Date.now() - start < timeoutMs) {
-    await new Promise(r => setTimeout(r, 120));
-    const { data } = await supabase.auth.getSession();
-    if (data.session) return true;
-  }
-  return false;
+interface LoginProps {
+  onForgotPassword: () => void;
 }
 
-const Login: React.FC<Props> = ({ onForgotPassword }) => {
-  const [email, setEmail] = useState('');
+const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
+  const { login, isAuthenticated } = useAppContext();
+
+  const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>('');
+  const [showPw, setShowPw] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // If we somehow get here while already authenticated, just send to feed.
+  useEffect(() => {
+    if (isAuthenticated && typeof window !== 'undefined') {
+      window.location.hash = '#/Feed';
+    }
+  }, [isAuthenticated]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setPending(true);
+    setError(null);
+
+    const u = usernameOrEmail.trim();
+    const p = password;
+
+    if (!u || !p) {
+      setError('Please enter both your username/email and password.');
+      return;
+    }
+
+    setSubmitting(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (error) throw error;
-
-      const ok = await waitForSession(2000);
-      if (!ok) throw new Error('Auth session not established yet. Please try again.');
-
-      location.replace('/#/Feed?fresh=' + Date.now());
+      const ok = await Promise.resolve(login(u, p));
+      if (!ok) {
+        setError('Invalid credentials. Double-check and try again.');
+        return;
+      }
+      // AppContext will flip isAuthenticated -> App routes will take over
     } catch (err: any) {
-      setError(err?.message ?? 'Login failed. Please try again.');
+      console.error('[Login] unexpected error:', err);
+      setError('Something went wrong while signing you in.');
     } finally {
-      setPending(false);
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background">
-      <div className="w-full max-w-md p-8 space-y-8 bg-surface rounded-2xl shadow-lg">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-primary">CreatorsOnly</h1>
-          <p className="mt-2 text-text-secondary">A community for Creators</p>
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <div className="w-full max-w-md bg-surface border border-surface-light rounded-2xl p-6 shadow-lg">
+        <div className="flex items-center justify-center mb-6">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 grid place-items-center text-primary">
+            {ICONS.camera}
+          </div>
         </div>
 
-        <form className="space-y-6" onSubmit={handleLogin} noValidate>
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="email-login" className="sr-only">Email</label>
+        <h1 className="text-xl font-bold text-center mb-1">Welcome back</h1>
+        <p className="text-center text-text-secondary mb-6">
+          Sign in to continue to CreatorsOnly
+        </p>
+
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div>
+            <label className="block text-sm text-text-secondary mb-1">
+              Username or Email
+            </label>
+            <input
+              type="text"
+              inputMode="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              autoComplete="username"
+              value={usernameOrEmail}
+              onChange={(e) => setUsernameOrEmail(e.target.value)}
+              className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="e.g. elena or elena@example.com"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-text-secondary mb-1">
+              Password
+            </label>
+            <div className="relative">
               <input
-                id="email-login"
-                type="email"
-                required
-                autoComplete="email"
-                inputMode="email"
-                className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-t-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
-                placeholder="Email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-            <div>
-              <label htmlFor="password-login" className="sr-only">Password</label>
-              <input
-                id="password-login"
-                type="password"
-                required
+                type={showPw ? 'text' : 'password'}
                 autoComplete="current-password"
-                className="appearance-none rounded-none relative block w-full px-3 py-3 border border-surface-light bg-surface-light placeholder-text-secondary text-text-primary rounded-b-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary sm:text-sm"
-                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="••••••••"
               />
+              <button
+                type="button"
+                onClick={() => setShowPw((s) => !s)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary"
+                aria-label={showPw ? 'Hide password' : 'Show password'}
+              >
+                {showPw ? ICONS.eyeOff ?? ICONS.close : ICONS.eye ?? ICONS.copy}
+              </button>
             </div>
           </div>
+
+          {error && (
+            <div
+              className="text-sm text-red-400 bg-red-900/20 border border-red-900/40 rounded-md px-3 py-2"
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full bg-primary text-white font-bold py-2 rounded-lg hover:bg-primary-hover disabled:opacity-60"
+          >
+            {submitting ? 'Signing in…' : 'Sign in'}
+          </button>
 
           <div className="flex items-center justify-between text-sm">
             <button
               type="button"
               onClick={onForgotPassword}
-              className="font-medium text-text-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+              className="text-primary hover:underline"
             >
-              Forgot Password?
+              Forgot password?
             </button>
-          </div>
 
-          {error && (
-            <p role="alert" className="text-sm text-accent-red text-center">{error}</p>
-          )}
-
-          <div>
-            <button
-              type="submit"
-              disabled={pending}
-              className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-full text-white bg-primary hover:bg-primary-hover disabled:opacity-60"
+            <a
+              href="#/SignUp"
+              className="text-text-secondary hover:text-text-primary"
             >
-              {pending ? 'Signing in…' : 'Log In'}
-            </button>
+              Create account
+            </a>
           </div>
         </form>
-
-        <div className="text-sm text-center">
-          <button
-            type="button"
-            onClick={() => (location.hash = '#/SignUp')}
-            className="font-medium text-text-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
-          >
-            Don’t have an account? Create one
-          </button>
-        </div>
       </div>
     </div>
   );
