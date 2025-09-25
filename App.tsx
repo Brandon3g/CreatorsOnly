@@ -767,7 +767,7 @@ const AppContent: React.FC = () => {
         <TestAuth />
       </div>
     );
-    }
+  }
 
   const renderPage = () => {
     switch (currentPage) {
@@ -920,18 +920,6 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  // Helper: did index.html mark a recovery flow recently?
-  const recoveryActive = (() => {
-    try {
-      const flag = sessionStorage.getItem('co-recovery-active');
-      const ts = Number(sessionStorage.getItem('co-recovery-ts') || 0);
-      const fresh = Date.now() - ts < 10 * 60 * 1000; // 10 minutes
-      return flag === '1' && fresh;
-    } catch {
-      return false;
-    }
-  })();
-
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -962,9 +950,8 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const lower = hash.toLowerCase();
   const isNewPasswordRoute = lower.includes('newpassword');
 
-  // ✅ New: ALWAYS show the NewPassword page on the recovery route,
-  // even if you're currently logged in (or if we detected a fresh recovery flag).
-  if (isNewPasswordRoute || recoveryActive) {
+  // ✅ Show the NewPassword page only when the route explicitly asks for it.
+  if (isNewPasswordRoute) {
     return (
       <AppProvider>
         <NewPassword />
