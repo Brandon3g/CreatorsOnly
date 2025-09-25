@@ -90,7 +90,7 @@ const requestNotificationPermission = async (
 };
 
 /* -----------------------------
-   ERROR BOUNDARY (prevents blank screen)
+   ERROR BOUNDARY (prevents total blank)
 ----------------------------- */
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
   constructor(props: { children: React.ReactNode }) {
@@ -110,7 +110,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
           <div>
             <div className="mb-3 text-3xl">😬</div>
             <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
-            <p className="text-text-secondary">Try refreshing. If this keeps happening, check the last change you made.</p>
+            <p className="text-text-secondary">Refresh the page. If it persists, revert the last change.</p>
           </div>
         </div>
       );
@@ -713,13 +713,7 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // If user is not authenticated here, redirect but DO NOT render null (prevents black screen).
-  useEffect(() => {
-    if (!isAuthenticated) {
-      window.location.hash = '#/Login';
-    }
-  }, [isAuthenticated]);
-
+  // Show app content only when authenticated
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 text-center">
@@ -827,7 +821,7 @@ const AppContent: React.FC = () => {
 /* -----------------------------
    AUTH ROUTER (no providers)
 ----------------------------- */
-const AuthPagesRouter: React.FC<{}> = () => {
+const AuthPagesRouter: React.FC = () => {
   const [hash, setHash] = useState<string>(
     typeof window !== 'undefined' ? window.location.hash : ''
   );
@@ -869,15 +863,53 @@ const AuthPagesRouter: React.FC<{}> = () => {
 };
 
 /* -----------------------------
+   AUTH GATE (NEW): decide which shell to show
+----------------------------- */
+const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [checking, setChecking] = useState(true);
+  const [hasSession, setHasSession] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+      setHasSession(!!data.session);
+      setChecking(false);
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      setHasSession(!!session);
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  if (checking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 text-center">
+        <p className="text-text-secondary">Checking your session…</p>
+      </div>
+    );
+  }
+
+  // If not logged in, ALWAYS show the auth router UI immediately
+  if (!hasSession) {
+    return <AuthPagesRouter />;
+  }
+
+  // Logged in -> show the full app providers + content
+  return <>{children}</>;
+};
+
+/* -----------------------------
    APP WRAPPER
 ----------------------------- */
 const AppWrapper: React.FC = () => {
   useThemeBoot();
-
-  // Helpers
-  const isAuthRoute = () =>
-    /#\/(login|forgotpassword|newpassword|signup)/i.test(location.hash || '');
-  const goToApp = () => location.replace('/#/feed'); // lowercase to match our router
 
   // Normalize Supabase implicit hash tokens once parsed
   useEffect(() => {
@@ -889,58 +921,17 @@ const AppWrapper: React.FC = () => {
     }
   }, []);
 
-  // Redirect to app as soon as a session exists (covers late arrival + fresh page loads)
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!cancelled && data.session && isAuthRoute()) goToApp();
-    })();
-
-    const t = setTimeout(async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!cancelled && data.session && isAuthRoute()) goToApp();
-    }, 400);
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      if (session && isAuthRoute()) goToApp();
-    });
-
-    return () => {
-      cancelled = true;
-      clearTimeout(t);
-      sub.subscription.unsubscribe();
-    };
-  }, []);
-
-  const [hash, setHash] = useState<string>(
-    typeof window !== 'undefined' ? window.location.hash : ''
-  );
-  useEffect(() => {
-    const onHashChange = () => setHash(window.location.hash);
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
-  const onAuthScreen = /#\/(login|forgotpassword|newpassword|signup)/i.test(hash);
-
-  if (onAuthScreen) {
-    return (
-      <ErrorBoundary>
-        <AuthPagesRouter />
-      </ErrorBoundary>
-    );
-  }
-
   return (
     <ErrorBoundary>
-      <AppProvider>
-        <RealtimeProvider>
-          {/* Optionally render ProfileSetup for new accounts */}
-          {/* {isRegistering && <ProfileSetup />} */}
-          <AppContent />
-        </RealtimeProvider>
-      </AppProvider>
+      <AuthGate>
+        <AppProvider>
+          <RealtimeProvider>
+            {/* Optionally render ProfileSetup for new accounts */}
+            {/* {isRegistering && <ProfileSetup />} */}
+            <AppContent />
+          </RealtimeProvider>
+        </AppProvider>
+      </AuthGate>
     </ErrorBoundary>
   );
 };
