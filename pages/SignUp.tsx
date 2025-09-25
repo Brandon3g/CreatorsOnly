@@ -8,50 +8,109 @@ type CreatorType = string;
 
 const BIO_LIMIT = 150;
 
-/** Default fallbacks if constants aren't exported */
+/** Icons from your constants */
+const ICONS = CONST.ICONS;
+
+/** Creator types + States: use repo constants if present, else fallbacks */
 const DEFAULT_CREATOR_TYPES: string[] = ['Model', 'Photographer', 'Videographer'];
-const DEFAULT_US_STATES: Array<
-  string | { code?: string; value?: string; name?: string; label?: string }
-> = [
+
+const FULL_US_STATES: Array<{ code: string; name: string }> = [
+  { code: 'AL', name: 'Alabama' },
+  { code: 'AK', name: 'Alaska' },
+  { code: 'AZ', name: 'Arizona' },
+  { code: 'AR', name: 'Arkansas' },
   { code: 'CA', name: 'California' },
-  { code: 'NY', name: 'New York' },
-  { code: 'TX', name: 'Texas' },
+  { code: 'CO', name: 'Colorado' },
+  { code: 'CT', name: 'Connecticut' },
+  { code: 'DE', name: 'Delaware' },
   { code: 'FL', name: 'Florida' },
+  { code: 'GA', name: 'Georgia' },
+  { code: 'HI', name: 'Hawaii' },
+  { code: 'ID', name: 'Idaho' },
+  { code: 'IL', name: 'Illinois' },
+  { code: 'IN', name: 'Indiana' },
+  { code: 'IA', name: 'Iowa' },
+  { code: 'KS', name: 'Kansas' },
+  { code: 'KY', name: 'Kentucky' },
+  { code: 'LA', name: 'Louisiana' },
+  { code: 'ME', name: 'Maine' },
+  { code: 'MD', name: 'Maryland' },
+  { code: 'MA', name: 'Massachusetts' },
+  { code: 'MI', name: 'Michigan' },
+  { code: 'MN', name: 'Minnesota' },
+  { code: 'MS', name: 'Mississippi' },
+  { code: 'MO', name: 'Missouri' },
+  { code: 'MT', name: 'Montana' },
+  { code: 'NE', name: 'Nebraska' },
+  { code: 'NV', name: 'Nevada' },
+  { code: 'NH', name: 'New Hampshire' },
+  { code: 'NJ', name: 'New Jersey' },
+  { code: 'NM', name: 'New Mexico' },
+  { code: 'NY', name: 'New York' },
+  { code: 'NC', name: 'North Carolina' },
+  { code: 'ND', name: 'North Dakota' },
+  { code: 'OH', name: 'Ohio' },
+  { code: 'OK', name: 'Oklahoma' },
+  { code: 'OR', name: 'Oregon' },
+  { code: 'PA', name: 'Pennsylvania' },
+  { code: 'RI', name: 'Rhode Island' },
+  { code: 'SC', name: 'South Carolina' },
+  { code: 'SD', name: 'South Dakota' },
+  { code: 'TN', name: 'Tennessee' },
+  { code: 'TX', name: 'Texas' },
+  { code: 'UT', name: 'Utah' },
+  { code: 'VT', name: 'Vermont' },
+  { code: 'VA', name: 'Virginia' },
   { code: 'WA', name: 'Washington' },
+  { code: 'WV', name: 'West Virginia' },
+  { code: 'WI', name: 'Wisconsin' },
+  { code: 'WY', name: 'Wyoming' },
+  { code: 'DC', name: 'District of Columbia' }, // optional but handy
 ];
 
+const CREATOR_TYPES_LIST =
+  Array.isArray((CONST as any).CREATOR_TYPES) && (CONST as any).CREATOR_TYPES.length
+    ? ((CONST as any).CREATOR_TYPES as string[])
+    : DEFAULT_CREATOR_TYPES;
+
+const US_STATES_LIST =
+  Array.isArray((CONST as any).US_STATES) && (CONST as any).US_STATES.length
+    ? ((CONST as any).US_STATES as Array<{ code?: string; value?: string; name?: string; label?: string }>)
+        .map((s) =>
+          typeof s === 'string'
+            ? { code: s, name: s }
+            : { code: (s.code || s.value) as string, name: (s.name || s.label) as string }
+        )
+    : FULL_US_STATES;
+
 /**
- * County mapping (scoped locally to this page).
- * County select is disabled when a state has no entry here.
- * CA provided fully so the flow is functional immediately.
+ * FIPS → state abbreviation mapping for Census responses.
+ * (Census returns two-digit FIPS state codes as strings.)
  */
-const COUNTIES_BY_STATE: Record<string, string[]> = {
+const STATE_ABBR_BY_FIPS: Record<string, string> = {
+  '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT',
+  '10': 'DE', '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL',
+  '18': 'IN', '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME', '24': 'MD',
+  '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS', '29': 'MO', '30': 'MT', '31': 'NE',
+  '32': 'NV', '33': 'NH', '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND',
+  '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI', '45': 'SC', '46': 'SD',
+  '47': 'TN', '48': 'TX', '49': 'UT', '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV',
+  '55': 'WI', '56': 'WY',
+};
+
+/** Small local fallback so the selector still works offline */
+const LOCAL_FALLBACK_COUNTIES: Record<string, string[]> = {
   CA: [
     'Alameda', 'Alpine', 'Amador', 'Butte', 'Calaveras', 'Colusa', 'Contra Costa', 'Del Norte',
     'El Dorado', 'Fresno', 'Glenn', 'Humboldt', 'Imperial', 'Inyo', 'Kern', 'Kings', 'Lake',
     'Lassen', 'Los Angeles', 'Madera', 'Marin', 'Mariposa', 'Mendocino', 'Merced', 'Modoc',
-    'Mono', 'Monterey', 'Napa', 'Nevada', 'Orange', 'Placer', 'Plumas', 'Riverside', 'Sacramento',
-    'San Benito', 'San Bernardino', 'San Diego', 'San Francisco', 'San Joaquin',
+    'Mono', 'Monterey', 'Napa', 'Nevada', 'Orange', 'Placer', 'Plumas', 'Riverside',
+    'Sacramento', 'San Benito', 'San Bernardino', 'San Diego', 'San Francisco', 'San Joaquin',
     'San Luis Obispo', 'San Mateo', 'Santa Barbara', 'Santa Clara', 'Santa Cruz', 'Shasta',
     'Sierra', 'Siskiyou', 'Solano', 'Sonoma', 'Stanislaus', 'Sutter', 'Tehama', 'Trinity',
     'Tulare', 'Tuolumne', 'Ventura', 'Yolo', 'Yuba',
   ],
-  // Add more states as needed later (NY, TX, FL, etc.)
 };
-
-// Pull from constants if available; otherwise use fallbacks.
-const ICONS = CONST.ICONS;
-const CREATOR_TYPES_LIST =
-  (Array.isArray((CONST as any).CREATOR_TYPES) && (CONST as any).CREATOR_TYPES.length
-    ? (CONST as any).CREATOR_TYPES
-    : DEFAULT_CREATOR_TYPES) as string[];
-
-const US_STATES_LIST =
-  (Array.isArray((CONST as any).US_STATES) && (CONST as any).US_STATES.length
-    ? (CONST as any).US_STATES
-    : DEFAULT_US_STATES) as Array<
-    string | { code?: string; value?: string; name?: string; label?: string }
-  >;
 
 const SignUp: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -66,12 +125,70 @@ const SignUp: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
-  const countyOptions = useMemo<string[]>(
-    () => (stateCode ? COUNTIES_BY_STATE[stateCode] || [] : []),
-    [stateCode]
+  /** Dynamic counties map, populated from Census API */
+  const [countiesByState, setCountiesByState] = useState<Record<string, string[]>>(
+    LOCAL_FALLBACK_COUNTIES
   );
 
+  // Fetch all U.S. counties (parishes/boroughs) and group by state abbreviation.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // NAME + for=county:* returns: ["NAME","state","county"] header then rows.
+        const url =
+          'https://api.census.gov/data/2023/pep/population?get=NAME&for=county:*';
+        const res = await fetch(url, { cache: 'force-cache' });
+        if (!res.ok) throw new Error(`Census API ${res.status}`);
+        const data: string[][] = await res.json();
+        if (!Array.isArray(data) || data.length < 2) throw new Error('Bad Census response');
+
+        const header = data[0].map((h) => h.toLowerCase());
+        const nameIdx = header.indexOf('name');
+        const stateIdx = header.indexOf('state');
+        if (nameIdx === -1 || stateIdx === -1) throw new Error('Unexpected header');
+
+        const map: Record<string, string[]> = {};
+
+        for (let i = 1; i < data.length; i++) {
+          const row = data[i];
+          const stateFips = row[stateIdx].padStart(2, '0');
+          const abbr = STATE_ABBR_BY_FIPS[stateFips];
+          if (!abbr) continue;
+
+          // "Autauga County, Alabama" -> "Autauga County"
+          // "Aleutians East Borough, Alaska" -> "Aleutians East Borough"
+          // "Fairfax city, Virginia" -> "Fairfax city"
+          const name = (row[nameIdx] || '').replace(/,.*$/, '').trim();
+          if (!name) continue;
+
+          if (!map[abbr]) map[abbr] = [];
+          map[abbr].push(name);
+        }
+
+        // sort each list for UX
+        Object.keys(map).forEach((k) => map[k].sort((a, b) => a.localeCompare(b)));
+
+        if (!cancelled) {
+          setCountiesByState((prev) => ({ ...prev, ...map }));
+        }
+      } catch (err) {
+        console.warn('[SignUp] county load failed, using fallback', err);
+        // keep LOCAL_FALLBACK_COUNTIES only
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // reset county when state changes
   useEffect(() => setCounty(''), [stateCode]);
+
+  const countyOptions = useMemo(
+    () => (stateCode ? countiesByState[stateCode] || [] : []),
+    [stateCode, countiesByState]
+  );
 
   const toggleType = (t: CreatorType) => {
     setTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
@@ -274,17 +391,11 @@ const SignUp: React.FC = () => {
                 className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="">Select State</option>
-                {US_STATES_LIST.map((s: any) =>
-                  typeof s === 'string' ? (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ) : (
-                    <option key={s.code || s.value} value={s.code || s.value}>
-                      {s.name || s.label}
-                    </option>
-                  )
-                )}
+                {US_STATES_LIST.map((s) => (
+                  <option key={s.code} value={s.code}>
+                    {s.name}
+                  </option>
+                ))}
               </select>
 
               <select
