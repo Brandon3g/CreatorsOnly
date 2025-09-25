@@ -1,5 +1,5 @@
 // src/pages/SignUp.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import * as CONST from '../constants';
 import { trackEvent } from '../services/analytics';
@@ -18,7 +18,7 @@ const CREATOR_TYPES_LIST =
     ? ((CONST as any).CREATOR_TYPES as string[])
     : DEFAULT_CREATOR_TYPES;
 
-/** Canonical 50 states + DC with USPS codes (we’ll always use codes to match county data) */
+/** Canonical 50 states + DC with USPS codes (we always use codes to match county data) */
 const US_STATES_LIST: Array<{ code: string; name: string }> = [
   { code: 'AL', name: 'Alabama' },
   { code: 'AK', name: 'Alaska' },
@@ -73,7 +73,7 @@ const US_STATES_LIST: Array<{ code: string; name: string }> = [
   { code: 'DC', name: 'District of Columbia' },
 ];
 
-/** FIPS → state abbreviation mapping used by the Census API response */
+/** FIPS ↔ USPS code mapping for Census responses */
 const STATE_ABBR_BY_FIPS: Record<string, string> = {
   '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT',
   '10': 'DE', '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL',
@@ -84,8 +84,11 @@ const STATE_ABBR_BY_FIPS: Record<string, string> = {
   '47': 'TN', '48': 'TX', '49': 'UT', '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV',
   '55': 'WI', '56': 'WY',
 };
+const FIPS_BY_STATE_ABBR: Record<string, string> = Object.fromEntries(
+  Object.entries(STATE_ABBR_BY_FIPS).map(([fips, abbr]) => [abbr, fips])
+);
 
-/** Local fallback so the selector still works offline */
+/** Small local fallback so the selector still works without network (CA only) */
 const LOCAL_FALLBACK_COUNTIES: Record<string, string[]> = {
   CA: [
     'Alameda', 'Alpine', 'Amador', 'Butte', 'Calaveras', 'Colusa', 'Contra Costa', 'Del Norte',
@@ -98,6 +101,51 @@ const LOCAL_FALLBACK_COUNTIES: Record<string, string[]> = {
     'Tulare', 'Tuolumne', 'Ventura', 'Yolo', 'Yuba',
   ],
 };
+
+/** Robust per-state Census fetch with multiple dataset fallbacks */
+async function fetchCountiesForState(abbr: string, signal?: AbortSignal): Promise<string[]> {
+  const fips = FIPS_BY_STATE_ABBR[abbr];
+  if (!fips) return [];
+
+  // Preferred -> fallback datasets (all expose NAME, state + county)
+  const SOURCES = [
+    '2023/pep/population',
+    '2022/pep/population',
+    '2021/pep/population',
+    '2020/pep/population',
+    '2019/pep/population',
+    '2019/acs/acs5',
+  ];
+
+  // try each dataset until success
+  for (const src of SOURCES) {
+    try {
+      const url = `https://api.census.gov/data/${src}?get=NAME&for=county:*&in=state:${fips}`;
+      const res = await fetch(url, { signal, cache: 'force-cache' });
+      if (!res.ok) continue;
+
+      const rows: string[][] = await res.json();
+      if (!Array.isArray(rows) || rows.length < 2) continue;
+
+      const header = rows[0].map((h) => h.toLowerCase());
+      const nameIdx = header.indexOf('name');
+      if (nameIdx === -1) continue;
+
+      const names = rows
+        .slice(1)
+        .map((r) => (r[nameIdx] || '').replace(/,.*$/, '').trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+
+      if (names.length) return names;
+    } catch {
+      // try next source
+    }
+  }
+
+  // final fallback (offline seed for CA)
+  return LOCAL_FALLBACK_COUNTIES[abbr] ?? [];
+}
 
 const SignUp: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -112,66 +160,51 @@ const SignUp: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
-  /** Counties map, populated from Census API (fallback seeded with CA) */
-  const [countiesByState, setCountiesByState] = useState<Record<string, string[]>>(
+  // cache counties per state and track loading/errors per state
+  const [countiesCache, setCountiesCache] = useState<Record<string, string[]>>(
     LOCAL_FALLBACK_COUNTIES
   );
-  const [countiesLoaded, setCountiesLoaded] = useState(false);
+  const [loadingState, setLoadingState] = useState<string | null>(null);
+  const [countyError, setCountyError] = useState<string | null>(null);
+  const fetchAbortRef = useRef<AbortController | null>(null);
 
-  // Fetch all U.S. counties/boroughs/parishes once and group by state code.
+  // Reset county when state changes and kick off fetch if needed
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const url = 'https://api.census.gov/data/2023/pep/population?get=NAME&for=county:*';
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`Census API ${res.status}`);
-        const rows: string[][] = await res.json();
+    setCounty('');
+    setCountyError(null);
 
-        const header = rows[0].map((h) => h.toLowerCase());
-        const nameIdx = header.indexOf('name');
-        const stateIdx = header.indexOf('state');
-        if (nameIdx === -1 || stateIdx === -1) throw new Error('Unexpected header');
+    if (!stateCode) return;
 
-        const next: Record<string, string[]> = {};
+    // already cached?
+    if (countiesCache[stateCode]?.length) return;
 
-        for (let i = 1; i < rows.length; i++) {
-          const row = rows[i];
-          const stateFips = row[stateIdx]?.toString().padStart(2, '0');
-          const code = STATE_ABBR_BY_FIPS[stateFips];
-          if (!code) continue;
+    // cancel in-flight request
+    fetchAbortRef.current?.abort();
 
-          // "X County, State" / "Y Borough, Alaska" / "Z Parish, Louisiana" / "Fairfax city, Virginia"
-          const label = (row[nameIdx] || '').replace(/,.*$/, '').trim();
-          if (!label) continue;
+    const ac = new AbortController();
+    fetchAbortRef.current = ac;
 
-          if (!next[code]) next[code] = [];
-          next[code].push(label);
+    setLoadingState(stateCode);
+    fetchCountiesForState(stateCode, ac.signal)
+      .then((list) => {
+        setCountiesCache((prev) => ({ ...prev, [stateCode]: list }));
+        if (!list.length) {
+          setCountyError('No counties were returned for this state.');
         }
+      })
+      .catch(() => {
+        setCountyError('Failed to load counties. Try again.');
+      })
+      .finally(() => {
+        setLoadingState((prev) => (prev === stateCode ? null : prev));
+      });
 
-        // Sort for UX
-        for (const k of Object.keys(next)) next[k].sort((a, b) => a.localeCompare(b));
-
-        if (!cancelled) {
-          setCountiesByState((prev) => ({ ...prev, ...next }));
-          setCountiesLoaded(true);
-        }
-      } catch (err) {
-        console.warn('[SignUp] county load failed, using fallback only', err);
-        if (!cancelled) setCountiesLoaded(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Reset county when state changes
-  useEffect(() => setCounty(''), [stateCode]);
+    return () => ac.abort();
+  }, [stateCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const countyOptions = useMemo(
-    () => (stateCode ? countiesByState[stateCode] || [] : []),
-    [stateCode, countiesByState]
+    () => (stateCode ? countiesCache[stateCode] || [] : []),
+    [stateCode, countiesCache]
   );
 
   const toggleType = (t: CreatorType) => {
@@ -385,25 +418,52 @@ const SignUp: React.FC = () => {
               <select
                 value={county}
                 onChange={(e) => setCounty(e.target.value)}
-                disabled={!stateCode || (!countiesLoaded && !countiesByState[stateCode]) || (countiesLoaded && (countiesByState[stateCode]?.length ?? 0) === 0)}
+                disabled={
+                  !stateCode ||
+                  loadingState === stateCode ||
+                  (countiesCache[stateCode]?.length ?? 0) === 0
+                }
                 className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
               >
                 <option value="">
                   {!stateCode
                     ? 'Select State first'
-                    : !countiesLoaded && !countiesByState[stateCode]
+                    : loadingState === stateCode
                     ? 'Loading counties…'
-                    : (countiesByState[stateCode]?.length ?? 0) > 0
+                    : (countiesCache[stateCode]?.length ?? 0) > 0
                     ? 'Select County'
+                    : countyError
+                    ? 'No counties found'
                     : 'No counties found'}
                 </option>
-                {(countiesByState[stateCode] || []).map((c) => (
+                {(countiesCache[stateCode] || []).map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
                 ))}
               </select>
             </div>
+
+            {countyError && stateCode && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-xs text-red-300">{countyError}</span>
+                <button
+                  type="button"
+                  onPointerUp={() => {
+                    // force refetch
+                    setCountiesCache((prev) => {
+                      const { [stateCode]: _, ...rest } = prev;
+                      return rest as Record<string, string[]>;
+                    });
+                    setCountyError(null);
+                    setStateCode(stateCode); // trigger effect again
+                  }}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Bio */}
