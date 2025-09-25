@@ -625,7 +625,6 @@ const AppContent: React.FC = () => {
   const {
     currentPage,
     viewingProfileId,
-    // isAuthenticated,  // no longer gating here
     registerScrollableNode,
     currentUser,
     history,
@@ -645,8 +644,81 @@ const AppContent: React.FC = () => {
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
   const [toastNotification, setToastNotification] = useState<Notification | null>(null);
 
+  const [waited, setWaited] = useState(false);
+
   const editingCollab = collaborations.find((c) => c.id === editingCollaborationId);
   const isEditCollabModalOpen = !!editingCollab;
+
+  useEffect(() => {
+    if (mainContentRef.current) registerScrollableNode(mainContentRef.current);
+  }, [registerScrollableNode]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setWaited(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const handleSocketEvent = (event: Event) => {
+      const { userId, eventName, payload } = (event as CustomEvent).detail;
+      if (userId === currentUser.id && eventName === 'notification:new') {
+        setToastNotification(payload);
+      }
+    };
+    window.addEventListener('socket-event', handleSocketEvent);
+    requestNotificationPermission(subscribeToPushNotifications);
+    return () => window.removeEventListener('socket-event', handleSocketEvent);
+  }, [currentUser, subscribeToPushNotifications]);
+
+  useLayoutEffect(() => {
+    const lastEntry = history[history.length - 1];
+    if (mainContentRef.current && lastEntry?.scrollTop !== undefined) {
+      mainContentRef.current.scrollTop = lastEntry.scrollTop;
+    }
+  }, [currentPage, viewingProfileId, history]);
+
+  // ✅ Guard: don’t render the shell until we have a profile.
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen grid place-items-center p-6 text-center">
+        <div className="max-w-md">
+          <div className="mb-4 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 grid place-items-center text-primary">
+              {ICONS.camera}
+            </div>
+          </div>
+          <h1 className="text-xl font-bold mb-2">Setting up your profile…</h1>
+          <p className="text-text-secondary">
+            We’re linking your account to your CreatorsOnly profile.
+            {waited && (
+              <>
+                {' '}
+                This is taking longer than expected — you can try refreshing, or signing out and back in.
+              </>
+            )}
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <button
+              className="px-4 py-2 rounded-lg border border-surface-light hover:bg-surface-light"
+              onClick={() => location.reload()}
+            >
+              Refresh
+            </button>
+            <button
+              className="px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary-hover"
+              onClick={async () => {
+                await supabase.auth.signOut();
+                window.location.hash = '#/Login';
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const openCreateModal = (initialTab: 'post' | 'project' = 'post') => {
     setCreateModalInitialTab(initialTab);
@@ -663,32 +735,6 @@ const AppContent: React.FC = () => {
     setIsFeedbackModalOpen(true);
     trackEvent('open_feedback_modal');
   };
-
-  useEffect(() => {
-    if (mainContentRef.current) registerScrollableNode(mainContentRef.current);
-  }, [registerScrollableNode]);
-
-  useLayoutEffect(() => {
-    const lastEntry = history[history.length - 1];
-    if (mainContentRef.current && lastEntry.scrollTop !== undefined) {
-      mainContentRef.current.scrollTop = lastEntry.scrollTop;
-    }
-  }, [currentPage, viewingProfileId, history]);
-
-  useEffect(() => {
-    if (!currentUser) return;
-
-    const handleSocketEvent = (event: Event) => {
-      const { userId, eventName, payload } = (event as CustomEvent).detail;
-      if (userId === currentUser.id && eventName === 'notification:new') {
-        setToastNotification(payload);
-      }
-    };
-
-    window.addEventListener('socket-event', handleSocketEvent);
-    requestNotificationPermission(subscribeToPushNotifications);
-    return () => window.removeEventListener('socket-event', handleSocketEvent);
-  }, [currentUser, subscribeToPushNotifications]);
 
   // Debug page: #/test-auth
   if (typeof window !== 'undefined' && window.location.hash.includes('test-auth')) {
@@ -880,9 +926,6 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 /* ----------------------------- APP WRAPPER ----------------------------- */
 const AppWrapper: React.FC = () => {
   useThemeBoot();
-
-  // Do NOT strip tokens here; NewPassword handles its own token cleanup.
-
   return (
     <ErrorBoundary>
       <AuthGate>
