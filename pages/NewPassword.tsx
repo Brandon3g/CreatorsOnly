@@ -1,206 +1,176 @@
-// pages/NewPassword.tsx
+// src/pages/NewPassword.tsx
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { ICONS } from '../constants';
 
+/**
+ * NewPassword
+ * - This page is shown after the user clicks the Supabase reset link.
+ * - The reset link temporarily signs the user in (session is in the URL).
+ * - Here we call supabase.auth.updateUser({ password }) to set a new password.
+ * - On success, we sign out that temporary session and send them back to #/Login.
+ */
 const NewPassword: React.FC = () => {
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [checking, setChecking] = useState(true);
+  const [ready, setReady] = useState(false);
+  const [pw1, setPw1] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
 
-  /** Params that appear AFTER the first hash, e.g. #/NewPassword?code=ABC */
-  function getHashQueryParams(): URLSearchParams {
-    const hash = window.location.hash || '';
-    const qIndex = hash.indexOf('?');
-    if (qIndex >= 0) {
-      return new URLSearchParams(hash.substring(qIndex + 1));
-    }
-    return new URLSearchParams('');
-  }
-
-  /** Params that appear as a SECOND hash, e.g. #/NewPassword#code=ABC or #/NewPassword#access_token=... */
-  function getSecondHashParams(): URLSearchParams | null {
-    const href = window.location.href;
-    const firstHash = href.indexOf('#');
-    if (firstHash === -1) return null;
-    const secondHash = href.indexOf('#', firstHash + 1);
-    if (secondHash === -1) return null;
-    const fragment = href.substring(secondHash + 1);
-    return new URLSearchParams(fragment);
-  }
-
+  // Basic guard: ensure the reset/session is present
   useEffect(() => {
+    let mounted = true;
     (async () => {
-      setChecking(true);
-      setError('');
-
-      // Collect params from all possible locations
-      const url = new URL(window.location.href);
-      const searchParams = url.searchParams;          // ?code=... (before hash)
-      const hashQuery = getHashQueryParams();         // #/NewPassword?code=...
-      const secondHash = getSecondHashParams();       // #/NewPassword#code=... OR #/NewPassword#access_token=...
-
-      const errDesc =
-        searchParams.get('error_description') ||
-        hashQuery.get('error_description') ||
-        secondHash?.get('error_description');
-
-      if (errDesc) {
-        setError(errDesc);
-        setChecking(false);
-        return;
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+      if (!data.session) {
+        // If no session, the link may have expired or was opened in another browser.
+        setError(
+          'This reset link is invalid or has expired. Please request a new one.'
+        );
       }
-
-      // 1) PKCE code (any location)
-      const code =
-        searchParams.get('code') ||
-        hashQuery.get('code') ||
-        secondHash?.get('code');
-
-      if (code) {
-        const { error: xErr } = await supabase.auth.exchangeCodeForSession(code);
-        if (xErr) {
-          setError('Your reset link could not be verified. Please request a new one.');
-          setChecking(false);
-          return;
-        }
-      } else {
-        // 2) Token-in-fragment (implicit) double-hash
-        const access_token = secondHash?.get('access_token') || undefined;
-        const refresh_token = secondHash?.get('refresh_token') || undefined;
-
-        if (access_token && refresh_token) {
-          const { error: sErr } = await supabase.auth.setSession({
-            access_token,
-            refresh_token,
-          });
-          if (sErr) {
-            setError('Your reset link is invalid or expired. Please request a new one.');
-            setChecking(false);
-            return;
-          }
-        }
-      }
-
-      // 3) Confirm a session exists now
-      const { data, error: sessErr } = await supabase.auth.getSession();
-      if (sessErr || !data?.session) {
-        setError('Invalid or expired reset link. Please request a new one.');
-        setChecking(false);
-        return;
-      }
-
-      setChecking(false);
+      setReady(true);
     })();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const handleReset = async (e: React.FormEvent) => {
+  const validate = () => {
+    if (pw1.length < 8) return 'Password must be at least 8 characters.';
+    if (!/[A-Za-z]/.test(pw1) || !/\d/.test(pw1))
+      return 'Use letters and at least one number.';
+    if (pw1 !== pw2) return 'Passwords do not match.';
+    return null;
+    // Adjust rules as needed (symbols, uppercase, etc.)
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    setSuccess('');
+    setError(null);
+    setMsg(null);
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters long.');
-      return;
-    }
-    if (password !== confirm) {
-      setError('Passwords do not match.');
+    const v = validate();
+    if (v) {
+      setError(v);
       return;
     }
 
-    const { error } = await supabase.auth.updateUser({ password });
-    if (error) {
-      setError(error.message || 'Could not update password. Please try again.');
-    } else {
-      setSuccess('Your password has been updated. You can now log in.');
+    setSubmitting(true);
+    try {
+      const { error: updateErr } = await supabase.auth.updateUser({
+        password: pw1,
+      });
+      if (updateErr) {
+        console.error('[NewPassword] update error:', updateErr);
+        setError(updateErr.message ?? 'Could not set your new password.');
+        return;
+      }
+
+      setMsg('Password updated! Redirecting you to sign in…');
+
+      // End the temporary recovery session
+      await supabase.auth.signOut();
+
+      // Give the UI a beat to show the success message, then send to Login.
+      setTimeout(() => {
+        window.location.hash = '#/Login';
+      }, 1200);
+    } catch (err: any) {
+      console.error('[NewPassword] unexpected:', err);
+      setError('Something went wrong while updating your password.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const goToLogin = () => {
-    window.location.hash = '#/Login';
-  };
-
-  if (checking) {
+  if (!ready) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <div className="w-full max-w-md p-8 space-y-6 bg-surface rounded-2xl shadow-lg text-center">
-          <h1 className="text-2xl font-bold text-primary">Verifying link…</h1>
-          <p className="text-text-secondary">One moment while we open your reset form.</p>
-        </div>
+      <div className="min-h-screen grid place-items-center p-6">
+        <p className="text-text-secondary">Preparing reset form…</p>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background">
-      <div className="w-full max-w-md p-8 space-y-8 bg-surface rounded-2xl shadow-lg">
-        <h1 className="text-3xl font-bold text-primary text-center">Set New Password</h1>
+    <div className="min-h-screen flex items-center justify-center px-4">
+      <div className="w-full max-w-md bg-surface border border-surface-light rounded-2xl p-6 shadow-lg">
+        <button
+          type="button"
+          onClick={() => (window.location.hash = '#/Login')}
+          className="mb-4 inline-flex items-center text-text-secondary hover:text-text-primary"
+        >
+          <span className="mr-2">{ICONS.arrowLeft}</span>
+          Back to sign in
+        </button>
 
-        {error && (
-          <div className="text-center">
-            <p className="text-red-500 mb-4">{error}</p>
-            <button
-              type="button"
-              onClick={() => { window.location.hash = '#/ForgotPassword'; }}
-              className="w-full py-3 px-4 rounded-full text-white bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-hover"
-            >
-              Request New Link
-            </button>
+        <div className="flex items-center justify-center mb-6">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 grid place-items-center text-primary">
+            {ICONS.refresh}
           </div>
-        )}
+        </div>
 
-        {!error && success && (
-          <div className="text-center">
-            <p className="text-green-600 mb-4">{success}</p>
-            <button
-              type="button"
-              onClick={goToLogin}
-              className="w-full py-3 px-4 rounded-full text-white bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-hover"
-            >
-              Back to Login
-            </button>
+        <h1 className="text-xl font-bold text-center mb-2">Set a new password</h1>
+        <p className="text-center text-text-secondary mb-6">
+          Enter and confirm your new password below.
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm text-text-secondary mb-1">
+              New password
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={pw1}
+              onChange={(e) => setPw1(e.target.value)}
+              className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="At least 8 characters"
+            />
           </div>
-        )}
 
-        {!error && !success && (
-          <form onSubmit={handleReset} className="space-y-6">
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-text-primary">
-                New Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
-              />
-            </div>
+          <div>
+            <label className="block text-sm text-text-secondary mb-1">
+              Confirm new password
+            </label>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={pw2}
+              onChange={(e) => setPw2(e.target.value)}
+              className="w-full bg-surface-light border border-surface-light rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary"
+              placeholder="Re-enter password"
+            />
+          </div>
 
-            <div>
-              <label htmlFor="confirm" className="block text-sm font-medium text-text-primary">
-                Confirm Password
-              </label>
-              <input
-                id="confirm"
-                type="password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                required
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-primary focus:ring-primary sm:text-sm"
-              />
-            </div>
-
-            <button
-              type="submit"
-              className="w-full py-3 px-4 rounded-full text-white bg-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-hover"
+          {error && (
+            <div
+              className="text-sm text-red-400 bg-red-900/20 border border-red-900/40 rounded-md px-3 py-2"
+              role="alert"
             >
-              Update Password
-            </button>
-          </form>
-        )}
+              {error}
+            </div>
+          )}
+
+          {msg && (
+            <div
+              className="text-sm text-green-300 bg-green-900/20 border border-green-900/40 rounded-md px-3 py-2"
+              role="status"
+            >
+              {msg}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full bg-primary text-white font-bold py-2 rounded-lg hover:bg-primary-hover disabled:opacity-60"
+          >
+            {submitting ? 'Updating…' : 'Update password'}
+          </button>
+        </form>
       </div>
     </div>
   );
