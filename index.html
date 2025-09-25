@@ -61,6 +61,42 @@
         } catch (e) {}
       })();
     </script>
+
+    <!-- Normalize Supabase recovery links BEFORE React boots.
+         If the URL has recovery tokens (access_token / refresh_token / type=recovery)
+         but isn't on "#/NewPassword", push it there while preserving the tokens. -->
+    <script>
+      (function () {
+        try {
+          var href = String(window.location.href || '');
+          if (href.indexOf('#') === -1) return;
+
+          // Collect params from ALL hash fragments (handles "#/NewPassword#access_token=..." and "#access_token=...")
+          var frags = href.split('#').slice(1); // everything after the first '#'
+          var hasTokens = false;
+          var hasRecoveryType = false;
+          for (var i = 0; i < frags.length; i++) {
+            var qs = new URLSearchParams(frags[i]);
+            if (qs.has('access_token') || qs.has('refresh_token')) hasTokens = true;
+            var typ = (qs.get('type') || '').toLowerCase();
+            if (typ === 'recovery') hasRecoveryType = true;
+          }
+
+          var needsNewPassword = hasTokens || hasRecoveryType;
+          var alreadyOnNewPw = /^#\/NewPassword/i.test(window.location.hash);
+
+          if (needsNewPassword && !alreadyOnNewPw) {
+            // Preserve everything after the first '#'
+            var afterFirst = href.split('#').slice(1).join('#');
+            // Replace the URL to avoid back-button loops
+            var base = window.location.origin + window.location.pathname;
+            window.location.replace(base + '#/NewPassword#' + afterFirst);
+          }
+        } catch (e) {
+          // non-fatal
+        }
+      })();
+    </script>
   </head>
 
   <body>
