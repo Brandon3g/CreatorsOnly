@@ -27,18 +27,20 @@ import ProfileSetup from './pages/ProfileSetup';
 import TestAuth from './pages/TestAuth';
 import { supabase } from './lib/supabaseClient';
 import { ICONS } from './constants';
-import type { Collaboration, User, Notification, PushSubscriptionObject } from './types';
+import type { Collaboration, Notification, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 
 /* ----------------------------- THEME ----------------------------- */
 const THEME_KEY = 'co-theme';
 type Theme = 'light' | 'dark';
+
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
   root.classList.toggle('dark', theme === 'dark');
   root.setAttribute('data-theme', theme);
   localStorage.setItem(THEME_KEY, theme);
 }
+
 function useThemeBoot() {
   useEffect(() => {
     const saved = (localStorage.getItem(THEME_KEY) as Theme) ?? 'dark';
@@ -49,6 +51,7 @@ function useThemeBoot() {
 /* ----------------------------- PUSH / VAPID ----------------------------- */
 const VAPID_PUBLIC_KEY =
   'BNo5Yg0kYp4e7n-0_q-g-i_zE9X8fG7H4gQjY3hJ1gU8a8nJ5jP2cE6lI8cE7wT5gY6cZ3dE1fX0yA';
+
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -57,7 +60,10 @@ function urlBase64ToUint8Array(base64String: string) {
   for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
 }
-const requestNotificationPermission = async (subscribeFn: (sub: PushSubscriptionObject) => void) => {
+
+const requestNotificationPermission = async (
+  subscribeFn: (sub: PushSubscriptionObject) => void
+) => {
   if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
   const permission = await Notification.requestPermission();
   if (permission === 'granted') {
@@ -67,11 +73,13 @@ const requestNotificationPermission = async (subscribeFn: (sub: PushSubscription
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
+
       const subJson = subscription.toJSON();
       const subscriptionObject: PushSubscriptionObject = {
         endpoint: subJson.endpoint!,
         keys: { p256dh: subJson.keys!.p256dh!, auth: subJson.keys!.auth! },
       };
+
       subscribeFn(subscriptionObject);
     } catch (error) {
       console.error('Failed to subscribe to push notifications:', error);
@@ -80,7 +88,10 @@ const requestNotificationPermission = async (subscribeFn: (sub: PushSubscription
 };
 
 /* ----------------------------- ERROR BOUNDARY ----------------------------- */
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
     this.state = { hasError: false };
@@ -96,7 +107,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
       return (
         <div className="min-h-screen grid place-items-center p-6 text-center">
           <div>
-            <h1 className="text-2xl font-bold mb-2">Something went wrong</h1>
+            <h1 className="text-xl font-bold mb-2">Something went wrong</h1>
             <p className="text-text-secondary">
               Refresh the page. If it persists, revert the last change.
             </p>
@@ -110,6 +121,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 
 /* ----------------------------- TOAST ----------------------------- */
 type ToastProps = { notification: Notification | null; onClose: () => void };
+
 const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
   const { getUserById, navigate } = useAppContext();
   const [isVisible, setIsVisible] = useState(false);
@@ -153,18 +165,16 @@ const Toast: React.FC<ToastProps> = ({ notification, onClose }) => {
 
   return (
     <div
-      className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-[200] transition-opacity ${
-        isVisible ? 'opacity-100' : 'opacity-0'
+      className={`fixed bottom-4 right-4 z-[200] transition-transform ${
+        isVisible ? 'translate-y-0' : 'translate-y-8 opacity-0'
       }`}
       onPointerUp={openNotifications}
-      role="status"
-      aria-live="polite"
     >
-      <div className="bg-surface rounded-xl border border-surface-light shadow-lg px-4 py-3 flex items-start space-x-3 cursor-pointer">
-        <div className="mt-0.5">{getIcon()}</div>
-        <div className="text-sm">
-          <div className="font-semibold">{actor.name}</div>
-          <div className="text-text-secondary">{notification.message}</div>
+      <div className="bg-surface rounded-xl shadow-lg border border-surface-light p-4 flex gap-3 items-start max-w-sm cursor-pointer">
+        <div className="text-primary">{getIcon()}</div>
+        <div className="flex-1">
+          <p className="font-semibold">{actor.name}</p>
+          <p className="text-sm text-text-secondary">{notification.message}</p>
         </div>
         <button
           onPointerUp={(e) => {
@@ -209,10 +219,8 @@ const CreateModal: React.FC<CreateModalProps> = ({
   const [postImage, setPostImage] = useState<string | null>(null);
   const postImageInputRef = useRef<HTMLInputElement | null>(null);
   const postTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
-
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<User[]>([]);
-
+  const [suggestions, setSuggestions] = useState<typeof users>([]);
   const [projectTitle, setProjectTitle] = useState('');
   const [projectDesc, setProjectDesc] = useState('');
   const [projectImage, setProjectImage] = useState<string | null>(null);
@@ -280,16 +288,12 @@ const CreateModal: React.FC<CreateModalProps> = ({
         };
         updateCollaboration(updated);
       } else {
-        const newCollab: Omit<
-          Collaboration,
-          'id' | 'authorId' | 'timestamp' | 'interestedUserIds'
-        > = {
+        addCollaboration({
           title: projectTitle,
           description: projectDesc,
           image: projectImage || undefined,
           status: 'open',
-        };
-        addCollaboration(newCollab);
+        });
       }
       onClose();
       if (currentUser) navigate('profile', { viewingProfileId: currentUser.id });
@@ -348,12 +352,9 @@ const CreateModal: React.FC<CreateModalProps> = ({
     <div
       className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4"
       onPointerUp={onClose}
-      role="dialog"
-      aria-modal="true"
-      aria-label={isEditing ? 'Edit opportunity' : 'Create'}
     >
       <div
-        className="bg-surface rounded-2xl w-full max-w-xl relative"
+        className="bg-surface rounded-2xl w-full max-w-2xl relative"
         onPointerUp={(e) => e.stopPropagation()}
       >
         <button
@@ -365,7 +366,7 @@ const CreateModal: React.FC<CreateModalProps> = ({
         </button>
 
         <div className="p-6">
-          <div className="flex border-b border-surface-light -mx-6">
+          <div className="flex border-b border-surface-light">
             {!isEditing && (
               <button
                 onPointerUp={() => setActiveTab('post')}
@@ -390,143 +391,145 @@ const CreateModal: React.FC<CreateModalProps> = ({
             </button>
           </div>
 
-          <div className="pt-4">
-            {activeTab === 'post' && !isEditing ? (
-              <form onSubmit={handlePostSubmit} className="space-y-4">
-                <div className="relative">
-                  <textarea
-                    ref={postTextAreaRef}
-                    value={postContent}
-                    onChange={handleContentChange}
-                    onBlur={() => setTimeout(() => setMentionQuery(null), 200)}
-                    placeholder="What's happening? Mention others with @"
-                    className="w-full h-32 bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none"
-                  />
-                  {suggestions.length > 0 && (
-                    <div className="absolute top-full left-0 w-full bg-surface rounded-md shadow-lg border border-surface-light mt-1 z-20 max-h-48 overflow-y-auto">
-                      {suggestions.map((user) => (
-                        <div
-                          key={user.id}
-                          onPointerUp={() => handleSelectMention(user.username)}
-                          className="flex items-center space-x-3 p-2 hover:bg-surface-light cursor-pointer"
-                        >
-                          <img src={user.avatar} alt={user.name} className="w-8 h-8 rounded-full" />
-                          <div>
-                            <p className="font-bold text-sm">{user.name}</p>
-                            <p className="text-xs text-text-secondary">@{user.username}</p>
-                          </div>
+          {activeTab === 'post' && !isEditing ? (
+            <form onSubmit={handlePostSubmit} className="space-y-4 mt-4">
+              <div className="relative">
+                <textarea
+                  ref={postTextAreaRef}
+                  value={postContent}
+                  onChange={handleContentChange}
+                  onBlur={() => setTimeout(() => setMentionQuery(null), 200)}
+                  placeholder="What's happening? Mention others with @"
+                  className="w-full h-32 bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                />
+                {suggestions.length > 0 && (
+                  <div className="absolute top-full left-0 w-full bg-surface rounded-md shadow-lg border border-surface-light mt-1 z-20 max-h-48 overflow-y-auto">
+                    {suggestions.map((user) => (
+                      <div
+                        key={user.id}
+                        onPointerUp={() => handleSelectMention(user.username)}
+                        className="flex items-center space-x-3 p-2 hover:bg-surface-light cursor-pointer"
+                      >
+                        <img
+                          src={user.avatar}
+                          alt={user.name}
+                          className="w-8 h-8 rounded-full"
+                        />
+                        <div>
+                          <p className="font-bold text-sm">{user.name}</p>
+                          <p className="text-xs text-text-secondary">@{user.username}</p>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {postImage && (
-                  <div className="mt-4 relative">
-                    <img
-                      src={postImage}
-                      alt="Preview"
-                      className="rounded-lg object-contain w-full max-h-80"
-                    />
-                    <button
-                      onPointerUp={() => setPostImage(null)}
-                      className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
-                      aria-label="Remove image"
-                    >
-                      {ICONS.close}
-                    </button>
+                      </div>
+                    ))}
                   </div>
                 )}
+              </div>
 
-                <div className="flex justify-between items-center mt-4">
-                  <input
-                    type="file"
-                    ref={postImageInputRef}
-                    onChange={handlePostImageChange}
-                    accept="image/*"
-                    className="hidden"
+              {postImage && (
+                <div className="mt-4 relative">
+                  <img
+                    src={postImage}
+                    alt="Preview"
+                    className="rounded-lg object-contain w-full max-h-80"
                   />
                   <button
-                    type="button"
-                    onPointerUp={() => postImageInputRef.current?.click()}
-                    className="text-primary hover:text-primary-hover"
-                    aria-label="Add photo"
+                    onPointerUp={() => setPostImage(null)}
+                    className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
+                    aria-label="Remove image"
                   >
-                    {ICONS.camera}
-                  </button>
-                  <button
-                    type="submit"
-                    className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50"
-                    disabled={!postContent.trim() && !postImage}
-                  >
-                    Post
+                    {ICONS.close}
                   </button>
                 </div>
-              </form>
-            ) : (
-              <form onSubmit={handleProjectSubmit} className="space-y-4">
-                <div>
-                  <label className="text-sm text-text-secondary">Opportunity Title</label>
-                  <input
-                    type="text"
-                    value={projectTitle}
-                    onChange={(e) => setProjectTitle(e.target.value)}
-                    className="w-full bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-text-secondary">Description</label>
-                  <textarea
-                    value={projectDesc}
-                    onChange={(e) => setProjectDesc(e.target.value)}
-                    className="w-full h-24 bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none"
-                  />
-                </div>
+              )}
 
-                {projectImage && (
-                  <div className="relative">
-                    <img
-                      src={projectImage}
-                      alt="Preview"
-                      className="rounded-lg object-contain w-full max-h-80"
-                    />
-                    <button
-                      onPointerUp={() => setProjectImage(null)}
-                      className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
-                      aria-label="Remove image"
-                    >
-                      {ICONS.close}
-                    </button>
-                  </div>
-                )}
+              <div className="flex justify-between items-center mt-4">
+                <input
+                  type="file"
+                  ref={postImageInputRef}
+                  onChange={handlePostImageChange}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onPointerUp={() => postImageInputRef.current?.click()}
+                  className="text-primary hover:text-primary-hover"
+                  aria-label="Add photo"
+                >
+                  {ICONS.camera}
+                </button>
+                <button
+                  type="submit"
+                  className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50"
+                  disabled={!postContent.trim() && !postImage}
+                >
+                  Post
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form onSubmit={handleProjectSubmit} className="space-y-4 mt-4">
+              <div>
+                <label className="text-sm text-text-secondary">Opportunity Title</label>
+                <input
+                  type="text"
+                  value={projectTitle}
+                  onChange={(e) => setProjectTitle(e.target.value)}
+                  className="w-full bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-text-secondary">Description</label>
+                <textarea
+                  value={projectDesc}
+                  onChange={(e) => setProjectDesc(e.target.value)}
+                  className="w-full h-24 bg-surface-light p-2 rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                />
+              </div>
 
-                <div className="flex justify-between items-center pt-2">
-                  <input
-                    type="file"
-                    ref={projectImageInputRef}
-                    onChange={handleProjectImageChange}
-                    accept="image/*"
-                    className="hidden"
+              {projectImage && (
+                <div className="relative">
+                  <img
+                    src={projectImage}
+                    alt="Preview"
+                    className="rounded-lg object-contain w-full max-h-80"
                   />
                   <button
-                    type="button"
-                    onPointerUp={() => projectImageInputRef.current?.click()}
-                    className="text-primary hover:text-primary-hover"
-                    aria-label="Add photo for opportunity"
+                    onPointerUp={() => setProjectImage(null)}
+                    className="absolute top-1 right-1 bg-black/50 text-white rounded-full p-1"
+                    aria-label="Remove image"
                   >
-                    {ICONS.camera}
-                  </button>
-                  <button
-                    type="submit"
-                    className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50"
-                    disabled={!projectTitle.trim() || !projectDesc.trim()}
-                  >
-                    {isEditing ? 'Save Changes' : 'Post Opportunity'}
+                    {ICONS.close}
                   </button>
                 </div>
-              </form>
-            )}
-          </div>
+              )}
+
+              <div className="flex justify-between items-center pt-2">
+                <input
+                  type="file"
+                  ref={projectImageInputRef}
+                  onChange={handleProjectImageChange}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onPointerUp={() => projectImageInputRef.current?.click()}
+                  className="text-primary hover:text-primary-hover"
+                  aria-label="Add photo for opportunity"
+                >
+                  {ICONS.camera}
+                </button>
+                <button
+                  type="submit"
+                  className="bg-primary text-white font-bold py-2 px-6 rounded-full hover:bg-primary-hover disabled:opacity-50"
+                  disabled={!projectTitle.trim() || !projectDesc.trim()}
+                >
+                  {isEditing ? 'Save Changes' : 'Post Opportunity'}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       </div>
     </div>
@@ -535,9 +538,11 @@ const CreateModal: React.FC<CreateModalProps> = ({
 
 /* ----------------------------- FEEDBACK MODAL ----------------------------- */
 type FeedbackModalProps = { isOpen: boolean; onClose: () => void };
+
 const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   const { sendFeedback } = useAppContext();
-  const [feedbackType, setFeedbackType] = useState<'Bug Report' | 'Suggestion'>('Suggestion');
+  const [feedbackType, setFeedbackType] =
+    useState<'Bug Report' | 'Suggestion'>('Suggestion');
   const [feedbackContent, setFeedbackContent] = useState('');
 
   if (!isOpen) return null;
@@ -552,8 +557,14 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4" onPointerUp={onClose}>
-      <div className="bg-surface rounded-2xl w-full max-w-md relative" onPointerUp={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4"
+      onPointerUp={onClose}
+    >
+      <div
+        className="bg-surface rounded-2xl w-full max-w-md relative"
+        onPointerUp={(e) => e.stopPropagation()}
+      >
         <button
           onPointerUp={onClose}
           className="absolute top-4 right-4 text-text-secondary hover:text-text-primary"
@@ -561,6 +572,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
         >
           {ICONS.close}
         </button>
+
         <div className="p-6">
           <h2 className="text-xl font-bold mb-4">Send Feedback</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -573,24 +585,34 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
                     name="feedbackType"
                     value="Suggestion"
                     checked={feedbackType === 'Suggestion'}
-                    onChange={(e) => setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')}
+                    onChange={(e) =>
+                      setFeedbackType(
+                        e.target.value as 'Bug Report' | 'Suggestion'
+                      )
+                    }
                     className="form-radio bg-surface-light border-surface-light text-primary focus:ring-primary"
                   />
                   <span>Suggestion</span>
                 </label>
+
                 <label className="flex items-center space-x-2 cursor-pointer">
                   <input
                     type="radio"
                     name="feedbackType"
                     value="Bug Report"
                     checked={feedbackType === 'Bug Report'}
-                    onChange={(e) => setFeedbackType(e.target.value as 'Bug Report' | 'Suggestion')}
+                    onChange={(e) =>
+                      setFeedbackType(
+                        e.target.value as 'Bug Report' | 'Suggestion'
+                      )
+                    }
                     className="form-radio bg-surface-light border-surface-light text-primary focus:ring-primary"
                   />
                   <span>Bug Report</span>
                 </label>
               </div>
             </div>
+
             <div>
               <label htmlFor="feedbackContent" className="text-sm text-text-secondary">
                 Details
@@ -604,6 +626,7 @@ const FeedbackModal: React.FC<FeedbackModalProps> = ({ isOpen, onClose }) => {
                 required
               />
             </div>
+
             <div className="flex justify-end">
               <button
                 type="submit"
@@ -636,14 +659,12 @@ const AppContent: React.FC = () => {
   } = useAppContext();
 
   const mainContentRef = useRef<HTMLDivElement>(null);
-
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [createModalInitialTab, setCreateModalInitialTab] =
     useState<'post' | 'project'>('post');
-
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
-  const [toastNotification, setToastNotification] = useState<Notification | null>(null);
-
+  const [toastNotification, setToastNotification] =
+    useState<Notification | null>(null);
   const [waited, setWaited] = useState(false);
 
   const editingCollab = collaborations.find((c) => c.id === editingCollaborationId);
@@ -660,12 +681,14 @@ const AppContent: React.FC = () => {
 
   useEffect(() => {
     if (!currentUser) return;
+
     const handleSocketEvent = (event: Event) => {
       const { userId, eventName, payload } = (event as CustomEvent).detail;
       if (userId === currentUser.id && eventName === 'notification:new') {
         setToastNotification(payload);
       }
     };
+
     window.addEventListener('socket-event', handleSocketEvent);
     requestNotificationPermission(subscribeToPushNotifications);
     return () => window.removeEventListener('socket-event', handleSocketEvent);
@@ -694,7 +717,8 @@ const AppContent: React.FC = () => {
             {waited && (
               <>
                 {' '}
-                This is taking longer than expected — you can try refreshing, or signing out and back in.
+                This is taking longer than expected — you can try refreshing, or
+                signing out and back in.
               </>
             )}
           </p>
@@ -743,7 +767,7 @@ const AppContent: React.FC = () => {
         <TestAuth />
       </div>
     );
-  }
+    }
 
   const renderPage = () => {
     switch (currentPage) {
@@ -760,9 +784,7 @@ const AppContent: React.FC = () => {
       case 'profile':
         if (viewingProfileId)
           return <Profile userId={viewingProfileId} onOpenFeedbackModal={openFeedbackModal} />;
-        if (currentUser)
-          return <Profile userId={currentUser.id} onOpenFeedbackModal={openFeedbackModal} />;
-        return <Feed />;
+        return <Profile userId={currentUser.id} onOpenFeedbackModal={openFeedbackModal} />;
       case 'collaborations':
         return <Collaborations openCreateModal={openCreateModal} />;
       case 'admin':
@@ -783,7 +805,6 @@ const AppContent: React.FC = () => {
           <main className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding">
             <Messages />
           </main>
-
           <CreateModal
             isOpen={isCreateModalOpen || isEditCollabModalOpen}
             onClose={handleCloseModals}
@@ -795,8 +816,10 @@ const AppContent: React.FC = () => {
             onClose={() => setIsFeedbackModalOpen(false)}
           />
         </div>
-
-        <Toast notification={toastNotification} onClose={() => setToastNotification(null)} />
+        <Toast
+          notification={toastNotification}
+          onClose={() => setToastNotification(null)}
+        />
       </>
     );
   }
@@ -805,14 +828,15 @@ const AppContent: React.FC = () => {
     <>
       <div className="flex full-height overflow-hidden safe-pads">
         <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
-
-        <main ref={mainContentRef} className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding">
+        <main
+          ref={mainContentRef}
+          className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding"
+        >
           <div className="max-w-5xl mx-auto">
             <div className="md:grid md:grid-cols-3">
               <div className="md:col-span-2 border-l border-r md:border-l-0 border-surface-light min-h-screen">
                 {renderPage()}
               </div>
-
               <div className="hidden md:block md:col-span-1">
                 <RightSidebar />
               </div>
@@ -826,21 +850,25 @@ const AppContent: React.FC = () => {
           initialTab={createModalInitialTab}
           editingCollaboration={editingCollab || null}
         />
-
         <FeedbackModal
           isOpen={isFeedbackModalOpen}
           onClose={() => setIsFeedbackModalOpen(false)}
         />
       </div>
 
-      <Toast notification={toastNotification} onClose={() => setToastNotification(null)} />
+      <Toast
+        notification={toastNotification}
+        onClose={() => setToastNotification(null)}
+      />
     </>
   );
 };
 
-/* ----------------------------- AUTH ROUTER ----------------------------- */
+/* ----------------------------- AUTH ROUTER (for signed-out users) ----------------------------- */
 const AuthPagesRouter: React.FC = () => {
-  const [hash, setHash] = useState<string>(typeof window !== 'undefined' ? window.location.hash : '');
+  const [hash, setHash] = useState<string>(
+    typeof window !== 'undefined' ? window.location.hash : ''
+  );
 
   useEffect(() => {
     const onHashChange = () => setHash(window.location.hash);
@@ -882,9 +910,30 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [checking, setChecking] = useState(true);
   const [hasSession, setHasSession] = useState<boolean | null>(null);
 
+  // Track hash so we can route to NewPassword even when logged in
+  const [hash, setHash] = useState<string>(
+    typeof window !== 'undefined' ? window.location.hash : ''
+  );
+  useEffect(() => {
+    const onHashChange = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Helper: did index.html mark a recovery flow recently?
+  const recoveryActive = (() => {
+    try {
+      const flag = sessionStorage.getItem('co-recovery-active');
+      const ts = Number(sessionStorage.getItem('co-recovery-ts') || 0);
+      const fresh = Date.now() - ts < 10 * 60 * 1000; // 10 minutes
+      return flag === '1' && fresh;
+    } catch {
+      return false;
+    }
+  })();
+
   useEffect(() => {
     let mounted = true;
-
     (async () => {
       const { data } = await supabase.auth.getSession();
       if (!mounted) return;
@@ -910,6 +959,19 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     );
   }
 
+  const lower = hash.toLowerCase();
+  const isNewPasswordRoute = lower.includes('newpassword');
+
+  // ✅ New: ALWAYS show the NewPassword page on the recovery route,
+  // even if you're currently logged in (or if we detected a fresh recovery flag).
+  if (isNewPasswordRoute || recoveryActive) {
+    return (
+      <AppProvider>
+        <NewPassword />
+      </AppProvider>
+    );
+  }
+
   // Not logged in → show auth pages
   if (!hasSession) {
     return (
@@ -926,6 +988,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 /* ----------------------------- APP WRAPPER ----------------------------- */
 const AppWrapper: React.FC = () => {
   useThemeBoot();
+
   return (
     <ErrorBoundary>
       <AuthGate>
