@@ -5,11 +5,24 @@ import { ICONS } from '../constants';
 
 /**
  * NewPassword
- * - This page is shown after the user clicks the Supabase reset link.
- * - The reset link temporarily signs the user in (session is in the URL).
- * - Here we call supabase.auth.updateUser({ password }) to set a new password.
- * - On success, we sign out that temporary session and send them back to #/Login.
+ * - Handles Supabase "recovery" links that redirect back with tokens in the URL hash.
+ * - We explicitly parse `access_token` & `refresh_token` from the hash and hydrate a session
+ *   via `supabase.auth.setSession(...)` so updateUser({ password }) succeeds reliably.
+ * - After success, we sign out the temporary session and route back to #/Login.
  */
+
+function parseHashTokens() {
+  const h = (typeof window !== 'undefined' ? window.location.hash : '') || '';
+  // Expect something like: #/NewPassword&access_token=...&refresh_token=...&type=recovery
+  // or older shapes like: #access_token=...&refresh_token=...&type=recovery
+  const q = h.replace(/^#\/?NewPassword?\/?/, '').replace(/^#/, '');
+  const params = new URLSearchParams(q);
+  const access_token = params.get('access_token') || '';
+  const refresh_token = params.get('refresh_token') || '';
+  const type = params.get('type') || '';
+  return { access_token, refresh_token, type };
+}
+
 const NewPassword: React.FC = () => {
   const [ready, setReady] = useState(false);
   const [pw1, setPw1] = useState('');
@@ -18,20 +31,46 @@ const NewPassword: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Basic guard: ensure the reset/session is present
+  // Ensure a valid session exists by hydrating from hash tokens if present.
   useEffect(() => {
     let mounted = true;
+
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-      if (!data.session) {
-        // If no session, the link may have expired or was opened in another browser.
-        setError(
-          'This reset link is invalid or has expired. Please request a new one.'
-        );
+      try {
+        // 1) If tokens exist in the hash, seed a session explicitly.
+        const { access_token, refresh_token } = parseHashTokens();
+        if (access_token && refresh_token) {
+          const { data, error } = await supabase.auth.setSession({
+            access_token,
+            refresh_token,
+          });
+          if (error) {
+            console.error('[NewPassword] setSession error:', error);
+          } else {
+            // Clean the token-y hash so it doesn’t linger in history bar
+            history.replaceState(null, '', `${location.origin}/#/NewPassword`);
+          }
+        }
+
+        // 2) Check if we have a session (either pre-existing or just set)
+        const { data: sess } = await supabase.auth.getSession();
+        if (!mounted) return;
+        if (!sess.session) {
+          setError(
+            'This reset link is invalid or has expired. Please request a new one.'
+          );
+        }
+      } catch (e) {
+        console.error('[NewPassword] prepare error:', e);
+        if (mounted)
+          setError(
+            'We could not validate your reset link. Please request a new one.'
+          );
+      } finally {
+        if (mounted) setReady(true);
       }
-      setReady(true);
     })();
+
     return () => {
       mounted = false;
     };
@@ -43,7 +82,6 @@ const NewPassword: React.FC = () => {
       return 'Use letters and at least one number.';
     if (pw1 !== pw2) return 'Passwords do not match.';
     return null;
-    // Adjust rules as needed (symbols, uppercase, etc.)
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -59,6 +97,13 @@ const NewPassword: React.FC = () => {
 
     setSubmitting(true);
     try {
+      // Double-check session before update
+      const { data: sess } = await supabase.auth.getSession();
+      if (!sess.session) {
+        setError('Auth session missing! Please request a new reset link.');
+        return;
+      }
+
       const { error: updateErr } = await supabase.auth.updateUser({
         password: pw1,
       });
@@ -73,7 +118,6 @@ const NewPassword: React.FC = () => {
       // End the temporary recovery session
       await supabase.auth.signOut();
 
-      // Give the UI a beat to show the success message, then send to Login.
       setTimeout(() => {
         window.location.hash = '#/Login';
       }, 1200);
@@ -171,6 +215,12 @@ const NewPassword: React.FC = () => {
             {submitting ? 'Updating…' : 'Update password'}
           </button>
         </form>
+
+        <div className="text-xs text-text-secondary mt-4">
+          Tip: If this still says “Auth session missing,” go back to{' '}
+          <a href="#/ForgotPassword" className="text-primary underline">Forgot password</a> and
+          request a fresh link, then open it immediately.
+        </div>
       </div>
     </div>
   );
