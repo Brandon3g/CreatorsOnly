@@ -30,7 +30,6 @@
     <link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png" />
 
     <!-- Tiny mobile perf tweaks: resource hints to your API host (update the domain to your Supabase URL) -->
-    <!-- Replace YOUR-PROJECT.supabase.co with your actual project host if different -->
     <link rel="dns-prefetch" href="//YOUR-PROJECT.supabase.co" />
     <link rel="preconnect" href="https://YOUR-PROJECT.supabase.co" crossorigin />
 
@@ -63,34 +62,42 @@
     </script>
 
     <!-- Normalize Supabase recovery links BEFORE React boots.
-         If the URL has recovery tokens (access_token / refresh_token / type=recovery)
-         but isn't on "#/NewPassword", push it there while preserving the tokens. -->
+         Put tokens FIRST in the hash so Supabase auto-detects them,
+         then route to "#/NewPassword". Also set a recovery guard flag. -->
     <script>
       (function () {
         try {
           var href = String(window.location.href || '');
           if (href.indexOf('#') === -1) return;
 
-          // Collect params from ALL hash fragments (handles "#/NewPassword#access_token=..." and "#access_token=...")
           var frags = href.split('#').slice(1); // everything after the first '#'
-          var hasTokens = false;
-          var hasRecoveryType = false;
+          if (!frags.length) return;
+
+          // Pull params from ALL fragments
+          var merged = new URLSearchParams();
+          var sawToken = false;
+
           for (var i = 0; i < frags.length; i++) {
             var qs = new URLSearchParams(frags[i]);
-            if (qs.has('access_token') || qs.has('refresh_token')) hasTokens = true;
-            var typ = (qs.get('type') || '').toLowerCase();
-            if (typ === 'recovery') hasRecoveryType = true;
+            qs.forEach(function (v, k) {
+              merged.set(k, v);
+            });
+            if (qs.has('access_token') || qs.has('refresh_token') || (qs.get('type') || '').toLowerCase() === 'recovery') {
+              sawToken = true;
+            }
           }
 
-          var needsNewPassword = hasTokens || hasRecoveryType;
-          var alreadyOnNewPw = /^#\/NewPassword/i.test(window.location.hash);
+          // If we have recovery tokens but the hash does NOT start with them, reorder to:
+          //   #access_token=...&refresh_token=...&type=recovery#/NewPassword
+          var hash = window.location.hash || '';
+          var startsWithTokens = /^#(access_token|id_token|refresh_token)=/i.test(hash);
+          if (sawToken && !startsWithTokens) {
+            // Persist a session-scoped guard for the app context
+            try { sessionStorage.setItem('co-recovery-active', '1'); } catch (e) {}
 
-          if (needsNewPassword && !alreadyOnNewPw) {
-            // Preserve everything after the first '#'
-            var afterFirst = href.split('#').slice(1).join('#');
-            // Replace the URL to avoid back-button loops
+            var tokenFrag = merged.toString(); // includes all token params
             var base = window.location.origin + window.location.pathname;
-            window.location.replace(base + '#/NewPassword#' + afterFirst);
+            window.location.replace(base + '#' + tokenFrag + '#/NewPassword');
           }
         } catch (e) {
           // non-fatal
