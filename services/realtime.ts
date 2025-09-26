@@ -3,6 +3,10 @@ import { supabase } from '../lib/supabaseClient';
 
 type Status = 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT';
 
+/**
+ * High-level app subscription used by RealtimeProvider.
+ * Subscribes to all the public tables we care about.
+ */
 export type RealtimeHandlers = {
   onOpen?: () => void;
   onClose?: (status: Status) => void;
@@ -26,16 +30,15 @@ export type RealtimeHandlers = {
 };
 
 export function subscribeToAppRealtime(handlers: RealtimeHandlers) {
-  // Create a fresh channel each time we subscribe; clean it up on unmount/user change.
   const channelName = `public-changes-${Math.random().toString(36).slice(2)}`;
   const channel = supabase.channel(channelName);
 
-  const on = (table: string, event: '*' | 'INSERT' | 'UPDATE' | 'DELETE', cb: (p: any) => void) =>
-    channel.on(
-      'postgres_changes',
-      { event, schema: 'public', table },
-      (payload) => cb(payload)
-    );
+  const on = (
+    table: string,
+    event: '*' | 'INSERT' | 'UPDATE' | 'DELETE',
+    cb: (p: any) => void
+  ) =>
+    channel.on('postgres_changes', { event, schema: 'public', table }, (payload) => cb(payload));
 
   // posts
   on('posts', 'INSERT', (p) => handlers.onPostInsert?.(p));
@@ -74,7 +77,59 @@ export function subscribeToAppRealtime(handlers: RealtimeHandlers) {
     cleanup: () => {
       try {
         supabase.removeChannel(channel);
-      } catch (_) {
+      } catch {
+        /* no-op */
+      }
+    },
+  };
+}
+
+/**
+ * Low-level, table-scoped subscription used by some pages (e.g., Messages).
+ * Keeps API stable with previous code that imported `subscribeToTable`.
+ */
+export type TableEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
+
+export function subscribeToTable(opts: {
+  table: string;
+  events?: TableEvent[]; // default: INSERT/UPDATE/DELETE
+  onEvent: (payload: any) => void;
+  schema?: string; // default: 'public'
+  filter?: string; // e.g. 'conversation_id=eq.1234...'
+  channelName?: string;
+}) {
+  const {
+    table,
+    onEvent,
+    filter,
+    schema = 'public',
+    events = ['INSERT', 'UPDATE', 'DELETE'],
+    channelName = `tbl-${table}-${Math.random().toString(36).slice(2)}`,
+  } = opts;
+
+  const channel = supabase.channel(channelName);
+
+  events.forEach((ev) => {
+    channel.on(
+      'postgres_changes',
+      { event: ev, schema, table, ...(filter ? { filter } : {}) },
+      (payload) => onEvent(payload)
+    );
+  });
+
+  channel.subscribe((status) => {
+    if (status === 'SUBSCRIBED') {
+      console.log(`[Realtime] ${table} subscription: SUBSCRIBED`);
+    } else {
+      console.warn(`[Realtime] ${table} subscription status:`, status);
+    }
+  });
+
+  return {
+    cleanup: () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {
         /* no-op */
       }
     },
