@@ -3,7 +3,6 @@ import { supabase } from '../lib/supabaseClient';
 
 type Status = 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT';
 
-/** -------- High-level app subscription (used by RealtimeProvider) -------- */
 export type RealtimeHandlers = {
   onOpen?: () => void;
   onClose?: (status: Status) => void;
@@ -26,7 +25,14 @@ export type RealtimeHandlers = {
   onCollaborationInsert?: (payload: unknown) => void;
 };
 
-export function subscribeToAppRealtime(handlers: RealtimeHandlers): () => void {
+function withCleanupAlias(fn: () => void) {
+  // Back-compat: allow callers to do sub.cleanup()
+  (fn as any).cleanup = fn;
+  return fn;
+}
+
+/** High-level app subscription used by RealtimeProvider */
+export function subscribeToAppRealtime(handlers: RealtimeHandlers) {
   const channelName = `public-changes-${Math.random().toString(36).slice(2)}`;
   const channel = supabase.channel(channelName);
 
@@ -70,17 +76,18 @@ export function subscribeToAppRealtime(handlers: RealtimeHandlers): () => void {
     }
   });
 
-  // RETURN A CLEANUP FUNCTION (expected by useEffect)
-  return () => {
+  const unsubscribe = withCleanupAlias(() => {
     try {
       supabase.removeChannel(channel);
     } catch {
       /* no-op */
     }
-  };
+  });
+
+  return unsubscribe;
 }
 
-/** -------- Low-level, table-scoped subscription (keeps old API working) -------- */
+/** Low-level table-scoped helper used by pages/components */
 export type TableEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 
 export function subscribeToTable(opts: {
@@ -88,9 +95,9 @@ export function subscribeToTable(opts: {
   events?: TableEvent[]; // default: INSERT/UPDATE/DELETE
   onEvent: (payload: any) => void;
   schema?: string; // default: 'public'
-  filter?: string; // e.g. 'conversation_id=eq.1234...'
+  filter?: string; // e.g. 'conversation_id=eq.1234…'
   channelName?: string;
-}): () => void {
+}) {
   const {
     table,
     onEvent,
@@ -118,12 +125,13 @@ export function subscribeToTable(opts: {
     }
   });
 
-  // RETURN A CLEANUP FUNCTION (expected by useEffect)
-  return () => {
+  const unsubscribe = withCleanupAlias(() => {
     try {
       supabase.removeChannel(channel);
     } catch {
       /* no-op */
     }
-  };
+  });
+
+  return unsubscribe;
 }
