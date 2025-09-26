@@ -1,111 +1,154 @@
-// context/RealtimeProvider.tsx
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  PropsWithChildren,
-} from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useAppContext } from './AppContext';
 
-type RealtimeContextValue = {
-  /** True when the multiplexed channel is SUBSCRIBED */
-  isConnected: boolean;
+type RealtimeStatus = 'OPEN' | 'SUBSCRIBED' | 'CLOSED' | 'ERROR';
+
+type RealtimeCtx = {
+  // Lightweight subscribe helper:
+  //   const off = on('posts', (payload) => { ... })
+  //   off() to unsubscribe.
+  on: (table: string, handler: (payload: any) => void) => () => void;
+
+  // Pass-through data so consumers never see undefined
+  posts: any[];
+  profiles: any[];
+  requests: any[];
+  conversations: any[];
+  messages: any[];
+  collaborations: any[];
+  feedback: any[];
+  notifications: any[];
+
+  status: RealtimeStatus;
 };
 
-const RealtimeContext = createContext<RealtimeContextValue | undefined>(undefined);
+const RealtimeContext = createContext<RealtimeCtx>({
+  on: () => () => {},
+  posts: [],
+  profiles: [],
+  requests: [],
+  conversations: [],
+  messages: [],
+  collaborations: [],
+  feedback: [],
+  notifications: [],
+  status: 'CLOSED',
+});
 
-export const useRealtimeContext = (): RealtimeContextValue => {
-  const ctx = useContext(RealtimeContext);
-  if (!ctx) throw new Error('useRealtimeContext must be used within a RealtimeProvider');
-  return ctx;
-};
+export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Pull data from AppContext so existing pages keep working
+  const {
+    posts: appPosts,
+    users: appUsers, // a.k.a. profiles
+    requests: appRequests,
+    conversations: appConversations,
+    messages: appMessages,
+    collaborations: appCollabs,
+    feedback: appFeedback,
+    notifications: appNotifications,
+  } = useAppContext() as any;
 
-const log = (...args: any[]) => console.log('[RealtimeProvider]', ...args);
-
-/** Internal component so we can export both default and named */
-const RealtimeProviderImpl: React.FC<PropsWithChildren> = ({ children }) => {
-  const { user } = useAppContext();
-  const [isConnected, setIsConnected] = useState(false);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const statusRef = useRef<RealtimeStatus>('CLOSED');
 
-  const handleChange = useCallback((payload: any, label: string) => {
-    log(`${label}:`, payload?.eventType, payload?.table, payload);
-  }, []);
-
-  const subscribeAll = useCallback(() => {
-    // Clean old channel
-    if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
-    }
-
-    const channel = supabase.channel('co-bus'); // one multiplexed channel
-
-    // Listen to all app tables
-    const tables: Array<{ table: string; label: string }> = [
-      { table: 'profiles', label: 'profiles' },
-      { table: 'posts', label: 'posts' },
-      { table: 'requests', label: 'requests' },
-      { table: 'conversations', label: 'conversations' },
-      { table: 'conversation_members', label: 'conversation_members' },
-      { table: 'messages', label: 'messages' },
-      { table: 'collaborations', label: 'collaborations' },
-      { table: 'feedback', label: 'feedback' },
-      { table: 'notifications', label: 'notifications' },
-    ];
-
-    tables.forEach(({ table, label }) => {
-      channel.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table },
-        (payload) => handleChange(payload, label)
-      );
-    });
-
-    channel.on('status_changed', (status: string) => {
-      log(`channel status: ${status}`);
-      setIsConnected(status === 'SUBSCRIBED');
-    });
-
-    channel.subscribe((status) => {
-      log('subscribe callback status:', status);
-    });
-
-    channelRef.current = channel;
-  }, [handleChange]);
-
+  // Create one shared channel
   useEffect(() => {
-    if (!user) {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-      setIsConnected(false);
-      return;
-    }
+    const ch = supabase.channel('co:all');
+    channelRef.current = ch;
 
-    subscribeAll();
+    const sub = ch.subscribe((status) => {
+      statusRef.current = (status as RealtimeStatus) ?? 'CLOSED';
+      // Useful trace while we harden things:
+      console.log('[RealtimeProvider] channel status:', statusRef.current);
+    });
 
     return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
+      try {
+        ch.unsubscribe();
+      } catch (e) {
+        console.warn('[RealtimeProvider] unsubscribe error:', e);
+      } finally {
         channelRef.current = null;
+        statusRef.current = 'CLOSED';
       }
-      setIsConnected(false);
     };
-  }, [user, subscribeAll]);
+  }, []);
 
-  const value = useMemo<RealtimeContextValue>(() => ({ isConnected }), [isConnected]);
+  // Stable subscribe helper
+  const on = useMemo(() => {
+    return (table: string, handler: (payload: any) => void) => {
+      // Ensure we have a channel (in case provider remounts)
+      if (!channelRef.current) {
+        channelRef.current = supabase.channel('co:all');
+        channelRef.current.subscribe((s) => {
+          statusRef.current = (s as RealtimeStatus) ?? 'CLOSED';
+          console.log('[RealtimeProvider] channel status:', statusRef.current);
+        });
+      }
+
+      const ch = channelRef.current;
+
+      // Attach listener
+      ch.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table },
+        (payload) => {
+          try {
+            handler(payload);
+          } catch (err) {
+            console.error(`[RealtimeProvider] handler error for ${table}:`, err);
+          }
+        }
+      );
+
+      // Return a narrow "unsubscribe" that just removes this listener group by
+      // recreating the channel (Supabase’s JS API doesn’t expose per-listener removal).
+      return () => {
+        try {
+          ch.unsubscribe();
+        } catch (e) {
+          console.warn('[RealtimeProvider] unsubscribe error:', e);
+        } finally {
+          // Recreate a fresh channel lazily next time `on(...)` is called.
+          channelRef.current = null;
+          statusRef.current = 'CLOSED';
+        }
+      };
+    };
+  }, []);
+
+  // Always coalesce to arrays so consumers never see undefined
+  const value = useMemo<RealtimeCtx>(
+    () => ({
+      on,
+      posts: appPosts ?? [],
+      profiles: appUsers ?? [],
+      requests: appRequests ?? [],
+      conversations: appConversations ?? [],
+      messages: appMessages ?? [],
+      collaborations: appCollabs ?? [],
+      feedback: appFeedback ?? [],
+      notifications: appNotifications ?? [],
+      status: statusRef.current,
+    }),
+    [
+      on,
+      appPosts,
+      appUsers,
+      appRequests,
+      appConversations,
+      appMessages,
+      appCollabs,
+      appFeedback,
+      appNotifications,
+    ]
+  );
 
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
 };
 
-// Export BOTH named and default so App.tsx can use either form.
-export const RealtimeProvider = RealtimeProviderImpl;
-export default RealtimeProviderImpl;
-export { RealtimeContext };
+export const useRealtimeContext = () => useContext(RealtimeContext);
+
+// Also export default for imports like: import RealtimeProvider from '...'
+export default RealtimeProvider;
