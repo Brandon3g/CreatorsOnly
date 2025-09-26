@@ -1,43 +1,48 @@
+// services/posts.ts
 import { supabase } from '../lib/supabaseClient';
 
-type NewPost = {
+export type Post = {
+  id: string;
   user_id: string;
-  content: string;
-  media_url?: string | null;
+  content: string | null;
+  media_url: string | null;
+  created_at: string;
 };
 
-export async function createPost(input: NewPost) {
+const baseColumns = 'id, user_id, content, media_url, created_at';
+
+/** Create a post for the signed-in user. */
+export async function createPost(dbUserId: string, content: string, mediaUrl?: string) {
+  if (!dbUserId) throw new Error('createPost: missing user id');
   const { data, error } = await supabase
     .from('posts')
-    .insert({
-      user_id: input.user_id,
-      content: input.content,
-      media_url: input.media_url ?? null,
-    })
-    .select()
-    .single();
-
-  return { data, error };
+    .insert([{ user_id: dbUserId, content, media_url: mediaUrl ?? null }])
+  .select(baseColumns)
+  .single();
+  if (error) throw error;
+  return data as Post;
 }
 
-export async function fetchRecentPosts(limit = 30) {
-  // Global feed for now; you can switch to friends-only later
+/** Home feed: for now, latest posts across the network. (You can refine later.) */
+export async function fetchHomeFeed(limit = 30) {
   const { data, error } = await supabase
     .from('posts')
-    .select('*')
+    .select(baseColumns)
     .order('created_at', { ascending: false })
     .limit(limit);
-
-  return { data, error };
+  if (error) throw error;
+  return (data ?? []) as Post[];
 }
 
-export async function fetchUserPosts(userId: string, limit = 30) {
+/** Posts for a given profile id (UUID). */
+export async function fetchProfilePosts(profileId: string, limit = 30) {
+  if (!profileId) throw new Error('fetchProfilePosts: missing profileId');
   const { data, error } = await supabase
     .from('posts')
-    .select('*')
-    .eq('user_id', userId)
+    .select(baseColumns)
+    .eq('user_id', profileId)
     .order('created_at', { ascending: false })
     .limit(limit);
-
-  return { data, error };
+  if (error) throw error;
+  return (data ?? []) as Post[];
 }

@@ -1,91 +1,94 @@
+// pages/Notifications.tsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useAppContext } from '../context/AppContext';
 import { supabase } from '../lib/supabaseClient';
+import { useAppContext } from '../context/AppContext';
 
-type Notif = {
+type NotificationRow = {
   id: string;
-  user_id: string;
-  actor_id?: string;
-  type?: string;
-  message?: string;
-  entity_id?: string;
-  is_read?: boolean;
-  created_at?: string;
+  user_id: string;   // recipient
+  actor_id: string;  // who triggered
+  type: string;
+  message: string | null;
+  entity_id: string | null;
+  is_read: boolean | null;
+  created_at: string;
 };
 
 export default function Notifications() {
-  const { currentUser } = useAppContext();
-  const [items, setItems] = useState<Notif[]>([]);
+  const { session, track } = useAppContext();
+  const dbUserId = session?.user?.id ?? null;
+  const analyticsId = dbUserId ?? 'anon';
+
+  const [rows, setRows] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    track('notifications_open', { page: 'notifications' }, analyticsId);
+
+    if (!dbUserId) {
+      setLoading(false);
+      setRows([]);
+      return;
+    }
+
+    let canceled = false;
     (async () => {
-      if (!currentUser?.id) return;
       try {
-        setLoading(true);
         const { data, error } = await supabase
           .from('notifications')
-          .select('*')
-          .eq('user_id', currentUser.id)
+          .select(
+            'id, user_id, actor_id, type, message, entity_id, is_read, created_at'
+          )
+          .eq('user_id', dbUserId)
           .order('created_at', { ascending: false })
           .limit(50);
+
         if (error) throw error;
-        if (!cancelled) setItems((data ?? []) as Notif[]);
-      } catch (e: any) {
-        console.error('[Notifications] load error', e);
-        if (!cancelled) setErr(e?.message ?? 'Failed to load notifications.');
+        if (!canceled) setRows((data ?? []) as NotificationRow[]);
+      } catch (err) {
+        console.error('[Notifications] load error ›', err);
+        if (!canceled) setRows([]);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!canceled) setLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser?.id]);
-
-  useEffect(() => {
-    if (!currentUser?.id) return;
-    const channel = supabase
-      .channel(`public:notifications:${currentUser.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${currentUser.id}`,
-        },
-        (payload) => setItems((prev) => [payload.new as Notif, ...prev])
-      )
-      .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      canceled = true;
     };
-  }, [currentUser?.id]);
+  }, [dbUserId, track, analyticsId]);
 
-  const list = useMemo(() => (Array.isArray(items) ? items : []), [items]);
+  const list = useMemo(() => rows ?? [], [rows]);
 
-  if (loading) return <div className="py-16 text-center opacity-70">Loading…</div>;
-  if (err) return <div className="py-16 text-center text-error">{err}</div>;
+  if (loading) {
+    return <div className="p-6 text-sm opacity-70">Loading notifications…</div>;
+  }
+
+  if (!dbUserId) {
+    return (
+      <div className="p-6 text-sm opacity-70">
+        Sign in to see your notifications.
+      </div>
+    );
+  }
+
+  if (list.length === 0) {
+    return (
+      <div className="p-6 text-sm opacity-70">No notifications yet.</div>
+    );
+  }
 
   return (
-    <div className="max-w-xl mx-auto pb-24">
-      <h2 className="text-xl font-semibold mb-4">Notifications</h2>
-      {list.length === 0 ? (
-        <div className="opacity-70">No notifications yet.</div>
-      ) : (
-        <ul className="space-y-3">
-          {list.map((n) => (
-            <li key={n.id} className="rounded-xl border border-base-300 p-3">
-              <div className="text-sm">{n.message ?? n.type ?? 'New activity'}</div>
-              <div className="text-xs opacity-60">{n.created_at}</div>
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="max-w-2xl mx-auto p-4 space-y-3">
+      {list.map((n) => (
+        <div key={n.id} className="rounded-xl bg-base-200 p-4">
+          <div className="text-xs opacity-60">
+            {new Date(n.created_at).toLocaleString()}
+          </div>
+          <div className="font-medium mt-1">{n.type}</div>
+          <div className="text-sm">{n.message ?? ''}</div>
+        </div>
+      ))}
     </div>
   );
 }

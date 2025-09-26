@@ -1,61 +1,55 @@
-// src/services/realtime.ts
+// services/realtime.ts
 import { supabase } from '../lib/supabaseClient';
 
-export type RealtimeUnsubscribe = () => void;
+export type Unsubscribe = () => void;
 
 /**
- * Subscribe to realtime changes on a given table.
- *
- * @param tableName - The Supabase table to watch
- * @param onChange - Callback that receives the payload when a row is inserted/updated/deleted
- * @returns cleanup function to unsubscribe
+ * Subscribe to realtime DB changes.
+ * NOTE: Never subscribe with a fake id; only with real UUIDs.
  */
-export function subscribeToTable(
-  tableName: string,
-  onChange: (payload: any) => void
-): RealtimeUnsubscribe {
-  const channel = supabase
-    .channel(`realtime:${tableName}`)
-    .on(
+export function subscribeToAppRealtime(opts: {
+  dbUserId?: string; // may be undefined until session resolves
+  onPostsInsert?: (payload: any) => void;
+  onProfilesUpdate?: (payload: any) => void;
+  onNotificationsInsert?: (payload: any) => void;
+}): Unsubscribe {
+  const channel = supabase.channel('creatorsonly:realtime');
+
+  // Posts (global timeline)
+  channel.on(
+    'postgres_changes',
+    { event: 'INSERT', schema: 'public', table: 'posts' },
+    (payload) => opts.onPostsInsert?.(payload)
+  );
+
+  // Profile changes (any user)
+  channel.on(
+    'postgres_changes',
+    { event: 'UPDATE', schema: 'public', table: 'profiles' },
+    (payload) => opts.onProfilesUpdate?.(payload)
+  );
+
+  // Notifications only for the signed-in user
+  if (opts.dbUserId) {
+    channel.on(
       'postgres_changes',
       {
-        event: '*', // INSERT, UPDATE, DELETE
+        event: 'INSERT',
         schema: 'public',
-        table: tableName,
+        table: 'notifications',
+        filter: `user_id=eq.${opts.dbUserId}`,
       },
-      (payload) => {
-        console.log(`[Realtime] ${tableName} change:`, payload);
-        try {
-          onChange(payload);
-        } catch (err) {
-          console.error(`[Realtime] Error in ${tableName} handler:`, err);
-        }
-      }
-    )
-    .subscribe((status) => {
-      console.log(`[Realtime] Subscription to ${tableName}:`, status);
-    });
+      (payload) => opts.onNotificationsInsert?.(payload)
+    );
+  }
+
+  channel.subscribe();
 
   return () => {
     try {
-      supabase.removeChannel(channel);
-      console.log(`[Realtime] Unsubscribed from ${tableName}`);
+      channel.unsubscribe();
     } catch {
-      // no-op
+      /* no-op */
     }
   };
 }
-
-/**
- * Example usage:
- *
- * import { useEffect } from 'react';
- * import { subscribeToTable } from '../services/realtime';
- *
- * useEffect(() => {
- *   const unsubscribe = subscribeToTable('profiles', (payload) => {
- *     // Update local state or refetch query
- *   });
- *   return () => unsubscribe();
- * }, []);
- */
