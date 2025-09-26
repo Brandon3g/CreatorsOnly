@@ -1,55 +1,55 @@
 // services/realtime.ts
 import { supabase } from '../lib/supabaseClient';
 
-export type Unsubscribe = () => void;
+type EventType = 'INSERT' | 'UPDATE' | 'DELETE';
+
+export type RealtimePayload<T = any> = {
+  eventType: EventType;
+  schema: string;
+  table: string;
+  new: T | null;
+  old: T | null;
+};
+
+export type RealtimeCallback<T = any> = (payload: RealtimePayload<T>) => void;
 
 /**
- * Subscribe to realtime DB changes.
- * NOTE: Never subscribe with a fake id; only with real UUIDs.
+ * Subscribe to all Postgres changes for a given public table.
+ * Returns an unsubscribe function you MUST call on unmount.
  */
-export function subscribeToAppRealtime(opts: {
-  dbUserId?: string; // may be undefined until session resolves
-  onPostsInsert?: (payload: any) => void;
-  onProfilesUpdate?: (payload: any) => void;
-  onNotificationsInsert?: (payload: any) => void;
-}): Unsubscribe {
-  const channel = supabase.channel('creatorsonly:realtime');
-
-  // Posts (global timeline)
-  channel.on(
-    'postgres_changes',
-    { event: 'INSERT', schema: 'public', table: 'posts' },
-    (payload) => opts.onPostsInsert?.(payload)
-  );
-
-  // Profile changes (any user)
-  channel.on(
-    'postgres_changes',
-    { event: 'UPDATE', schema: 'public', table: 'profiles' },
-    (payload) => opts.onProfilesUpdate?.(payload)
-  );
-
-  // Notifications only for the signed-in user
-  if (opts.dbUserId) {
-    channel.on(
+export function subscribeToTable<T = any>(
+  table: string,
+  cb: RealtimeCallback<T>
+): () => void {
+  const channel = supabase
+    .channel(`realtime:${table}`)
+    .on(
       'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'notifications',
-        filter: `user_id=eq.${opts.dbUserId}`,
-      },
-      (payload) => opts.onNotificationsInsert?.(payload)
-    );
-  }
-
-  channel.subscribe();
+      { event: '*', schema: 'public', table },
+      (payload: any) => {
+        cb({
+          eventType: payload.eventType as EventType,
+          schema: payload.schema ?? 'public',
+          table: payload.table ?? table,
+          new: (payload as any).new ?? null,
+          old: (payload as any).old ?? null,
+        });
+      }
+    )
+    .subscribe();
 
   return () => {
     try {
-      channel.unsubscribe();
-    } catch {
-      /* no-op */
-    }
+      supabase.removeChannel(channel);
+    } catch {}
   };
+}
+
+/** Convenience helper to subscribe to multiple tables at once. */
+export function subscribeToTables<T = any>(
+  tables: string[],
+  cb: RealtimeCallback<T>
+): () => void {
+  const unsubs = tables.map((t) => subscribeToTable<T>(t, cb));
+  return () => unsubs.forEach((u) => u());
 }

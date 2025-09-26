@@ -1,106 +1,87 @@
-// pages/Profile.tsx
-import React, { useEffect, useMemo, useState } from 'react';
-import { useAppContext } from '../context/AppContext';
-import { getMyProfile, type Profile } from '../services/profile';
-import { fetchProfilePosts, type Post } from '../services/posts';
-import { subscribeToAppRealtime } from '../services/realtime';
-import ProfileHeader from '../components/ProfileHeader';
+// components/ProfileHeader.tsx
+import React from 'react';
+import { ICONS } from '../constants';
 
-export default function ProfilePage() {
-  const { session, track } = useAppContext();
-  const dbUserId = session?.user?.id ?? null;
-  const analyticsId = dbUserId ?? 'anon';
+export type DbProfile = {
+  id: string;
+  display_name: string | null;
+  username: string | null;
+  bio: string | null;
+  avatar_url: string | null;
+  banner_url: string | null;
+};
 
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
+type Props = {
+  profile: DbProfile | null;
+  canEdit?: boolean;
+  onEditClick?: () => void;
+};
 
-  useEffect(() => {
-    track('profile_open', { page: 'profile' }, analyticsId);
-  }, [track, analyticsId]);
-
-  useEffect(() => {
-    if (!dbUserId) {
-      setProfile(null);
-      setPosts([]);
-      setLoading(false);
-      return;
-    }
-
-    let cancel = false;
-
-    (async () => {
-      try {
-        const p = await getMyProfile(dbUserId);
-        const ps = await fetchProfilePosts(dbUserId, 30);
-        if (!cancel) {
-          setProfile(p);
-          setPosts(ps);
-        }
-      } catch (err) {
-        console.error('[Profile] load error ›', err);
-        if (!cancel) {
-          setProfile(null);
-          setPosts([]);
-        }
-      } finally {
-        if (!cancel) setLoading(false);
-      }
-    })();
-
-    const unsub = subscribeToAppRealtime({
-      dbUserId: dbUserId ?? undefined,
-      onProfilesUpdate: (payload) => {
-        if (payload.new?.id === dbUserId) {
-          setProfile((prev) => ({ ...(prev ?? {} as any), ...(payload.new as Profile) }));
-        }
-      },
-      onPostsInsert: (payload) => {
-        if (payload.new?.user_id === dbUserId) {
-          setPosts((prev) => [payload.new as Post, ...prev]);
-        }
-      },
-    });
-
-    return () => {
-      cancel = true;
-      unsub();
-    };
-  }, [dbUserId]);
-
-  if (!dbUserId) {
-    return (
-      <div className="p-6 text-sm opacity-70">
-        Sign in to view your profile.
-      </div>
-    );
-  }
-
-  if (loading) {
-    return <div className="p-6 text-sm opacity-70">Loading profile…</div>;
-  }
+const ProfileHeader: React.FC<Props> = ({ profile, canEdit = false, onEditClick }) => {
+  const name = profile?.display_name || 'Unnamed';
+  const username = profile?.username ? `@${profile.username}` : '';
+  const bio = profile?.bio || '';
+  const avatar = profile?.avatar_url || '';
+  const banner = profile?.banner_url || '';
 
   return (
-    <div className="max-w-3xl mx-auto p-4 space-y-4">
-      <ProfileHeader
-        profile={profile ?? ({} as Profile)}
-        onUpdated={(p) => setProfile(p)}
-      />
+    <div className="w-full rounded-2xl overflow-hidden bg-base-200 shadow">
+      {/* Banner */}
+      <div className="relative h-40 md:h-56 bg-base-300">
+        {banner ? (
+          <img
+            src={banner}
+            alt="Banner"
+            className="w-full h-full object-cover"
+            loading="eager"
+            fetchPriority="high"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center opacity-60">
+            <ICONS.Image className="w-10 h-10" />
+          </div>
+        )}
 
-      {posts.length === 0 ? (
-        <div className="opacity-70 text-sm">No posts yet.</div>
-      ) : (
-        <div className="space-y-4">
-          {posts.map((p) => (
-            <div key={p.id} className="rounded-xl bg-base-200 p-4">
-              <div className="text-xs opacity-60">
-                {new Date(p.created_at).toLocaleString()}
-              </div>
-              <div className="mt-1 whitespace-pre-wrap">{p.content}</div>
+        {/* Avatar */}
+        <div className="absolute -bottom-12 left-4">
+          <div className="avatar">
+            <div className="w-24 h-24 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2 bg-base-100 overflow-hidden">
+              {avatar ? (
+                <img src={avatar} alt="Avatar" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center opacity-60">
+                  <ICONS.User className="w-10 h-10" />
+                </div>
+              )}
             </div>
-          ))}
+          </div>
         </div>
-      )}
+      </div>
+
+      {/* Name / bio / actions */}
+      <div className="pt-14 px-4 pb-4 md:px-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl md:text-2xl font-bold leading-tight">{name}</h1>
+            {username && <div className="text-sm opacity-70">{username}</div>}
+          </div>
+
+          {canEdit && (
+            <button
+              className="btn btn-sm md:btn-md btn-primary"
+              onClick={onEditClick}
+              type="button"
+            >
+              <ICONS.Edit className="w-4 h-4 mr-2" />
+              Edit Profile
+            </button>
+          )}
+        </div>
+
+        {bio && <p className="mt-3 text-sm md:text-base whitespace-pre-wrap">{bio}</p>}
+      </div>
     </div>
   );
-}
+};
+
+export default ProfileHeader;
