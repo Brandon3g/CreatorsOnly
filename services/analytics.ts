@@ -1,31 +1,19 @@
-// services/analytics.ts
-import { subscribeToTable } from './realtime';
+// src/services/analytics.ts
+// Minimal, safe analytics that never touches the database.
+// You keep console breadcrumbs without risking build/runtime errors.
 
-export interface AnalyticsPayload {
-  [key: string]: unknown;
-}
+type AnalyticsPayload = Record<string, any>;
 
-/** Simple console-based tracker so callers don't break. */
 export function trackEvent(event: string, payload: AnalyticsPayload = {}) {
   try {
-    console.debug('[analytics]', event, payload);
-  } catch {}
+    // Keep logging consistent and easy to filter in DevTools.
+    console.log('[ANALYTICS]', { event, ...payload });
+  } catch {
+    // no-op
+  }
 }
 
-/**
- * Optional helper that logs DB changes to the console.
- * Safe no-op for production; call it only if you want to observe traffic.
- */
+// Optional stub: if something calls this, it won't throw.
 export function initAnalyticsLogging() {
-  const offPosts = subscribeToTable('posts', (e) => {
-    console.debug('[analytics] posts change', e.eventType, { new: e.new, old: e.old });
-  });
-  const offProfiles = subscribeToTable('profiles', (e) => {
-    console.debug('[analytics] profiles change', e.eventType, { new: e.new, old: e.old });
-  });
-
-  return () => {
-    offPosts();
-    offProfiles();
-  };
+  /* no-op */
 }

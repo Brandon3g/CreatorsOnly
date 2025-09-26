@@ -1,85 +1,58 @@
-// context/RealtimeProvider.tsx
-import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
+// src/context/RealtimeProvider.tsx
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabaseClient';
 
-type RealtimeCtx = {
-  // simple event fan-out you can listen to from pages if desired
-  onPostChange?: (e: any) => void;
-  onProfileChange?: (e: any) => void;
+type ChannelStatus = 'CLOSED' | 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'CONNECTING';
+
+type SubscribeArgs = {
+  table: string;
+  filter?: { column: string; value: string } | null;
+  onInsert?: (payload: any) => void;
+  onUpdate?: (payload: any) => void;
+  onDelete?: (payload: any) => void;
 };
 
-const Ctx = createContext<RealtimeCtx>({});
-export const useRealtimeContext = () => useContext(Ctx);
+type CtxShape = {
+  status: ChannelStatus;
+  subscribeToTable: (args: SubscribeArgs) => () => void; // returns an unsubscribe()
+};
+
+const Ctx = createContext<CtxShape>({
+  status: 'CLOSED',
+  subscribeToTable: () => () => {},
+});
+
+export const useRealtime = () => useContext(Ctx);
 
 export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // keep stable refs so callbacks don’t re-subscribe
-  const onPostChangeRef = useRef<(e: any) => void>();
-  const onProfileChangeRef = useRef<(e: any) => void>();
+  const [status, setStatus] = useState<ChannelStatus>('CLOSED');
 
-  useEffect(() => {
-    let isMounted = true;
+  // generic table subscription helper
+  const subscribeToTable = useCallback((args: SubscribeArgs) => {
+    const { table, filter, onInsert, onUpdate, onDelete } = args;
 
-    // subscribe only after we have a valid session (auth token)
-    const boot = async () => {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!isMounted) return;
+    const channel = supabase.channel(`realtime:${table}:${Math.random().toString(36).slice(2)}`);
 
-      const token = sessionData?.session?.access_token;
-      if (!token) {
-        console.warn('[Realtime] no auth session; skipping Realtime subscribe');
-        return;
-      }
+    const base = { schema: 'public', table } as any;
+    const filt = filter ? { filter: `${filter.column}=eq.${filter.value}` } : {};
 
-      // One compact channel for DB changes we care about
-      const channel = supabase.channel('co-db', {
-        config: { broadcast: { self: false } },
-      });
+    if (onInsert) channel.on('postgres_changes', { ...base, event: 'INSERT', ...filt }, onInsert);
+    if (onUpdate) channel.on('postgres_changes', { ...base, event: 'UPDATE', ...filt }, onUpdate);
+    if (onDelete) channel.on('postgres_changes', { ...base, event: 'DELETE', ...filt }, onDelete);
 
-      channel.on('postgres_changes',
-        { event: '*', schema: 'public', table: 'posts' },
-        (payload) => {
-          console.log('[Realtime] posts change', payload);
-          onPostChangeRef.current?.(payload);
-        }
-      );
-
-      channel.on('postgres_changes',
-        { event: '*', schema: 'public', table: 'profiles' },
-        (payload) => {
-          console.log('[Realtime] profiles change', payload);
-          onProfileChangeRef.current?.(payload);
-        }
-      );
-
-      channel.subscribe((status) => {
-        console.log('[Realtime] channel status:', status);
-      });
-      
-      // clean up
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    };
-
-    const unsubAuth = supabase.auth.onAuthStateChange((_ev, _session) => {
-      // do nothing here; we only subscribe once on mount
+    channel.subscribe((s) => {
+      // Helpful console breadcrumb only
+      console.log('[Realtime] channel status:', s);
+      setStatus((s as ChannelStatus) ?? 'CLOSED');
     });
 
-    boot();
-
     return () => {
-      isMounted = false;
-      unsubAuth.data.subscription.unsubscribe();
+      try { supabase.removeChannel(channel); } catch {}
+      setStatus('CLOSED');
     };
   }, []);
 
-  const value = useMemo<RealtimeCtx>(() => ({
-    onPostChange: (cb) => { onPostChangeRef.current = cb; },
-    onProfileChange: (cb) => { onProfileChangeRef.current = cb; },
-  // @ts-expect-error: we’re intentionally exposing setters as functions
-  }), []);
+  const value = useMemo(() => ({ status, subscribeToTable }), [status, subscribeToTable]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 };
-
-export default RealtimeProvider;

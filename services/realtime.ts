@@ -1,55 +1,42 @@
-// services/realtime.ts
+// src/services/realtime.ts
 import { supabase } from '../lib/supabaseClient';
 
-type EventType = 'INSERT' | 'UPDATE' | 'DELETE';
-
-export type RealtimePayload<T = any> = {
-  eventType: EventType;
-  schema: string;
+export type TableHandler = {
   table: string;
-  new: T | null;
-  old: T | null;
+  filter?: { column: string; value: string } | null;
+  onInsert?: (payload: any) => void;
+  onUpdate?: (payload: any) => void;
+  onDelete?: (payload: any) => void;
 };
 
-export type RealtimeCallback<T = any> = (payload: RealtimePayload<T>) => void;
+// Drop-in helper many parts of the codebase expect.
+export function subscribeToTable(opts: TableHandler): () => void {
+  const { table, filter, onInsert, onUpdate, onDelete } = opts;
 
-/**
- * Subscribe to all Postgres changes for a given public table.
- * Returns an unsubscribe function you MUST call on unmount.
- */
-export function subscribeToTable<T = any>(
-  table: string,
-  cb: RealtimeCallback<T>
-): () => void {
-  const channel = supabase
-    .channel(`realtime:${table}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table },
-      (payload: any) => {
-        cb({
-          eventType: payload.eventType as EventType,
-          schema: payload.schema ?? 'public',
-          table: payload.table ?? table,
-          new: (payload as any).new ?? null,
-          old: (payload as any).old ?? null,
-        });
-      }
-    )
-    .subscribe();
+  const channel = supabase.channel(`realtime:${table}:${Math.random().toString(36).slice(2)}`);
+  const base = { schema: 'public', table } as any;
+  const filt = filter ? { filter: `${filter.column}=eq.${filter.value}` } : {};
+
+  if (onInsert) channel.on('postgres_changes', { ...base, event: 'INSERT', ...filt }, onInsert);
+  if (onUpdate) channel.on('postgres_changes', { ...base, event: 'UPDATE', ...filt }, onUpdate);
+  if (onDelete) channel.on('postgres_changes', { ...base, event: 'DELETE', ...filt }, onDelete);
+
+  channel.subscribe((s) => console.log('[Realtime] channel status:', s));
 
   return () => {
-    try {
-      supabase.removeChannel(channel);
-    } catch {}
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 
-/** Convenience helper to subscribe to multiple tables at once. */
-export function subscribeToTables<T = any>(
-  tables: string[],
-  cb: RealtimeCallback<T>
+// Optional app-wide helper (kept for compatibility).
+export function subscribeToAppRealtime(
+  table: string,
+  cb: (e: { type: 'INSERT' | 'UPDATE' | 'DELETE'; payload: any }) => void
 ): () => void {
-  const unsubs = tables.map((t) => subscribeToTable<T>(t, cb));
-  return () => unsubs.forEach((u) => u());
+  return subscribeToTable({
+    table,
+    onInsert: (payload) => cb({ type: 'INSERT', payload }),
+    onUpdate: (payload) => cb({ type: 'UPDATE', payload }),
+    onDelete: (payload) => cb({ type: 'DELETE', payload }),
+  });
 }
