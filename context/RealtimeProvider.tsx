@@ -1,5 +1,11 @@
 // src/context/RealtimeProvider.tsx
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from 'react';
 import { supabase } from '../lib/supabaseClient';
 
 type ChannelStatus = 'CLOSED' | 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'CONNECTING';
@@ -12,28 +18,36 @@ type SubscribeArgs = {
   onDelete?: (payload: any) => void;
 };
 
-type CtxShape = {
+type RealtimeCtx = {
   status: ChannelStatus;
-  subscribeToTable: (args: SubscribeArgs) => () => void; // returns an unsubscribe()
+  /**
+   * Subscribe to a public table. Returns an unsubscribe() you MUST call on unmount.
+   * Example:
+   *   const off = subscribeToTable({
+   *     table: 'posts',
+   *     onInsert: (p) => setPosts((prev) => [p.new, ...prev]),
+   *   });
+   *   return () => off();
+   */
+  subscribeToTable: (args: SubscribeArgs) => () => void;
 };
 
-const Ctx = createContext<CtxShape>({
+const Ctx = createContext<RealtimeCtx>({
   status: 'CLOSED',
   subscribeToTable: () => () => {},
 });
 
-export const useRealtime = () => useContext(Ctx);
-
 export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [status, setStatus] = useState<ChannelStatus>('CLOSED');
 
-  // generic table subscription helper
   const subscribeToTable = useCallback((args: SubscribeArgs) => {
     const { table, filter, onInsert, onUpdate, onDelete } = args;
 
-    const channel = supabase.channel(`realtime:${table}:${Math.random().toString(36).slice(2)}`);
+    const channel = supabase.channel(
+      `realtime:${table}:${Math.random().toString(36).slice(2)}`
+    );
 
-    const base = { schema: 'public', table } as any;
+    const base = { schema: 'public', table } as const;
     const filt = filter ? { filter: `${filter.column}=eq.${filter.value}` } : {};
 
     if (onInsert) channel.on('postgres_changes', { ...base, event: 'INSERT', ...filt }, onInsert);
@@ -41,18 +55,32 @@ export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     if (onDelete) channel.on('postgres_changes', { ...base, event: 'DELETE', ...filt }, onDelete);
 
     channel.subscribe((s) => {
-      // Helpful console breadcrumb only
+      // Breadcrumb only; helpful during testing
       console.log('[Realtime] channel status:', s);
       setStatus((s as ChannelStatus) ?? 'CLOSED');
     });
 
     return () => {
-      try { supabase.removeChannel(channel); } catch {}
+      try {
+        supabase.removeChannel(channel);
+      } catch {
+        /* no-op */
+      }
       setStatus('CLOSED');
     };
   }, []);
 
-  const value = useMemo(() => ({ status, subscribeToTable }), [status, subscribeToTable]);
+  const value = useMemo<RealtimeCtx>(() => ({ status, subscribeToTable }), [status, subscribeToTable]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 };
+
+/** New hook name */
+export function useRealtime() {
+  return useContext(Ctx);
+}
+
+/** Back-compat alias for older imports: pages expecting `useRealtimeContext` will keep working */
+export function useRealtimeContext() {
+  return useContext(Ctx);
+}
