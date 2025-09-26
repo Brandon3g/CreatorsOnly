@@ -1,39 +1,62 @@
-// context/RealtimeProvider.tsx
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { subscribeToAppRealtime, type RealtimeHandlers } from '../services/realtime';
+// src/context/RealtimeProvider.tsx
+// Tiny context that reports whether Realtime is "connected" (subscribed).
+// Pages/components can use subscribeToAppRealtime for their own listeners;
+// this provider only exposes a boolean and the current userId for convenience.
 
-type RealtimeCtx = { status: string };
-const Ctx = createContext<RealtimeCtx>({ status: 'INIT' });
-export const useRealtimeContext = () => useContext(Ctx);
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { supabase } from '../lib/supabaseClient';
+import { subscribeToAppRealtime } from '../services/realtime';
+
+type Ctx = {
+  userId: string | null;
+  connected: boolean;
+};
+
+const RealtimeCtx = createContext<Ctx>({ userId: null, connected: false });
 
 export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [status, setStatus] = useState('INIT');
+  const [userId, setUserId] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
 
+  // Track auth state => user id
   useEffect(() => {
-    const handlers: RealtimeHandlers = {
-      onOpen: () => setStatus('SUBSCRIBED'),
-      onClose: (s) => setStatus(s),
+    let mounted = true;
 
-      // You can wire these to invalidate local caches if needed:
-      onProfileUpdate: () => {},
-      onPostInsert: () => {},
-      onPostUpdate: () => {},
-      onPostDelete: () => {},
-      onNotificationInsert: () => {},
-      onNotificationUpdate: () => {},
-      onNotificationDelete: () => {},
-      onMessageInsert: () => {},
-      onRequestInsert: () => {},
-      onConversationInsert: () => {},
-      onConversationMemberInsert: () => {},
-      onFeedbackInsert: () => {},
-      onCollaborationInsert: () => {},
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setUserId(data.session?.user?.id ?? null);
+    });
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
+      setUserId(session?.user?.id ?? null);
+    });
+
+    return () => {
+      mounted = false;
+      sub.subscription?.unsubscribe();
     };
-
-    const unsub = subscribeToAppRealtime(handlers);
-    return typeof unsub === 'function' ? unsub : undefined;
   }, []);
 
-  const value = useMemo(() => ({ status }), [status]);
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  // Keep a lightweight global subscription so we can say "connected"
+  useEffect(() => {
+    // We only need to know that the socket is up; no heavy handlers here.
+    const off = subscribeToAppRealtime(userId ?? null, {
+      profiles: {
+        onAny: () => {
+          // Any event means the channel is alive
+          setConnected(true);
+        },
+      },
+    });
+
+    return off; // IMPORTANT: returns a function
+  }, [userId]);
+
+  const value = useMemo<Ctx>(() => ({ userId, connected }), [userId, connected]);
+
+  return <RealtimeCtx.Provider value={value}>{children}</RealtimeCtx.Provider>;
 };
+
+export function useRealtimeContext() {
+  return useContext(RealtimeCtx);
+}

@@ -1,137 +1,194 @@
-// services/realtime.ts
+// src/services/realtime.ts
+// Centralized, safe helpers for Supabase Realtime.
+// Every subscribe* function RETURNS A FUNCTION for React effect cleanup
+// and also exposes a `.cleanup` alias for backward compatibility.
+
 import { supabase } from '../lib/supabaseClient';
 
-type Status = 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT';
+type RowEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 
-export type RealtimeHandlers = {
-  onOpen?: () => void;
-  onClose?: (status: Status) => void;
+export type ChangeHandler<T = any> = (payload: {
+  schema: string;
+  table: string;
+  eventType: RowEvent;
+  new?: T;
+  old?: T;
+}) => void;
 
-  onPostInsert?: (payload: unknown) => void;
-  onPostUpdate?: (payload: unknown) => void;
-  onPostDelete?: (payload: unknown) => void;
-
-  onProfileUpdate?: (payload: unknown) => void;
-
-  onNotificationInsert?: (payload: unknown) => void;
-  onNotificationUpdate?: (payload: unknown) => void;
-  onNotificationDelete?: (payload: unknown) => void;
-
-  onMessageInsert?: (payload: unknown) => void;
-  onRequestInsert?: (payload: unknown) => void;
-  onConversationInsert?: (payload: unknown) => void;
-  onConversationMemberInsert?: (payload: unknown) => void;
-  onFeedbackInsert?: (payload: unknown) => void;
-  onCollaborationInsert?: (payload: unknown) => void;
-};
-
-function withCleanupAlias(fn: () => void) {
-  // Back-compat: allow callers to do sub.cleanup()
-  (fn as any).cleanup = fn;
-  return fn;
+export interface Handlers<T = any> {
+  onInsert?: ChangeHandler<T>;
+  onUpdate?: ChangeHandler<T>;
+  onDelete?: ChangeHandler<T>;
+  onAny?: ChangeHandler<T>;
+  onError?: (e: unknown) => void;
 }
 
-/** High-level app subscription used by RealtimeProvider */
-export function subscribeToAppRealtime(handlers: RealtimeHandlers) {
-  const channelName = `public-changes-${Math.random().toString(36).slice(2)}`;
+export interface TableSubscriptionOptions {
+  table: string;
+  event?: RowEvent;      // defaults to '*'
+  filter?: string;       // e.g. 'user_id=eq.123'
+  schema?: string;       // defaults to 'public'
+  channelName?: string;  // optional explicit channel name
+}
+
+/**
+ * Subscribe to a single Postgres table changes feed.
+ * Returns a FUNCTION to unsubscribe. Also sets `fn.cleanup = fn` for old callers.
+ */
+export function subscribeToTable<T = any>(
+  opts: TableSubscriptionOptions,
+  handlers: Handlers<T> = {}
+): () => void {
+  const schema = opts.schema ?? 'public';
+  const event: RowEvent = opts.event ?? '*';
+  const channelName =
+    opts.channelName ?? `rt_${schema}_${opts.table}_${Math.random().toString(36).slice(2)}`;
+
   const channel = supabase.channel(channelName);
 
-  const on = (
-    table: string,
-    event: '*' | 'INSERT' | 'UPDATE' | 'DELETE',
-    cb: (p: any) => void
-  ) =>
-    channel.on('postgres_changes', { event, schema: 'public', table }, (payload) => cb(payload));
-
-  // posts
-  on('posts', 'INSERT', (p) => handlers.onPostInsert?.(p));
-  on('posts', 'UPDATE', (p) => handlers.onPostUpdate?.(p));
-  on('posts', 'DELETE', (p) => handlers.onPostDelete?.(p));
-
-  // profiles
-  on('profiles', 'UPDATE', (p) => handlers.onProfileUpdate?.(p));
-
-  // notifications
-  on('notifications', 'INSERT', (p) => handlers.onNotificationInsert?.(p));
-  on('notifications', 'UPDATE', (p) => handlers.onNotificationUpdate?.(p));
-  on('notifications', 'DELETE', (p) => handlers.onNotificationDelete?.(p));
-
-  // messages / conversations
-  on('messages', 'INSERT', (p) => handlers.onMessageInsert?.(p));
-  on('conversations', 'INSERT', (p) => handlers.onConversationInsert?.(p));
-  on('conversation_members', 'INSERT', (p) => handlers.onConversationMemberInsert?.(p));
-
-  // requests / feedback / collaborations
-  on('requests', 'INSERT', (p) => handlers.onRequestInsert?.(p));
-  on('feedback', 'INSERT', (p) => handlers.onFeedbackInsert?.(p));
-  on('collaborations', 'INSERT', (p) => handlers.onCollaborationInsert?.(p));
+  channel.on(
+    'postgres_changes',
+    {
+      event,
+      schema,
+      table: opts.table,
+      // Supabase expects e.g. 'user_id=eq.123' or undefined
+      filter: opts.filter || undefined,
+    },
+    (payload: any) => {
+      try {
+        const wrapped = {
+          schema,
+          table: opts.table,
+          eventType: payload.eventType as RowEvent,
+          new: payload.new,
+          old: payload.old,
+        };
+        handlers.onAny?.(wrapped);
+        if (wrapped.eventType === 'INSERT') handlers.onInsert?.(wrapped);
+        if (wrapped.eventType === 'UPDATE') handlers.onUpdate?.(wrapped);
+        if (wrapped.eventType === 'DELETE') handlers.onDelete?.(wrapped);
+      } catch (e) {
+        handlers.onError?.(e);
+      }
+    }
+  );
 
   channel.subscribe((status) => {
+    // Light console breadcrumb; non-blocking
     if (status === 'SUBSCRIBED') {
       console.log('[Realtime] channel status: SUBSCRIBED');
-      handlers.onOpen?.();
-    } else {
-      console.warn('[Realtime] channel status:', status);
-      handlers.onClose?.(status as Status);
+    } else if (status === 'CLOSED') {
+      console.warn('[Realtime] channel status: CLOSED');
+    } else if (status === 'CHANNEL_ERROR') {
+      console.error('[Realtime] channel status: CHANNEL_ERROR');
     }
   });
 
-  const unsubscribe = withCleanupAlias(() => {
+  const off = () => {
     try {
       supabase.removeChannel(channel);
-    } catch {
-      /* no-op */
+    } catch (e) {
+      handlers.onError?.(e);
     }
-  });
+  };
 
-  return unsubscribe;
+  // Back-compat for callers that used `.cleanup`
+  (off as any).cleanup = off;
+  return off;
 }
 
-/** Low-level table-scoped helper used by pages/components */
-export type TableEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
+/**
+ * Convenience helpers for common tables.
+ * These simply call subscribeToTable with the right table name.
+ */
+export function subscribeToPosts<T = any>(
+  handlers: Handlers<T>,
+  filter?: string
+) {
+  return subscribeToTable<T>({ table: 'posts', event: '*', filter }, handlers);
+}
 
-export function subscribeToTable(opts: {
-  table: string;
-  events?: TableEvent[]; // default: INSERT/UPDATE/DELETE
-  onEvent: (payload: any) => void;
-  schema?: string; // default: 'public'
-  filter?: string; // e.g. 'conversation_id=eq.1234…'
-  channelName?: string;
-}) {
-  const {
-    table,
-    onEvent,
-    filter,
-    schema = 'public',
-    events = ['INSERT', 'UPDATE', 'DELETE'],
-    channelName = `tbl-${table}-${Math.random().toString(36).slice(2)}`,
-  } = opts;
+export function subscribeToProfiles<T = any>(
+  handlers: Handlers<T>,
+  filter?: string
+) {
+  return subscribeToTable<T>({ table: 'profiles', event: '*', filter }, handlers);
+}
 
-  const channel = supabase.channel(channelName);
+export function subscribeToNotifications<T = any>(
+  handlers: Handlers<T>,
+  filter?: string
+) {
+  return subscribeToTable<T>({ table: 'notifications', event: '*', filter }, handlers);
+}
 
-  events.forEach((ev) => {
-    channel.on(
-      'postgres_changes',
-      { event: ev, schema, table, ...(filter ? { filter } : {}) },
-      (payload) => onEvent(payload)
-    );
-  });
+export function subscribeToMessages<T = any>(
+  handlers: Handlers<T>,
+  filter?: string
+) {
+  return subscribeToTable<T>({ table: 'messages', event: '*', filter }, handlers);
+}
 
-  channel.subscribe((status) => {
-    if (status === 'SUBSCRIBED') {
-      console.log(`[Realtime] ${table} subscription: SUBSCRIBED`);
-    } else {
-      console.warn(`[Realtime] ${table} subscription status:`, status);
+export function subscribeToConversations<T = any>(
+  handlers: Handlers<T>,
+  filter?: string
+) {
+  return subscribeToTable<T>({ table: 'conversations', event: '*', filter }, handlers);
+}
+
+/**
+ * Composite subscription used by pages that want "the whole app realtime".
+ * Pass the current user's UUID so we can scope some streams if desired.
+ *
+ * Returns ONE cleanup function that tears down all channels.
+ */
+export function subscribeToAppRealtime(
+  userId: string | null | undefined,
+  opts?: {
+    posts?: Handlers;
+    profiles?: Handlers;
+    notifications?: Handlers;
+    messages?: Handlers;
+    conversations?: Handlers;
+  }
+): () => void {
+  const offs: Array<() => void> = [];
+
+  // Posts: everyone’s public posts (keep simple; small project scale)
+  if (opts?.posts) {
+    offs.push(subscribeToPosts(opts.posts));
+  }
+
+  // Profiles: reflect public profile changes across devices
+  if (opts?.profiles) {
+    offs.push(subscribeToProfiles(opts.profiles));
+  }
+
+  // Notifications scoped to the logged-in user (if provided)
+  if (opts?.notifications) {
+    const filter = userId ? `user_id=eq.${userId}` : undefined;
+    offs.push(subscribeToNotifications(opts.notifications, filter));
+  }
+
+  // Messages + conversations scoped to the participant (if provided)
+  if (opts?.messages) {
+    const filter = userId ? `sender_id=eq.${userId}` : undefined;
+    offs.push(subscribeToMessages(opts.messages, filter));
+  }
+  if (opts?.conversations) {
+    offs.push(subscribeToConversations(opts.conversations));
+  }
+
+  const offAll = () => {
+    for (const off of offs) {
+      try {
+        off();
+      } catch {
+        /* noop */
+      }
     }
-  });
-
-  const unsubscribe = withCleanupAlias(() => {
-    try {
-      supabase.removeChannel(channel);
-    } catch {
-      /* no-op */
-    }
-  });
-
-  return unsubscribe;
+  };
+  (offAll as any).cleanup = offAll;
+  return offAll;
 }
