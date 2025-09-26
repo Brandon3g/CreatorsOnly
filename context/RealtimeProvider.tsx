@@ -1,4 +1,3 @@
-// context/RealtimeProvider.tsx
 import React, {
   createContext,
   useContext,
@@ -7,15 +6,28 @@ import React, {
   useState,
   ReactNode,
 } from 'react';
+import { useAppContext } from './AppContext'; // <- we wait for user/session here
 import { subscribeToAppRealtime } from '../services/realtime';
 
 type ChannelStatus = 'INIT' | 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'DISCONNECTED';
 
-type LastEvent = {
-  table: 'posts' | 'profiles' | 'notifications' | 'messages' | 'requests' | 'conversations' | 'conversation_members' | 'feedback' | 'collaborations' | string;
-  type: 'INSERT' | 'UPDATE' | 'DELETE' | string;
-  payload?: unknown;
-} | null;
+type LastEvent =
+  | {
+      table:
+        | 'posts'
+        | 'profiles'
+        | 'notifications'
+        | 'messages'
+        | 'requests'
+        | 'conversations'
+        | 'conversation_members'
+        | 'feedback'
+        | 'collaborations'
+        | string;
+      type: 'INSERT' | 'UPDATE' | 'DELETE' | string;
+      payload?: unknown;
+    }
+  | null;
 
 export type RealtimeContextValue = {
   status: ChannelStatus;
@@ -28,11 +40,17 @@ const RealtimeCtx = createContext<RealtimeContextValue>({
 });
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
+  const { user } = useAppContext(); // <- becomes truthy after login/session loads
   const [status, setStatus] = useState<ChannelStatus>('INIT');
   const [lastEvent, setLastEvent] = useState<LastEvent>(null);
 
   useEffect(() => {
-    // Wire every table we care about to a simple “lastEvent” signal.
+    // No user/session yet → don’t open a channel.
+    if (!user?.id) {
+      setStatus('INIT');
+      return;
+    }
+
     const { cleanup } = subscribeToAppRealtime({
       onOpen: () => setStatus('SUBSCRIBED'),
       onClose: (s) => setStatus((s as ChannelStatus) ?? 'CLOSED'),
@@ -62,7 +80,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     });
 
     return () => cleanup();
-  }, []);
+  }, [user?.id]);
 
   const value = useMemo(() => ({ status, lastEvent }), [status, lastEvent]);
 
