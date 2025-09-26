@@ -27,33 +27,26 @@ export const useRealtimeContext = (): RealtimeContextValue => {
 
 const log = (...args: any[]) => console.log('[RealtimeProvider]', ...args);
 
-/**
- * RealtimeProvider
- * - Opens a single multiplexed channel ("co-bus") for all tables we care about
- * - Logs channel status transitions (OPENING/SUBSCRIBED/CLOSED/ERRORED)
- * - Cleans up on unmount or user change
- */
-const RealtimeProvider: React.FC<PropsWithChildren> = ({ children }) => {
+/** Internal component so we can export both default and named */
+const RealtimeProviderImpl: React.FC<PropsWithChildren> = ({ children }) => {
   const { user } = useAppContext();
   const [isConnected, setIsConnected] = useState(false);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   const handleChange = useCallback((payload: any, label: string) => {
     log(`${label}:`, payload?.eventType, payload?.table, payload);
-    // NOTE: components can still fetch or react to changes on their own;
-    // we keep the provider thin and reliable.
   }, []);
 
   const subscribeAll = useCallback(() => {
-    // Tear down any previous channel before creating a new one
+    // Clean old channel
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
       channelRef.current = null;
     }
 
-    const channel = supabase.channel('co-bus'); // multiplexed channel
+    const channel = supabase.channel('co-bus'); // one multiplexed channel
 
-    // Tables to listen to
+    // Listen to all app tables
     const tables: Array<{ table: string; label: string }> = [
       { table: 'profiles', label: 'profiles' },
       { table: 'posts', label: 'posts' },
@@ -70,11 +63,10 @@ const RealtimeProvider: React.FC<PropsWithChildren> = ({ children }) => {
       channel.on(
         'postgres_changes',
         { event: '*', schema: 'public', table },
-        (payload) => handleChange(payload, label),
+        (payload) => handleChange(payload, label)
       );
     });
 
-    // Channel lifecycle
     channel.on('status_changed', (status: string) => {
       log(`channel status: ${status}`);
       setIsConnected(status === 'SUBSCRIBED');
@@ -89,7 +81,6 @@ const RealtimeProvider: React.FC<PropsWithChildren> = ({ children }) => {
 
   useEffect(() => {
     if (!user) {
-      // Logged out: ensure channel is removed
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
         channelRef.current = null;
@@ -98,7 +89,6 @@ const RealtimeProvider: React.FC<PropsWithChildren> = ({ children }) => {
       return;
     }
 
-    // Logged in: open channel
     subscribeAll();
 
     return () => {
@@ -115,5 +105,7 @@ const RealtimeProvider: React.FC<PropsWithChildren> = ({ children }) => {
   return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
 };
 
-export default RealtimeProvider;
+// Export BOTH named and default so App.tsx can use either form.
+export const RealtimeProvider = RealtimeProviderImpl;
+export default RealtimeProviderImpl;
 export { RealtimeContext };
