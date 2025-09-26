@@ -1,30 +1,17 @@
-// src/services/profile.ts
+// services/profile.ts
 import { supabase } from '../lib/supabaseClient';
 
-export type MyProfile = {
+export type Profile = {
   id: string;
+  username: string | null;
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
-  updated_at?: string | null;
+  updated_at: string;
 };
 
-// Supabase returns PGRST116 for `.single()` when no row exists.
-// Some stacks surface it as “Row not found”.
-function isRowNotFound(err: any) {
-  return (
-    err?.code === 'PGRST116' ||
-    err?.message?.toLowerCase?.().includes('row not found') ||
-    err?.status === 406
-  );
-}
-
-/** Get the signed-in user's profile (or null if none). */
-export async function getMyProfile(): Promise<MyProfile | null> {
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
+export async function getMyProfile(): Promise<Profile | null> {
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
   if (userErr) throw userErr;
   if (!user) return null;
 
@@ -34,56 +21,28 @@ export async function getMyProfile(): Promise<MyProfile | null> {
     .eq('id', user.id)
     .single();
 
-  if (error) {
-    if (isRowNotFound(error)) return null;
-    throw error;
-  }
-  return data as MyProfile;
+  if (error) throw error;
+  return data as Profile;
 }
 
-/** Upsert the signed-in user's profile. */
-export async function upsertMyProfile(p: Partial<MyProfile>): Promise<MyProfile> {
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
+export async function updateMyProfile(patch: Partial<Profile>): Promise<Profile> {
+  const { data: { user }, error: userErr } = await supabase.auth.getUser();
   if (userErr) throw userErr;
-  if (!user) throw new Error('Not signed in');
+  if (!user) throw new Error('No auth session');
 
-  const payload = {
-    id: user.id,
-    display_name: p.display_name ?? null,
-    bio: p.bio ?? null,
-    avatar_url: p.avatar_url ?? null,
-    updated_at: new Date().toISOString(),
-  };
+  const payload: Partial<Profile> = {};
+  if (patch.username !== undefined) payload.username = patch.username;
+  if (patch.display_name !== undefined) payload.display_name = patch.display_name;
+  if (patch.bio !== undefined) payload.bio = patch.bio;
+  if (patch.avatar_url !== undefined) payload.avatar_url = patch.avatar_url;
 
   const { data, error } = await supabase
     .from('profiles')
-    .upsert(payload, { onConflict: 'id' })
+    .update(payload)
+    .eq('id', user.id)
     .select('*')
     .single();
 
   if (error) throw error;
-  return data as MyProfile;
-}
-
-/** Get a profile by id (or null if not found). */
-export async function getProfileById(id: string): Promise<MyProfile | null> {
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', id).single();
-  if (error) {
-    if (isRowNotFound(error)) return null;
-    throw error;
-  }
-  return data as MyProfile;
-}
-
-/** List all profiles (ordered by updated_at desc). */
-export async function listProfiles(): Promise<MyProfile[]> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .order('updated_at', { ascending: false });
-  if (error) throw error;
-  return (data || []) as MyProfile[];
+  return data as Profile;
 }

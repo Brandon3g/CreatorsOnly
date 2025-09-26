@@ -1,154 +1,85 @@
+// context/RealtimeProvider.tsx
 import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { useAppContext } from './AppContext';
-
-type RealtimeStatus = 'OPEN' | 'SUBSCRIBED' | 'CLOSED' | 'ERROR';
 
 type RealtimeCtx = {
-  // Lightweight subscribe helper:
-  //   const off = on('posts', (payload) => { ... })
-  //   off() to unsubscribe.
-  on: (table: string, handler: (payload: any) => void) => () => void;
-
-  // Pass-through data so consumers never see undefined
-  posts: any[];
-  profiles: any[];
-  requests: any[];
-  conversations: any[];
-  messages: any[];
-  collaborations: any[];
-  feedback: any[];
-  notifications: any[];
-
-  status: RealtimeStatus;
+  // simple event fan-out you can listen to from pages if desired
+  onPostChange?: (e: any) => void;
+  onProfileChange?: (e: any) => void;
 };
 
-const RealtimeContext = createContext<RealtimeCtx>({
-  on: () => () => {},
-  posts: [],
-  profiles: [],
-  requests: [],
-  conversations: [],
-  messages: [],
-  collaborations: [],
-  feedback: [],
-  notifications: [],
-  status: 'CLOSED',
-});
+const Ctx = createContext<RealtimeCtx>({});
+export const useRealtimeContext = () => useContext(Ctx);
 
 export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Pull data from AppContext so existing pages keep working
-  const {
-    posts: appPosts,
-    users: appUsers, // a.k.a. profiles
-    requests: appRequests,
-    conversations: appConversations,
-    messages: appMessages,
-    collaborations: appCollabs,
-    feedback: appFeedback,
-    notifications: appNotifications,
-  } = useAppContext() as any;
+  // keep stable refs so callbacks don’t re-subscribe
+  const onPostChangeRef = useRef<(e: any) => void>();
+  const onProfileChangeRef = useRef<(e: any) => void>();
 
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const statusRef = useRef<RealtimeStatus>('CLOSED');
-
-  // Create one shared channel
   useEffect(() => {
-    const ch = supabase.channel('co:all');
-    channelRef.current = ch;
+    let isMounted = true;
 
-    const sub = ch.subscribe((status) => {
-      statusRef.current = (status as RealtimeStatus) ?? 'CLOSED';
-      // Useful trace while we harden things:
-      console.log('[RealtimeProvider] channel status:', statusRef.current);
-    });
+    // subscribe only after we have a valid session (auth token)
+    const boot = async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!isMounted) return;
 
-    return () => {
-      try {
-        ch.unsubscribe();
-      } catch (e) {
-        console.warn('[RealtimeProvider] unsubscribe error:', e);
-      } finally {
-        channelRef.current = null;
-        statusRef.current = 'CLOSED';
-      }
-    };
-  }, []);
-
-  // Stable subscribe helper
-  const on = useMemo(() => {
-    return (table: string, handler: (payload: any) => void) => {
-      // Ensure we have a channel (in case provider remounts)
-      if (!channelRef.current) {
-        channelRef.current = supabase.channel('co:all');
-        channelRef.current.subscribe((s) => {
-          statusRef.current = (s as RealtimeStatus) ?? 'CLOSED';
-          console.log('[RealtimeProvider] channel status:', statusRef.current);
-        });
+      const token = sessionData?.session?.access_token;
+      if (!token) {
+        console.warn('[Realtime] no auth session; skipping Realtime subscribe');
+        return;
       }
 
-      const ch = channelRef.current;
+      // One compact channel for DB changes we care about
+      const channel = supabase.channel('co-db', {
+        config: { broadcast: { self: false } },
+      });
 
-      // Attach listener
-      ch.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table },
+      channel.on('postgres_changes',
+        { event: '*', schema: 'public', table: 'posts' },
         (payload) => {
-          try {
-            handler(payload);
-          } catch (err) {
-            console.error(`[RealtimeProvider] handler error for ${table}:`, err);
-          }
+          console.log('[Realtime] posts change', payload);
+          onPostChangeRef.current?.(payload);
         }
       );
 
-      // Return a narrow "unsubscribe" that just removes this listener group by
-      // recreating the channel (Supabase’s JS API doesn’t expose per-listener removal).
-      return () => {
-        try {
-          ch.unsubscribe();
-        } catch (e) {
-          console.warn('[RealtimeProvider] unsubscribe error:', e);
-        } finally {
-          // Recreate a fresh channel lazily next time `on(...)` is called.
-          channelRef.current = null;
-          statusRef.current = 'CLOSED';
+      channel.on('postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        (payload) => {
+          console.log('[Realtime] profiles change', payload);
+          onProfileChangeRef.current?.(payload);
         }
+      );
+
+      channel.subscribe((status) => {
+        console.log('[Realtime] channel status:', status);
+      });
+      
+      // clean up
+      return () => {
+        supabase.removeChannel(channel);
       };
+    };
+
+    const unsubAuth = supabase.auth.onAuthStateChange((_ev, _session) => {
+      // do nothing here; we only subscribe once on mount
+    });
+
+    boot();
+
+    return () => {
+      isMounted = false;
+      unsubAuth.data.subscription.unsubscribe();
     };
   }, []);
 
-  // Always coalesce to arrays so consumers never see undefined
-  const value = useMemo<RealtimeCtx>(
-    () => ({
-      on,
-      posts: appPosts ?? [],
-      profiles: appUsers ?? [],
-      requests: appRequests ?? [],
-      conversations: appConversations ?? [],
-      messages: appMessages ?? [],
-      collaborations: appCollabs ?? [],
-      feedback: appFeedback ?? [],
-      notifications: appNotifications ?? [],
-      status: statusRef.current,
-    }),
-    [
-      on,
-      appPosts,
-      appUsers,
-      appRequests,
-      appConversations,
-      appMessages,
-      appCollabs,
-      appFeedback,
-      appNotifications,
-    ]
-  );
+  const value = useMemo<RealtimeCtx>(() => ({
+    onPostChange: (cb) => { onPostChangeRef.current = cb; },
+    onProfileChange: (cb) => { onProfileChangeRef.current = cb; },
+  // @ts-expect-error: we’re intentionally exposing setters as functions
+  }), []);
 
-  return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 };
 
-export const useRealtimeContext = () => useContext(RealtimeContext);
-
-// Also export default for imports like: import RealtimeProvider from '...'
 export default RealtimeProvider;
