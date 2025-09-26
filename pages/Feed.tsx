@@ -1,11 +1,10 @@
-// src/pages/Feed.tsx
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+// pages/Feed.tsx
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { useRealtimeContext } from '../context/RealtimeProvider';
 import PostCard from '../components/PostCard';
 import { ICONS } from '../constants';
-import { User, NotificationType } from '../types';
-import { usePullToRefresh, PullToRefreshIndicator } from '../components/PullToRefresh';
+import { NotificationType, User } from '../types';
 
 const Feed: React.FC = () => {
   const {
@@ -20,26 +19,16 @@ const Feed: React.FC = () => {
     refreshData,
   } = useAppContext();
 
-  const {
-    posts,
-    profiles: users,
-    isLoadingPosts,
-    isLoadingProfiles,
-    on, // realtime subscription API
-  } = useRealtimeContext();
+  const { posts, profiles: users, isLoadingPosts, isLoadingProfiles, on } =
+    useRealtimeContext();
 
-  // SAFETY: always work with arrays even while data is loading
+  // Always operate on arrays (even while loading)
   const safePosts = Array.isArray(posts) ? posts : [];
   const safeUsers = Array.isArray(users) ? users : [];
 
-  // Pull-to-refresh
-  const { isRefreshing, pullDistance, isPulling, handlers } = usePullToRefresh({
-    onRefresh: refreshData,
-  });
-
   const [copied, setCopied] = useState(false);
 
-  // New Post State
+  // New Post
   const [newPostContent, setNewPostContent] = useState('');
   const [newPostImage, setNewPostImage] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
@@ -57,16 +46,18 @@ const Feed: React.FC = () => {
         !n.isRead
     ) ?? false;
 
-  // ——— Realtime: refetch feed when posts table changes ———
+  // Realtime: re-fetch when posts change
   useEffect(() => {
-    const off = on({ table: 'posts', event: '*' }, () => {
-      // Keep it simple: call your existing loader
-      refreshData();
-    });
-    return off;
+    if (typeof on === 'function') {
+      const off = on({ table: 'posts', event: '*' }, () => {
+        refreshData();
+      });
+      return off;
+    }
+    return undefined;
   }, [on, refreshData]);
 
-  // Mentions: recompute suggestions as the user types "@…"
+  // Mention suggestions
   useEffect(() => {
     if (mentionQuery === null) {
       setSuggestions([]);
@@ -77,38 +68,40 @@ const Feed: React.FC = () => {
     const q = mentionQuery.toLowerCase();
     const filtered = safeUsers
       .filter(
-        (user: any) =>
-          user.id !== currentUser.id &&
-          (user.username?.toLowerCase().includes(q) ||
-            user.name?.toLowerCase().includes(q))
+        (u: any) =>
+          u.id !== currentUser.id &&
+          (u.username?.toLowerCase().includes(q) ||
+            u.name?.toLowerCase().includes(q))
       )
       .slice(0, 5);
 
     setSuggestions(filtered as User[]);
   }, [mentionQuery, safeUsers, currentUser]);
 
-  // Efficiently compute the feed list
+  // Build the feed
   const feedPosts = useMemo(() => {
     if (!currentUser) return [];
 
     const base = isMasterUser
       ? safePosts
       : safePosts.filter(
-          (post: any) =>
-            currentUser.friendIds?.includes?.(post.authorId) ||
-            post.authorId === currentUser.id
+          (p: any) =>
+            currentUser.friendIds?.includes?.(p.authorId) ||
+            p.authorId === currentUser.id
         );
 
     return base
       .filter(
-        (post: any) => !currentUser.blockedUserIds?.includes?.(post.authorId)
+        (p: any) => !currentUser.blockedUserIds?.includes?.(p.authorId)
       )
-      .sort(
-        (a: any, b: any) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-      );
+      .sort((a: any, b: any) => {
+        const ta = new Date(a.created_at ?? a.timestamp ?? 0).getTime();
+        const tb = new Date(b.created_at ?? b.timestamp ?? 0).getTime();
+        return tb - ta;
+      });
   }, [safePosts, isMasterUser, currentUser]);
 
+  // Actions
   const handleShareApp = async () => {
     const shareUrl = window.location.origin;
     const shareData = {
@@ -125,7 +118,6 @@ const Feed: React.FC = () => {
         throw new Error('Web Share API not supported');
       }
     } catch {
-      // Fallback: copy to clipboard
       await navigator.clipboard.writeText(shareUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -142,14 +134,13 @@ const Feed: React.FC = () => {
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setNewPostImage((event.target?.result as string) || null);
-      };
-      reader.readAsDataURL(file);
-    }
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setNewPostImage((ev.target?.result as string) || null);
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -159,7 +150,6 @@ const Feed: React.FC = () => {
     const caretPos = e.target.selectionStart || 0;
     const textBeforeCaret = text.substring(0, caretPos);
     const atMatch = textBeforeCaret.match(/@(\w+)$/);
-
     setMentionQuery(atMatch ? atMatch[1] : null);
   };
 
@@ -173,15 +163,13 @@ const Feed: React.FC = () => {
     const atMatch = textBeforeCaret.match(/@(\w+)$/);
 
     if (atMatch) {
-      const mentionStartIndex = atMatch.index ?? 0;
+      const start = atMatch.index ?? 0;
       const injected = `@${username} `;
-      const newText =
-        text.substring(0, mentionStartIndex) +
-        injected +
-        text.substring(caretPos);
-      setNewPostContent(newText);
+      const next =
+        text.substring(0, start) + injected + text.substring(caretPos);
+      setNewPostContent(next);
 
-      const newCaretPos = mentionStartIndex + injected.length;
+      const newCaretPos = start + injected.length;
       setTimeout(() => {
         textarea.focus();
         textarea.setSelectionRange(newCaretPos, newCaretPos);
@@ -192,15 +180,6 @@ const Feed: React.FC = () => {
 
   return (
     <div className="min-h-screen">
-      {/* Pull-to-refresh area */}
-      <div {...handlers} className="relative">
-        <PullToRefreshIndicator
-          isPulling={isPulling}
-          pullDistance={pullDistance}
-          isRefreshing={isRefreshing}
-        />
-      </div>
-
       {/* Header */}
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur border-b border-surface">
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
@@ -278,7 +257,6 @@ const Feed: React.FC = () => {
                 className="p-1.5 rounded-full hover:bg-surface-light"
                 title="Profile"
               >
-                {/* your avatar would normally be here */}
                 {ICONS.user}
               </button>
             )}
