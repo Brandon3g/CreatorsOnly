@@ -1,86 +1,74 @@
-// src/context/RealtimeProvider.tsx
+// context/RealtimeProvider.tsx
 import React, {
   createContext,
-  useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
+  ReactNode,
 } from 'react';
-import { supabase } from '../lib/supabaseClient';
+import { subscribeToAppRealtime } from '../services/realtime';
 
-type ChannelStatus = 'CLOSED' | 'SUBSCRIBED' | 'CHANNEL_ERROR' | 'CONNECTING';
+type ChannelStatus = 'INIT' | 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'DISCONNECTED';
 
-type SubscribeArgs = {
-  table: string;
-  filter?: { column: string; value: string } | null;
-  onInsert?: (payload: any) => void;
-  onUpdate?: (payload: any) => void;
-  onDelete?: (payload: any) => void;
-};
+type LastEvent = {
+  table: 'posts' | 'profiles' | 'notifications' | 'messages' | 'requests' | 'conversations' | 'conversation_members' | 'feedback' | 'collaborations' | string;
+  type: 'INSERT' | 'UPDATE' | 'DELETE' | string;
+  payload?: unknown;
+} | null;
 
-type RealtimeCtx = {
+export type RealtimeContextValue = {
   status: ChannelStatus;
-  /**
-   * Subscribe to a public table. Returns an unsubscribe() you MUST call on unmount.
-   * Example:
-   *   const off = subscribeToTable({
-   *     table: 'posts',
-   *     onInsert: (p) => setPosts((prev) => [p.new, ...prev]),
-   *   });
-   *   return () => off();
-   */
-  subscribeToTable: (args: SubscribeArgs) => () => void;
+  lastEvent: LastEvent;
 };
 
-const Ctx = createContext<RealtimeCtx>({
-  status: 'CLOSED',
-  subscribeToTable: () => () => {},
+const RealtimeCtx = createContext<RealtimeContextValue>({
+  status: 'INIT',
+  lastEvent: null,
 });
 
-export const RealtimeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [status, setStatus] = useState<ChannelStatus>('CLOSED');
+export function RealtimeProvider({ children }: { children: ReactNode }) {
+  const [status, setStatus] = useState<ChannelStatus>('INIT');
+  const [lastEvent, setLastEvent] = useState<LastEvent>(null);
 
-  const subscribeToTable = useCallback((args: SubscribeArgs) => {
-    const { table, filter, onInsert, onUpdate, onDelete } = args;
+  useEffect(() => {
+    // Wire every table we care about to a simple “lastEvent” signal.
+    const { cleanup } = subscribeToAppRealtime({
+      onOpen: () => setStatus('SUBSCRIBED'),
+      onClose: (s) => setStatus((s as ChannelStatus) ?? 'CLOSED'),
 
-    const channel = supabase.channel(
-      `realtime:${table}:${Math.random().toString(36).slice(2)}`
-    );
+      onPostInsert: (payload) => setLastEvent({ table: 'posts', type: 'INSERT', payload }),
+      onPostUpdate: (payload) => setLastEvent({ table: 'posts', type: 'UPDATE', payload }),
+      onPostDelete: (payload) => setLastEvent({ table: 'posts', type: 'DELETE', payload }),
 
-    const base = { schema: 'public', table } as const;
-    const filt = filter ? { filter: `${filter.column}=eq.${filter.value}` } : {};
+      onProfileUpdate: (payload) => setLastEvent({ table: 'profiles', type: 'UPDATE', payload }),
 
-    if (onInsert) channel.on('postgres_changes', { ...base, event: 'INSERT', ...filt }, onInsert);
-    if (onUpdate) channel.on('postgres_changes', { ...base, event: 'UPDATE', ...filt }, onUpdate);
-    if (onDelete) channel.on('postgres_changes', { ...base, event: 'DELETE', ...filt }, onDelete);
+      onNotificationInsert: (payload) =>
+        setLastEvent({ table: 'notifications', type: 'INSERT', payload }),
+      onNotificationUpdate: (payload) =>
+        setLastEvent({ table: 'notifications', type: 'UPDATE', payload }),
+      onNotificationDelete: (payload) =>
+        setLastEvent({ table: 'notifications', type: 'DELETE', payload }),
 
-    channel.subscribe((s) => {
-      // Breadcrumb only; helpful during testing
-      console.log('[Realtime] channel status:', s);
-      setStatus((s as ChannelStatus) ?? 'CLOSED');
+      onMessageInsert: (payload) => setLastEvent({ table: 'messages', type: 'INSERT', payload }),
+      onRequestInsert: (payload) => setLastEvent({ table: 'requests', type: 'INSERT', payload }),
+      onConversationInsert: (payload) =>
+        setLastEvent({ table: 'conversations', type: 'INSERT', payload }),
+      onConversationMemberInsert: (payload) =>
+        setLastEvent({ table: 'conversation_members', type: 'INSERT', payload }),
+      onFeedbackInsert: (payload) => setLastEvent({ table: 'feedback', type: 'INSERT', payload }),
+      onCollaborationInsert: (payload) =>
+        setLastEvent({ table: 'collaborations', type: 'INSERT', payload }),
     });
 
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch {
-        /* no-op */
-      }
-      setStatus('CLOSED');
-    };
+    return () => cleanup();
   }, []);
 
-  const value = useMemo<RealtimeCtx>(() => ({ status, subscribeToTable }), [status, subscribeToTable]);
+  const value = useMemo(() => ({ status, lastEvent }), [status, lastEvent]);
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
-};
-
-/** New hook name */
-export function useRealtime() {
-  return useContext(Ctx);
+  return <RealtimeCtx.Provider value={value}>{children}</RealtimeCtx.Provider>;
 }
 
-/** Back-compat alias for older imports: pages expecting `useRealtimeContext` will keep working */
 export function useRealtimeContext() {
-  return useContext(Ctx);
+  return useContext(RealtimeCtx);
 }
