@@ -414,6 +414,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!isSupabaseConfigured) {
       return () => {};
     }
+    if (!supabaseUserId) {
+      // Wait for an authenticated Supabase session before hydrating remote state.
+      // Until then we keep the seeded demo data so the UI can render without errors.
+      return () => {};
+    }
     let active = true;
     const failures: string[] = [];
 
@@ -502,6 +507,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
+      return () => {};
+    }
+    if (!supabaseUserId) {
       return () => {};
     }
     const offs: Array<() => void> = [];
@@ -704,6 +712,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const refreshData = useCallback(async () => {
     if (!isSupabaseConfigured) {
       trackEvent('data_refreshed', { via: 'demo' });
+      return;
+    }
+    if (!supabaseUserId) {
+      trackEvent('data_refreshed', { via: 'supabase-no-session' });
       return;
     }
     const failures: string[] = [];
