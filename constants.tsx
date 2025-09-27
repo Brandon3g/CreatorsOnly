@@ -17,7 +17,7 @@ import {
    MOCK DATA
    =========================== */
 
-export const MASTER_USER_ID = 'u1';
+export const MASTER_USER_ID = import.meta.env.VITE_MASTER_UID as string;
 
 export const MOCK_USERS: User[] = [
   {
