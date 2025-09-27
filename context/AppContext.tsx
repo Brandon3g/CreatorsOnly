@@ -460,16 +460,12 @@ useEffect(() => {
   }
 }, [currentUser?.id]);
 
- // Map any signed-in Supabase user to a REAL Supabase-backed profile (no more MASTER_USER_ID)
+ // --- Map any signed-in Supabase user to a REAL Supabase-backed profile
 useEffect(() => {
   let unsub = () => {};
 
   (async () => {
     try {
-      // keep your recovery flag behavior
-      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
-
-      // initial check
       const { data, error } = await supabase.auth.getSession();
       if (error) console.warn('[Auth] getSession error:', error);
 
@@ -482,8 +478,12 @@ useEffect(() => {
         ((supaUser?.app_metadata as any)?.role === 'master');
 
       if (supaUser) {
-        setAuthData({ userId: supaUser.id, source: 'supabase', appMetadata: supaUser.app_metadata, role: isMaster ? 'master' : 'user' });
-
+        setAuthData({
+          userId: supaUser.id,
+          source: 'supabase',
+          appMetadata: supaUser.app_metadata,
+          role: isMaster ? 'master' : 'user',
+        });
         if (recovering) {
           if (!/#\/NewPassword/i.test(window.location.hash)) {
             window.location.hash = '#/NewPassword';
@@ -491,10 +491,8 @@ useEffect(() => {
         } else {
           setHistory([{ page: 'feed', context: {} }]);
         }
-
         trackEvent('login_success', { userId: supaUser.id, via: 'supabase' });
       } else {
-        // no session
         if (authData.userId !== null) {
           setAuthData({ userId: null });
         }
@@ -542,14 +540,12 @@ useEffect(() => {
   })();
 
   return () => {
-    try { unsub?.(); } catch {}
+    try {
+      unsub?.();
+    } catch {}
   };
-}, []);
+}, []); // run once
 
-
-    return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
