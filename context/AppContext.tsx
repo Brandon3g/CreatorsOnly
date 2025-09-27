@@ -10,6 +10,12 @@ import React, {
 } from 'react';
 
 import {
+  subscribeToAppRealtime,
+  buildMessageParticipantFilter,
+  type Direction,
+} from '../services/realtime';
+
+import {
   User,
   Post,
   Notification,
@@ -389,6 +395,72 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
   // --- Supabase → AppContext **BRIDGE** -----------------------------------
+  // --- Realtime messages subscription (sender OR receiver) --------------------
+useEffect(() => {
+  const uid = (currentUser && currentUser.id) || null;
+  if (!uid) return;
+
+  try {
+    console.log('[Realtime] using filter:', buildMessageParticipantFilter(uid));
+
+    const unsubscribe = subscribeToAppRealtime(
+      uid,
+      (payload: any, direction: Direction) => {
+        try {
+          const row: any = (payload as any)?.new ?? (payload as any)?.old ?? {};
+          const convoId = row?.conversation_id;
+          if (!convoId) return;
+
+          // Merge into conversations in-place
+          setConversations((prev: any[]) => {
+            const idx = prev.findIndex((c: any) => c?.id === convoId);
+            if (idx === -1) {
+              const stub = {
+                id: convoId,
+                participantIds: [row?.sender_id, row?.receiver_id].filter(Boolean),
+                messages: row ? [row] : [],
+                updatedAt: Date.now(),
+              };
+              return [...prev, stub];
+            }
+            const next = [...prev];
+            const conv = { ...(next[idx] || {}) };
+            const msgs = Array.isArray(conv.messages) ? [...conv.messages] : [];
+            if (row) msgs.push(row);
+            conv.messages = msgs;
+            conv.updatedAt = Date.now();
+            next[idx] = conv;
+            return next;
+          });
+
+          console.log('[Realtime] message event', {
+            type: (payload as any).eventType,
+            direction, // 👈 typed as 'inbound' | 'outbound'
+            id: row?.id,
+            sender_id: row?.sender_id,
+            receiver_id: row?.receiver_id,
+          });
+        } catch (err) {
+          console.warn('[Realtime] merge error (non-fatal):', err);
+        }
+      },
+      (err) => {
+        console.error('[Realtime] subscription error:', err);
+      }
+    );
+
+    return () => {
+      try {
+        unsubscribe?.();
+      } catch (err) {
+        console.warn('[Realtime] unsubscribe warning:', err);
+      }
+    };
+  } catch (err) {
+    console.error('[Realtime] failed to start messages subscription:', err);
+  }
+}, [currentUser?.id]);
+
   // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
   useEffect(() => {
     let unsub = () => {};
