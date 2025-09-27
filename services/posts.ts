@@ -1,5 +1,11 @@
 // services/posts.ts
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+
+function requireSupabase() {
+  if (!isSupabaseConfigured) {
+    throw new Error('Supabase is not configured.');
+  }
+}
 
 export type Post = {
   id: string;
@@ -14,6 +20,7 @@ const baseColumns = 'id, user_id, content, media_url, created_at';
 /** Create a post for the signed-in user. */
 export async function createPost(dbUserId: string, content: string, mediaUrl?: string) {
   if (!dbUserId) throw new Error('createPost: missing user id');
+  requireSupabase();
   const { data, error } = await supabase
     .from('posts')
     .insert([{ user_id: dbUserId, content, media_url: mediaUrl ?? null }])
@@ -25,6 +32,7 @@ export async function createPost(dbUserId: string, content: string, mediaUrl?: s
 
 /** Home feed: for now, latest posts across the network. (You can refine later.) */
 export async function fetchHomeFeed(limit = 30) {
+  requireSupabase();
   const { data, error } = await supabase
     .from('posts')
     .select(baseColumns)
@@ -37,6 +45,7 @@ export async function fetchHomeFeed(limit = 30) {
 /** Posts for a given profile id (UUID). */
 export async function fetchProfilePosts(profileId: string, limit = 30) {
   if (!profileId) throw new Error('fetchProfilePosts: missing profileId');
+  requireSupabase();
   const { data, error } = await supabase
     .from('posts')
     .select(baseColumns)
@@ -45,4 +54,14 @@ export async function fetchProfilePosts(profileId: string, limit = 30) {
     .limit(limit);
   if (error) throw error;
   return (data ?? []) as Post[];
+}
+
+export async function deletePost(postId: string) {
+  if (!postId) throw new Error('deletePost: missing postId');
+  requireSupabase();
+  const { error } = await supabase
+    .from('posts')
+    .delete()
+    .eq('id', postId);
+  if (error) throw error;
 }
