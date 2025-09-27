@@ -1,113 +1,68 @@
-// src/pages/SignUp.tsx
+// pages/SignUp.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import * as CONST from '../constants';
+import { ICONS } from '../constants';
 import { trackEvent } from '../services/analytics';
 
 type CreatorType = string;
-
 const BIO_LIMIT = 150;
 
-/** Icons from your constants */
-const ICONS = CONST.ICONS;
+/** Creator types: local list (no dependency on constants export) */
+const CREATOR_TYPES: string[] = ['Model', 'Photographer', 'Videographer'];
 
-/** Creator types: use repo constant if present, else fallbacks */
-const DEFAULT_CREATOR_TYPES: string[] = ['Model', 'Photographer', 'Videographer'];
-const CREATOR_TYPES_LIST =
-  Array.isArray((CONST as any).CREATOR_TYPES) && (CONST as any).CREATOR_TYPES.length
-    ? ((CONST as any).CREATOR_TYPES as string[])
-    : DEFAULT_CREATOR_TYPES;
-
-/** Canonical 50 states + DC with USPS codes (we always use codes to match county data) */
-const US_STATES_LIST: Array<{ code: string; name: string }> = [
-  { code: 'AL', name: 'Alabama' },
-  { code: 'AK', name: 'Alaska' },
-  { code: 'AZ', name: 'Arizona' },
-  { code: 'AR', name: 'Arkansas' },
-  { code: 'CA', name: 'California' },
-  { code: 'CO', name: 'Colorado' },
-  { code: 'CT', name: 'Connecticut' },
-  { code: 'DE', name: 'Delaware' },
-  { code: 'FL', name: 'Florida' },
-  { code: 'GA', name: 'Georgia' },
-  { code: 'HI', name: 'Hawaii' },
-  { code: 'ID', name: 'Idaho' },
-  { code: 'IL', name: 'Illinois' },
-  { code: 'IN', name: 'Indiana' },
-  { code: 'IA', name: 'Iowa' },
-  { code: 'KS', name: 'Kansas' },
-  { code: 'KY', name: 'Kentucky' },
-  { code: 'LA', name: 'Louisiana' },
-  { code: 'ME', name: 'Maine' },
-  { code: 'MD', name: 'Maryland' },
-  { code: 'MA', name: 'Massachusetts' },
-  { code: 'MI', name: 'Michigan' },
-  { code: 'MN', name: 'Minnesota' },
-  { code: 'MS', name: 'Mississippi' },
-  { code: 'MO', name: 'Missouri' },
-  { code: 'MT', name: 'Montana' },
-  { code: 'NE', name: 'Nebraska' },
-  { code: 'NV', name: 'Nevada' },
-  { code: 'NH', name: 'New Hampshire' },
-  { code: 'NJ', name: 'New Jersey' },
-  { code: 'NM', name: 'New Mexico' },
-  { code: 'NY', name: 'New York' },
-  { code: 'NC', name: 'North Carolina' },
-  { code: 'ND', name: 'North Dakota' },
-  { code: 'OH', name: 'Ohio' },
-  { code: 'OK', name: 'Oklahoma' },
-  { code: 'OR', name: 'Oregon' },
-  { code: 'PA', name: 'Pennsylvania' },
-  { code: 'RI', name: 'Rhode Island' },
-  { code: 'SC', name: 'South Carolina' },
-  { code: 'SD', name: 'South Dakota' },
-  { code: 'TN', name: 'Tennessee' },
-  { code: 'TX', name: 'Texas' },
-  { code: 'UT', name: 'Utah' },
-  { code: 'VT', name: 'Vermont' },
-  { code: 'VA', name: 'Virginia' },
-  { code: 'WA', name: 'Washington' },
-  { code: 'WV', name: 'West Virginia' },
-  { code: 'WI', name: 'Wisconsin' },
-  { code: 'WY', name: 'Wyoming' },
-  { code: 'DC', name: 'District of Columbia' },
+/** 50 states + DC (USPS codes) */
+const US_STATES: Array<{ code: string; name: string }> = [
+  { code: 'AL', name: 'Alabama' }, { code: 'AK', name: 'Alaska' }, { code: 'AZ', name: 'Arizona' },
+  { code: 'AR', name: 'Arkansas' }, { code: 'CA', name: 'California' }, { code: 'CO', name: 'Colorado' },
+  { code: 'CT', name: 'Connecticut' }, { code: 'DE', name: 'Delaware' }, { code: 'FL', name: 'Florida' },
+  { code: 'GA', name: 'Georgia' }, { code: 'HI', name: 'Hawaii' }, { code: 'ID', name: 'Idaho' },
+  { code: 'IL', name: 'Illinois' }, { code: 'IN', name: 'Indiana' }, { code: 'IA', name: 'Iowa' },
+  { code: 'KS', name: 'Kansas' }, { code: 'KY', name: 'Kentucky' }, { code: 'LA', name: 'Louisiana' },
+  { code: 'ME', name: 'Maine' }, { code: 'MD', name: 'Maryland' }, { code: 'MA', name: 'Massachusetts' },
+  { code: 'MI', name: 'Michigan' }, { code: 'MN', name: 'Minnesota' }, { code: 'MS', name: 'Mississippi' },
+  { code: 'MO', name: 'Missouri' }, { code: 'MT', name: 'Montana' }, { code: 'NE', name: 'Nebraska' },
+  { code: 'NV', name: 'Nevada' }, { code: 'NH', name: 'New Hampshire' }, { code: 'NJ', name: 'New Jersey' },
+  { code: 'NM', name: 'New Mexico' }, { code: 'NY', name: 'New York' }, { code: 'NC', name: 'North Carolina' },
+  { code: 'ND', name: 'North Dakota' }, { code: 'OH', name: 'Ohio' }, { code: 'OK', name: 'Oklahoma' },
+  { code: 'OR', name: 'Oregon' }, { code: 'PA', name: 'Pennsylvania' }, { code: 'RI', name: 'Rhode Island' },
+  { code: 'SC', name: 'South Carolina' }, { code: 'SD', name: 'South Dakota' }, { code: 'TN', name: 'Tennessee' },
+  { code: 'TX', name: 'Texas' }, { code: 'UT', name: 'Utah' }, { code: 'VT', name: 'Vermont' },
+  { code: 'VA', name: 'Virginia' }, { code: 'WA', name: 'Washington' }, { code: 'WV', name: 'West Virginia' },
+  { code: 'WI', name: 'Wisconsin' }, { code: 'WY', name: 'Wyoming' }, { code: 'DC', name: 'District of Columbia' },
 ];
 
-/** FIPS ↔ USPS code mapping for Census responses */
+/** FIPS ↔ USPS mappings for Census API */
 const STATE_ABBR_BY_FIPS: Record<string, string> = {
-  '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT',
-  '10': 'DE', '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL',
-  '18': 'IN', '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME', '24': 'MD',
-  '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS', '29': 'MO', '30': 'MT', '31': 'NE',
-  '32': 'NV', '33': 'NH', '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND',
-  '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI', '45': 'SC', '46': 'SD',
-  '47': 'TN', '48': 'TX', '49': 'UT', '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV',
-  '55': 'WI', '56': 'WY',
+  '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT', '10': 'DE',
+  '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN', '19': 'IA',
+  '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME', '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN',
+  '28': 'MS', '29': 'MO', '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH', '34': 'NJ', '35': 'NM',
+  '36': 'NY', '37': 'NC', '38': 'ND', '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA', '44': 'RI',
+  '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT', '50': 'VT', '51': 'VA', '53': 'WA',
+  '54': 'WV', '55': 'WI', '56': 'WY',
 };
 const FIPS_BY_STATE_ABBR: Record<string, string> = Object.fromEntries(
   Object.entries(STATE_ABBR_BY_FIPS).map(([fips, abbr]) => [abbr, fips])
 );
 
-/** Small local fallback so the selector still works without network (CA only) */
+/** Minimal offline fallback so picker works without network (CA only) */
 const LOCAL_FALLBACK_COUNTIES: Record<string, string[]> = {
   CA: [
-    'Alameda', 'Alpine', 'Amador', 'Butte', 'Calaveras', 'Colusa', 'Contra Costa', 'Del Norte',
-    'El Dorado', 'Fresno', 'Glenn', 'Humboldt', 'Imperial', 'Inyo', 'Kern', 'Kings', 'Lake',
-    'Lassen', 'Los Angeles', 'Madera', 'Marin', 'Mariposa', 'Mendocino', 'Merced', 'Modoc',
-    'Mono', 'Monterey', 'Napa', 'Nevada', 'Orange', 'Placer', 'Plumas', 'Riverside',
-    'Sacramento', 'San Benito', 'San Bernardino', 'San Diego', 'San Francisco', 'San Joaquin',
-    'San Luis Obispo', 'San Mateo', 'Santa Barbara', 'Santa Clara', 'Santa Cruz', 'Shasta',
-    'Sierra', 'Siskiyou', 'Solano', 'Sonoma', 'Stanislaus', 'Sutter', 'Tehama', 'Trinity',
-    'Tulare', 'Tuolumne', 'Ventura', 'Yolo', 'Yuba',
+    'Alameda','Alpine','Amador','Butte','Calaveras','Colusa','Contra Costa','Del Norte','El Dorado',
+    'Fresno','Glenn','Humboldt','Imperial','Inyo','Kern','Kings','Lake','Lassen','Los Angeles','Madera',
+    'Marin','Mariposa','Mendocino','Merced','Modoc','Mono','Monterey','Napa','Nevada','Orange','Placer',
+    'Plumas','Riverside','Sacramento','San Benito','San Bernardino','San Diego','San Francisco',
+    'San Joaquin','San Luis Obispo','San Mateo','Santa Barbara','Santa Clara','Santa Cruz','Shasta',
+    'Sierra','Siskiyou','Solano','Sonoma','Stanislaus','Sutter','Tehama','Trinity','Tulare','Tuolumne',
+    'Ventura','Yolo','Yuba',
   ],
 };
 
-/** Robust per-state Census fetch with multiple dataset fallbacks */
+/** Fetch all counties for a state via US Census (robust fallbacks across datasets) */
 async function fetchCountiesForState(abbr: string, signal?: AbortSignal): Promise<string[]> {
   const fips = FIPS_BY_STATE_ABBR[abbr];
   if (!fips) return [];
 
-  // Preferred -> fallback datasets (all expose NAME, state + county)
   const SOURCES = [
     '2023/pep/population',
     '2022/pep/population',
@@ -117,7 +72,6 @@ async function fetchCountiesForState(abbr: string, signal?: AbortSignal): Promis
     '2019/acs/acs5',
   ];
 
-  // try each dataset until success
   for (const src of SOURCES) {
     try {
       const url = `https://api.census.gov/data/${src}?get=NAME&for=county:*&in=state:${fips}`;
@@ -142,65 +96,61 @@ async function fetchCountiesForState(abbr: string, signal?: AbortSignal): Promis
       // try next source
     }
   }
-
-  // final fallback (offline seed for CA)
   return LOCAL_FALLBACK_COUNTIES[abbr] ?? [];
 }
 
 const SignUp: React.FC = () => {
+  // Required fields
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+
+  // Optional profile fields
   const [bio, setBio] = useState('');
+  const [types, setTypes] = useState<CreatorType[]>([]);
+
+  // Location
   const [stateCode, setStateCode] = useState('');
   const [county, setCounty] = useState('');
-  const [types, setTypes] = useState<CreatorType[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [msg, setMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
 
-  // cache counties per state and track loading/errors per state
-  const [countiesCache, setCountiesCache] = useState<Record<string, string[]>>(
-    LOCAL_FALLBACK_COUNTIES
-  );
+  // Counties cache and loading/error state
+  const [countiesCache, setCountiesCache] = useState<Record<string, string[]>>(LOCAL_FALLBACK_COUNTIES);
   const [loadingState, setLoadingState] = useState<string | null>(null);
   const [countyError, setCountyError] = useState<string | null>(null);
   const fetchAbortRef = useRef<AbortController | null>(null);
 
-  // Reset county when state changes and kick off fetch if needed
+  // UX flags
+  const [submitting, setSubmitting] = useState(false);
+  const [msg, setMsg] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
+
+  // Reset county & fetch when state changes
   useEffect(() => {
     setCounty('');
     setCountyError(null);
-
     if (!stateCode) return;
 
     // already cached?
     if (countiesCache[stateCode]?.length) return;
 
-    // cancel in-flight request
     fetchAbortRef.current?.abort();
-
     const ac = new AbortController();
     fetchAbortRef.current = ac;
-
     setLoadingState(stateCode);
+
     fetchCountiesForState(stateCode, ac.signal)
       .then((list) => {
         setCountiesCache((prev) => ({ ...prev, [stateCode]: list }));
-        if (!list.length) {
-          setCountyError('No counties were returned for this state.');
-        }
+        if (!list.length) setCountyError('No counties were returned for this state.');
       })
-      .catch(() => {
-        setCountyError('Failed to load counties. Try again.');
-      })
+      .catch(() => setCountyError('Failed to load counties. Try again.'))
       .finally(() => {
         setLoadingState((prev) => (prev === stateCode ? null : prev));
       });
 
     return () => ac.abort();
-  }, [stateCode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stateCode, countiesCache]);
 
   const countyOptions = useMemo(
     () => (stateCode ? countiesCache[stateCode] || [] : []),
@@ -211,6 +161,7 @@ const SignUp: React.FC = () => {
     setTypes((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]));
   };
 
+  // Validation
   const usernameValid = /^[a-zA-Z0-9_]{3,20}$/.test(username);
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const pwdValid = password.length >= 8;
@@ -219,8 +170,20 @@ const SignUp: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formValid || submitting) return;
+    if (!formValid) {
+      const problems = [
+        !usernameValid && 'Username (3–20 letters/digits/underscore)',
+        !pwdValid && 'Password (min 8 characters)',
+        !nameValid && 'Name (min 2 characters)',
+        !emailValid && 'Valid email',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      setMsg({ type: 'error', text: `Please complete required fields: ${problems}.` });
+      return;
+    }
 
+    if (submitting) return;
     setSubmitting(true);
     setMsg(null);
 
@@ -237,6 +200,7 @@ const SignUp: React.FC = () => {
             location_state: stateCode || null,
             location_county: county || null,
           },
+          emailRedirectTo: `${location.origin}/#/Login?fresh=1`,
         },
       });
 
@@ -256,33 +220,30 @@ const SignUp: React.FC = () => {
 
       setTimeout(() => {
         window.location.hash = data.session ? '#/Feed' : '#/Login';
-      }, 700);
+      }, 800);
     } catch (err: any) {
       console.error('[SignUp] error', err);
-      trackEvent('signup_error', { message: String(err?.message || err) });
-      setMsg({ type: 'error', text: err?.message || 'Failed to create account.' });
+      const text = err?.message || 'Failed to create account.';
+      trackEvent('signup_error', { message: text });
+      setMsg({ type: 'error', text });
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-screen grid place-items-center p-6">
-      <div className="w-full max-w-md bg-surface rounded-2xl border border-surface-light p-6 md:p-8">
+    <div className="min-h-screen w-full flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-2xl bg-card text-card-foreground rounded-2xl shadow-lg border border-border p-6 md:p-8">
         {/* Header */}
-        <div className="mb-6">
-          <div className="mb-3 flex items-center justify-center">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 grid place-items-center text-primary">
-              {ICONS.camera}
-            </div>
-          </div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-center text-primary">
-            Create Your Account
-          </h1>
-          <p className="text-center text-text-secondary mt-2">
-            Join the community for creators.
-          </p>
+        <div className="flex items-center justify-center mb-4 text-primary">
+          {ICONS.camera}
         </div>
+        <h1 className="text-2xl md:text-3xl font-semibold text-foreground mb-2 text-center">
+          Create your account
+        </h1>
+        <p className="text-sm text-foreground/70 text-center mb-6">
+          Join the CreatorsOnly community
+        </p>
 
         {/* Alerts */}
         {msg && (
@@ -301,91 +262,98 @@ const SignUp: React.FC = () => {
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Username */}
           <div>
-            <label className="block text-sm font-medium mb-1">Username</label>
+            <label className="block text-sm text-foreground/80 mb-1">Username</label>
             <input
               type="text"
-              inputMode="text"
-              autoCapitalize="off"
-              autoCorrect="off"
-              autoComplete="username"
-              placeholder="Your unique @username"
+              placeholder="your_handle"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              required
+              minLength={3}
+              maxLength={20}
+              pattern="[A-Za-z0-9_]{3,20}"
+              title="3–20 characters: letters, digits, or underscores"
+              aria-invalid={!usernameValid}
+              className="w-full bg-surface-light p-3 rounded-lg outline-none focus:ring-2 focus:ring-primary"
             />
-            <p className="mt-1 text-xs text-text-secondary">
-              3–20 letters, digits, or underscores. Shown as{' '}
-              <span className="opacity-80">@{username || 'username'}</span>
-            </p>
+            <div className="text-xs text-text-secondary mt-1">
+              3–20 letters, digits, or underscores. Shown as <span className="opacity-80">@{username || 'username'}</span>
+            </div>
           </div>
 
           {/* Password */}
           <div>
-            <label className="block text-sm font-medium mb-1">Password</label>
+            <label className="block text-sm text-foreground/80 mb-1">Password</label>
             <div className="relative">
               <input
                 type={showPwd ? 'text' : 'password'}
                 autoComplete="new-password"
-                placeholder="Choose a secure password"
+                placeholder="Create a strong password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-surface-light p-3 rounded-md pr-10 focus:outline-none focus:ring-2 focus:ring-primary"
+                required
+                minLength={8}
+                aria-invalid={!pwdValid}
+                className="w-full bg-surface-light p-3 pr-11 rounded-lg outline-none focus:ring-2 focus:ring-primary"
               />
               <button
                 type="button"
+                onClick={() => setShowPwd((s) => !s)}
+                className="absolute inset-y-0 right-0 px-3 text-text-secondary hover:text-text-primary"
                 aria-label={showPwd ? 'Hide password' : 'Show password'}
-                onPointerUp={() => setShowPwd((s) => !s)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-primary"
               >
-                {(ICONS as any).eye
-                  ? (ICONS as any).eye
-                  : showPwd
-                  ? (ICONS as any).close
-                  : (ICONS as any).camera}
+                {showPwd ? (ICONS.close ?? ICONS.camera) : (ICONS.eye ?? ICONS.camera)}
               </button>
             </div>
-            <p className="mt-1 text-xs text-text-secondary">At least 8 characters.</p>
+            <div className="text-xs text-text-secondary mt-1">At least 8 characters.</div>
           </div>
 
           {/* Name */}
           <div>
-            <label className="block text-sm font-medium mb-1">Name</label>
+            <label className="block text-sm text-foreground/80 mb-1">Name</label>
             <input
               type="text"
-              autoComplete="name"
-              placeholder="Your display name"
+              placeholder="Your name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              required
+              minLength={2}
+              aria-invalid={!nameValid}
+              className="w-full bg-surface-light p-3 rounded-lg outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
 
           {/* Email */}
           <div>
-            <label className="block text-sm font-medium mb-1">Email</label>
+            <label className="block text-sm text-foreground/80 mb-1">Email</label>
             <input
               type="email"
+              inputMode="email"
               autoComplete="email"
               placeholder="you@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              required
+              aria-invalid={!emailValid}
+              className="w-full bg-surface-light p-3 rounded-lg outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
 
           {/* Creator Types */}
           <div>
-            <label className="block text-sm font-medium">What kind of creator are you?</label>
-            <p className="text-xs text-text-secondary mb-2">Select all that apply.</p>
-            <div className="flex flex-wrap gap-2">
-              {CREATOR_TYPES_LIST.map((t) => {
+            <div className="flex items-baseline gap-2">
+              <label className="block text-sm text-foreground/80">What kind of creator are you?</label>
+              <span className="text-xs text-text-secondary">Select all that apply</span>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {CREATOR_TYPES.map((t) => {
                 const active = types.includes(t);
                 return (
                   <button
                     key={t}
                     type="button"
-                    onPointerUp={() => toggleType(t)}
-                    className={`px-3 py-1.5 rounded-full border text-sm ${
+                    onClick={() => toggleType(t)}
+                    className={`px-3 py-1.5 rounded-full border text-sm transition ${
                       active
                         ? 'bg-primary text-white border-primary'
                         : 'bg-surface-light text-text-primary border-surface-light hover:bg-surface'
@@ -400,15 +368,19 @@ const SignUp: React.FC = () => {
 
           {/* Location */}
           <div>
-            <label className="block text-sm font-medium">Location (Recommended)</label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-1">
+            <div className="flex items-baseline gap-2">
+              <label className="block text-sm text-foreground/80">Location</label>
+              <span className="text-xs text-text-secondary">(Recommended)</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
               <select
                 value={stateCode}
                 onChange={(e) => setStateCode(e.target.value)}
-                className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                className="w-full bg-surface-light p-3 rounded-lg outline-none focus:ring-2 focus:ring-primary"
               >
                 <option value="">Select State</option>
-                {US_STATES_LIST.map((s) => (
+                {US_STATES.map((s) => (
                   <option key={s.code} value={s.code}>
                     {s.name}
                   </option>
@@ -423,7 +395,7 @@ const SignUp: React.FC = () => {
                   loadingState === stateCode ||
                   (countiesCache[stateCode]?.length ?? 0) === 0
                 }
-                className="w-full bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+                className="w-full bg-surface-light p-3 rounded-lg outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
               >
                 <option value="">
                   {!stateCode
@@ -445,8 +417,8 @@ const SignUp: React.FC = () => {
             </div>
 
             {countyError && stateCode && (
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-xs text-red-300">{countyError}</span>
+              <div className="mt-2 text-xs text-text-secondary">
+                <span className="text-red-400">{countyError}</span>{' '}
                 <button
                   type="button"
                   onPointerUp={() => {
@@ -458,7 +430,7 @@ const SignUp: React.FC = () => {
                     setCountyError(null);
                     setStateCode(stateCode); // trigger effect again
                   }}
-                  className="text-xs text-primary hover:underline"
+                  className="text-primary hover:underline"
                 >
                   Retry
                 </button>
@@ -468,13 +440,16 @@ const SignUp: React.FC = () => {
 
           {/* Bio */}
           <div>
-            <label className="block text-sm font-medium">Bio (Recommended)</label>
-            <div className="relative">
+            <div className="flex items-baseline gap-2">
+              <label className="block text-sm text-foreground/80">Bio</label>
+              <span className="text-xs text-text-secondary">(Optional)</span>
+            </div>
+            <div className="relative mt-2">
               <textarea
                 value={bio}
                 onChange={(e) => setBio(e.target.value.slice(0, BIO_LIMIT))}
                 placeholder="Tell us about yourself..."
-                className="w-full h-28 bg-surface-light p-3 rounded-md focus:outline-none focus:ring-2 focus:ring-primary resize-none"
+                className="w-full h-28 bg-surface-light p-3 rounded-lg outline-none focus:ring-2 focus:ring-primary resize-none"
               />
               <div className="absolute bottom-2 right-3 text-xs text-text-secondary">
                 {bio.length}/{BIO_LIMIT}
@@ -482,6 +457,7 @@ const SignUp: React.FC = () => {
             </div>
           </div>
 
+          {/* Submit */}
           <button
             type="submit"
             disabled={!formValid || submitting}
@@ -491,6 +467,7 @@ const SignUp: React.FC = () => {
           </button>
         </form>
 
+        {/* Footer */}
         <div className="mt-6 text-center">
           <button
             className="text-text-secondary hover:text-text-primary"

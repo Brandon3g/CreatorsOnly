@@ -1,107 +1,48 @@
-// src/services/posts.ts
+// services/posts.ts
 import { supabase } from '../lib/supabaseClient';
-import { subscribeToTable } from './realtime';
 
 export type Post = {
   id: string;
   user_id: string;
-  content: string;
-  media_url?: string | null;
-  created_at?: string;
-  updated_at?: string;
+  content: string | null;
+  media_url: string | null;
+  created_at: string;
 };
 
-/**
- * Get all posts (newest first)
- */
-export async function getAllPosts(): Promise<Post[]> {
+const baseColumns = 'id, user_id, content, media_url, created_at';
+
+/** Create a post for the signed-in user. */
+export async function createPost(dbUserId: string, content: string, mediaUrl?: string) {
+  if (!dbUserId) throw new Error('createPost: missing user id');
   const { data, error } = await supabase
     .from('posts')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) throw error;
-  return (data as Post[]) || [];
-}
-
-/**
- * Get all posts for a specific user
- */
-export async function getPostsByUser(userId: string): Promise<Post[]> {
-  const { data, error } = await supabase
-    .from('posts')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
-
-  if (error) throw error;
-  return (data as Post[]) || [];
-}
-
-/**
- * Create a new post
- */
-export async function createPost(p: {
-  content: string;
-  media_url?: string | null;
-}): Promise<Post> {
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
-  if (userErr) throw userErr;
-  if (!user) throw new Error('Not signed in');
-
-  const payload = {
-    user_id: user.id,
-    content: p.content,
-    media_url: p.media_url ?? null,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  const { data, error } = await supabase
-    .from('posts')
-    .insert(payload)
-    .select('*')
-    .single();
-
+    .insert([{ user_id: dbUserId, content, media_url: mediaUrl ?? null }])
+  .select(baseColumns)
+  .single();
   if (error) throw error;
   return data as Post;
 }
 
-/**
- * Update an existing post
- */
-export async function updatePost(
-  id: string,
-  updates: Partial<Post>
-): Promise<Post> {
+/** Home feed: for now, latest posts across the network. (You can refine later.) */
+export async function fetchHomeFeed(limit = 30) {
   const { data, error } = await supabase
     .from('posts')
-    .update({
-      ...updates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id)
-    .select('*')
-    .single();
-
+    .select(baseColumns)
+    .order('created_at', { ascending: false })
+    .limit(limit);
   if (error) throw error;
-  return data as Post;
+  return (data ?? []) as Post[];
 }
 
-/**
- * Delete a post
- */
-export async function deletePost(id: string): Promise<void> {
-  const { error } = await supabase.from('posts').delete().eq('id', id);
+/** Posts for a given profile id (UUID). */
+export async function fetchProfilePosts(profileId: string, limit = 30) {
+  if (!profileId) throw new Error('fetchProfilePosts: missing profileId');
+  const { data, error } = await supabase
+    .from('posts')
+    .select(baseColumns)
+    .eq('user_id', profileId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
   if (error) throw error;
-}
-
-/**
- * Subscribe to realtime post changes.
- *
- * @param onChange - callback fired when posts are inserted/updated/deleted
- * @returns cleanup function to unsubscribe
- */
-export function subscribeToPosts(onChange: (payload: any) => void) {
-  return subscribeToTable('posts', onChange);
+  return (data ?? []) as Post[];
 }
