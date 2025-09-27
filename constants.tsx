@@ -17,11 +17,20 @@ import {
    MOCK DATA
    =========================== */
 
-export const MASTER_USER_ID = import.meta.env.VITE_MASTER_UID as string;
+const masterUid = import.meta.env.VITE_MASTER_UID;
+
+if (!masterUid) {
+  throw new Error(
+    'VITE_MASTER_UID is not set. Please check your Vercel environment variables.'
+  );
+}
+
+export const MASTER_USER_ID = masterUid as string;
+
 
 export const MOCK_USERS: User[] = [
   {
-    id: 'u1',
+    id: MASTER_USER_ID,
     name: 'Elena Voyage',
     username: 'bgcaptures',
     avatar: 'https://picsum.photos/id/1027/200/200',
@@ -49,7 +58,7 @@ export const MOCK_USERS: User[] = [
     bio: 'Michelin-star chef sharing recipes and kitchen secrets.\nFood is my love language.\n❤️',
     email: 'marcus.chef@example.com',
     isVerified: true,
-    friendIds: ['u1'],
+    friendIds: [MASTER_USER_ID],
     platformLinks: [
       { platform: Platform.TikTok, url: 'https://tiktok.com/@marcuschef' },
       { platform: Platform.Instagram, url: 'https://instagram.com/marcuschef' },
@@ -68,7 +77,7 @@ export const MOCK_USERS: User[] = [
     bio: 'Your go-to source for the latest in tech, gadgets, and gaming.\nUnboxing the future.\n',
     email: 'aria.tech@example.com',
     isVerified: false,
-    friendIds: ['u1', 'u5'],
+    friendIds: [MASTER_USER_ID, 'u5'],
     platformLinks: [
       { platform: Platform.TikTok, url: 'https://tiktok.com/@aria_tech' },
       { platform: Platform.Twitch, url: 'https://twitch.tv/aria_tech' },
@@ -87,7 +96,7 @@ export const MOCK_USERS: User[] = [
     bio: 'Fitness coach & motivator.\nHelping you become the best version of yourself.\n#fitness',
     email: 'leo.fit@example.com',
     isVerified: true,
-    friendIds: ['u1'],
+    friendIds: [MASTER_USER_ID],
     platformLinks: [
       { platform: Platform.Instagram, url: 'https://instagram.com/leofit' },
       { platform: Platform.TikTok, url: 'https://tiktok.com/@leofit' },
@@ -121,7 +130,7 @@ export const MOCK_FRIEND_REQUESTS: FriendRequest[] = [
   {
     id: 'fr1',
     fromUserId: 'u5',
-    toUserId: 'u1',
+    toUserId: MASTER_USER_ID,
     status: FriendRequestStatus.PENDING,
     timestamp: '2024-07-21T11:00:00Z',
   },
@@ -130,7 +139,7 @@ export const MOCK_FRIEND_REQUESTS: FriendRequest[] = [
 export const MOCK_POSTS: Post[] = [
   {
     id: 'p1',
-    authorId: 'u1',
+    authorId: MASTER_USER_ID,
     content:
       "Just wrapped up my trip to Kyoto! The bamboo forests were absolutely breathtaking.\nCan't wait to share the final video with you all. Stay tuned! ",
     image: 'https://picsum.photos/id/1018/800/600',
@@ -177,7 +186,7 @@ export const MOCK_POSTS: Post[] = [
 export const MOCK_NOTIFICATIONS: Notification[] = [
   {
     id: 'n1',
-    userId: 'u1',
+    userId: MASTER_USER_ID,
     actorId: 'u5',
     type: NotificationType.FRIEND_REQUEST,
     entityType: 'friend_request',
@@ -188,7 +197,7 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
   },
   {
     id: 'n2',
-    userId: 'u1',
+    userId: MASTER_USER_ID,
     actorId: 'u2',
     type: NotificationType.POST_LIKE,
     entityType: 'post',
@@ -199,7 +208,7 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
   },
   {
     id: 'n3',
-    userId: 'u1',
+    userId: MASTER_USER_ID,
     actorId: 'u4',
     type: NotificationType.COLLAB_REQUEST,
     entityType: 'collaboration',
@@ -211,7 +220,7 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
   },
   {
     id: 'n4',
-    userId: 'u1',
+    userId: MASTER_USER_ID,
     actorId: 'u3',
     type: NotificationType.NEW_MESSAGE,
     entityType: 'user',
@@ -225,18 +234,18 @@ export const MOCK_NOTIFICATIONS: Notification[] = [
 export const MOCK_CONVERSATIONS: Conversation[] = [
   {
     id: 'c1',
-    participantIds: ['u1', 'u2'],
+    participantIds: [MASTER_USER_ID, 'u2'],
     messages: [
       {
         id: 'm1',
         senderId: 'u2',
-        receiverId: 'u1',
+        receiverId: MASTER_USER_ID,
         text: 'Hey Elena! Loved your Kyoto vlog teaser.',
         timestamp: '2024-07-21T12:05:00Z',
       },
       {
         id: 'm2',
-        senderId: 'u1',
+        senderId: MASTER_USER_ID,
         receiverId: 'u2',
         text: 'Thanks Marcus! Your pasta looked amazing too.\nWe should collab sometime!',
         timestamp: '2024-07-21T12:06:00Z',
@@ -244,7 +253,7 @@ export const MOCK_CONVERSATIONS: Conversation[] = [
       {
         id: 'm3',
         senderId: 'u2',
-        receiverId: 'u1',
+        receiverId: MASTER_USER_ID,
         text: 'Absolutely! A travel & food series? Could be epic.',
         timestamp: '2024-07-21T12:07:00Z',
       },
@@ -253,12 +262,12 @@ export const MOCK_CONVERSATIONS: Conversation[] = [
   },
   {
     id: 'c2',
-    participantIds: ['u1', 'u3'],
+    participantIds: [MASTER_USER_ID, 'u3'],
     messages: [
       {
         id: 'm4',
         senderId: 'u3',
-        receiverId: 'u1',
+        receiverId: MASTER_USER_ID,
         text: 'Got any drone recommendations for travel?',
         timestamp: '2024-07-20T18:30:00Z',
       },
@@ -270,7 +279,7 @@ export const MOCK_CONVERSATIONS: Conversation[] = [
 export const MOCK_COLLABORATIONS: Collaboration[] = [
   {
     id: 'collab1',
-    authorId: 'u1',
+    authorId: MASTER_USER_ID,
     title: 'Seeking Videographer for Bali Travel Series',
     description:
       "I'm planning a 2-week trip to Bali to film a cinematic travel series for my YouTube channel.\nLooking for a skilled videographer and drone pilot to partner with. Must have experience with color grading. All expenses paid + rev share.",
@@ -297,7 +306,7 @@ export const MOCK_COLLABORATIONS: Collaboration[] = [
       'I have a high-concept fantasy photoshoot idea and need a talented MUA who can do creative, avant-garde looks. The theme is "celestial beings".\nThis is a paid gig, TFP considered for the right portfolio.',
     timestamp: '2024-07-18T18:00:00Z',
     status: 'closed',
-    interestedUserIds: ['u1', 'u2', 'u3', 'u4'],
+    interestedUserIds: [MASTER_USER_ID, 'u2', 'u3', 'u4'],
   },
 ];
 
