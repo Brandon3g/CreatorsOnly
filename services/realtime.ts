@@ -1,3 +1,4 @@
+// src/services/realtime.ts
 import { supabase } from '../lib/supabaseClient';
 
 export type RealtimeUnsubscribe = () => void;
@@ -16,7 +17,11 @@ export function subscribeToTable(
   const channel = supabase
     .channel(`realtime:${tableName}`)
     .on(
-@@ -23,25 +25,33 @@ export function subscribeToTable(
+      'postgres_changes',
+      {
+        event: '*', // INSERT, UPDATE, DELETE
+        schema: 'public',
+        table: tableName,
       },
       (payload) => {
         console.log(`[Realtime] ${tableName} change:`, payload);
@@ -50,3 +55,7 @@ export function subscribeToTable(
  * useEffect(() => {
  *   const unsubscribe = subscribeToTable('profiles', (payload) => {
  *     // Update local state or refetch query
+ *   });
+ *   return () => unsubscribe();
+ * }, []);
+ */
