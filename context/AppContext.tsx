@@ -70,7 +70,7 @@ import {
   mapRowToConversation,
   mapRowToFeedback,
   mapRowToFriendRequest,
-} from '../services/appData';
+} from '../services/appData.ts';
 import {
   sendFriendRequest as sendFriendRequestRow,
   acceptFriendRequest as acceptFriendRequestRow,
