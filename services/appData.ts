@@ -3,7 +3,7 @@
 // fetchers/mutators for the Supabase tables that back the legacy in-memory
 // state slices (users, posts, notifications, etc.).
 
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import {
   Collaboration,
   Conversation,
@@ -20,6 +20,12 @@ import {
 } from '../types';
 
 import type { Post as DbPost } from './posts';
+
+function requireSupabase() {
+  if (!isSupabaseConfigured) {
+    throw new Error('Supabase is not configured.');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Mapping helpers
@@ -247,6 +253,7 @@ export async function upsertPushSubscription(
   userId: string,
   subscription: PushSubscriptionObject,
 ): Promise<void> {
+  requireSupabase();
   const { error } = await supabase
     .from('push_subscriptions')
     .upsert(
@@ -259,6 +266,7 @@ export async function upsertPushSubscription(
 export async function createNotification(
   payload: Omit<Notification, 'id' | 'timestamp' | 'isRead'> & { isRead?: boolean },
 ): Promise<Notification> {
+  requireSupabase();
   const insertPayload = {
     user_id: payload.userId,
     actor_id: payload.actorId,
@@ -278,6 +286,7 @@ export async function createNotification(
 }
 
 export async function markNotificationsRead(ids: string[]): Promise<Notification[]> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('notifications')
     .update({ is_read: true })
@@ -292,6 +301,7 @@ export async function createCollaboration(
     interestedUserIds?: string[];
   },
 ): Promise<Collaboration> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('collaborations')
     .insert({
@@ -312,6 +322,7 @@ export async function updateCollaborationRow(
   collabId: string,
   patch: Partial<Collaboration>,
 ): Promise<Collaboration> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('collaborations')
     .update({
@@ -329,6 +340,7 @@ export async function updateCollaborationRow(
 }
 
 export async function deleteCollaborationRow(collabId: string): Promise<void> {
+  requireSupabase();
   const { error } = await supabase
     .from('collaborations')
     .delete()
@@ -340,6 +352,7 @@ export async function upsertCollaborationInterest(
   collabId: string,
   interestedUserIds: string[],
 ): Promise<Collaboration> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('collaborations')
     .update({ interested_user_ids: interestedUserIds })
@@ -354,6 +367,7 @@ export async function createMessage(
   conversationId: string,
   message: Omit<Message, 'id' | 'timestamp'>,
 ): Promise<Message> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('messages')
     .insert({
@@ -371,6 +385,7 @@ export async function createMessage(
 export async function ensureConversation(
   participantIds: string[],
 ): Promise<Conversation> {
+  requireSupabase();
   const sorted = [...participantIds].sort();
   const filter = sorted.map((id, idx) => `participant_ids->>${idx}=eq.${id}`).join(',');
   let query = supabase
@@ -408,6 +423,7 @@ export async function ensureConversation(
 export async function submitFeedback(
   payload: Omit<Feedback, 'id' | 'timestamp'>,
 ): Promise<Feedback> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('feedback')
     .insert({
@@ -425,6 +441,7 @@ export async function updateConversationFolder(
   conversationId: string,
   folder: ConversationFolder,
 ): Promise<Conversation> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('conversations')
     .update({ folder })
@@ -446,6 +463,7 @@ export async function updateUserFriends(
   userId: string,
   friendIds: string[],
 ): Promise<User> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('users')
     .update({ friend_ids: friendIds })
@@ -460,6 +478,7 @@ export async function updateUserBlocked(
   userId: string,
   blockedIds: string[],
 ): Promise<User> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('users')
     .update({ blocked_user_ids: blockedIds })

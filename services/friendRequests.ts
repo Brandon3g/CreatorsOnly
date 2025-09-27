@@ -1,7 +1,13 @@
 // src/services/friendRequests.ts
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import { FriendRequest, FriendRequestStatus } from '../types';
 import { subscribeToTable } from './realtime';
+
+function requireSupabase() {
+  if (!isSupabaseConfigured) {
+    throw new Error('Supabase is not configured.');
+  }
+}
 
 function rowToFriendRequest(row: any): FriendRequest {
   return {
@@ -17,6 +23,7 @@ function rowToFriendRequest(row: any): FriendRequest {
  * Send a friend request
  */
 export async function sendFriendRequest(receiverId: string): Promise<FriendRequest> {
+  requireSupabase();
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
   if (userErr) throw userErr;
   if (!user) throw new Error('Not signed in');
@@ -43,6 +50,7 @@ export async function sendFriendRequest(receiverId: string): Promise<FriendReque
  * Accept a friend request
  */
 export async function acceptFriendRequest(id: string): Promise<FriendRequest> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('friend_requests')
     .update({ status: 'accepted', updated_at: new Date().toISOString() })
@@ -58,6 +66,7 @@ export async function acceptFriendRequest(id: string): Promise<FriendRequest> {
  * Decline a friend request
  */
 export async function declineFriendRequest(id: string): Promise<FriendRequest> {
+  requireSupabase();
   const { data, error } = await supabase
     .from('friend_requests')
     .update({ status: 'declined', updated_at: new Date().toISOString() })
@@ -70,6 +79,7 @@ export async function declineFriendRequest(id: string): Promise<FriendRequest> {
 }
 
 export async function cancelFriendRequest(id: string): Promise<void> {
+  requireSupabase();
   const { error } = await supabase
     .from('friend_requests')
     .delete()
@@ -81,6 +91,7 @@ export async function cancelFriendRequest(id: string): Promise<void> {
  * Get all friend requests for the current user (sent + received)
  */
 export async function getMyFriendRequests(): Promise<FriendRequest[]> {
+  requireSupabase();
   const { data: { user }, error: userErr } = await supabase.auth.getUser();
   if (userErr) throw userErr;
   if (!user) throw new Error('Not signed in');
@@ -102,5 +113,9 @@ export async function getMyFriendRequests(): Promise<FriendRequest[]> {
  * @returns cleanup function to unsubscribe
  */
 export function subscribeToFriendRequests(onChange: (payload: any) => void) {
-  return subscribeToTable('friend_requests', onChange);
+  if (!isSupabaseConfigured) {
+    console.warn('[FriendRequests] Realtime subscription skipped: Supabase not configured.');
+    return () => {};
+  }
+  return subscribeToTable({ table: 'friend_requests', event: '*' }, { onAny: onChange });
 }

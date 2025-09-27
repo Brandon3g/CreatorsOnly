@@ -3,7 +3,7 @@
 // Every subscribe* function RETURNS A FUNCTION for React effect cleanup
 // and also exposes a `.cleanup` alias for backward compatibility.
 
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 
 type RowEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
 
@@ -39,6 +39,15 @@ export function subscribeToTable<T = any>(
   opts: TableSubscriptionOptions,
   handlers: Handlers<T> = {}
 ): () => void {
+  if (!isSupabaseConfigured) {
+    console.warn(
+      `[Realtime] Skipping subscription for ${opts.table}: Supabase is not configured.`,
+    );
+    const noop = () => {};
+    (noop as any).cleanup = noop;
+    return noop;
+  }
+
   const schema = opts.schema ?? 'public';
   const event: RowEvent = opts.event ?? '*';
   const channelName =
@@ -167,6 +176,13 @@ export function subscribeToAppRealtime(
     conversations?: Handlers;
   }
 ): () => void {
+  if (!isSupabaseConfigured) {
+    console.warn('[Realtime] Skipping realtime subscriptions: Supabase is not configured.');
+    const noop = () => {};
+    (noop as any).cleanup = noop;
+    return noop;
+  }
+
   const offs: Array<() => void> = [];
 
   // Posts: everyone’s public posts (keep simple; small project scale)

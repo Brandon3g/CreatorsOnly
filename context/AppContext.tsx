@@ -39,7 +39,7 @@ import {
 } from '../constants';
 
 import { trackEvent } from '../services/analytics';
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import {
   fetchUsers as fetchUsersFromDb,
   fetchPosts as fetchPostsFromDb,
@@ -325,49 +325,37 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // --- Supabase → AppContext **BRIDGE** -----------------------------------
   // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setSupabaseUserId(null);
+      setRecoveryFlag(false);
+      setAuthData({ userId: MASTER_USER_ID });
+      setHistory([{ page: 'feed', context: {} }]);
+      trackEvent('login_success', { userId: MASTER_USER_ID, via: 'demo' });
+      return;
+    }
+
     let unsub = () => {};
 
     (async () => {
-      // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
-      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
+      try {
+        // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
+        if (urlLooksLikeRecovery()) setRecoveryFlag(true);
 
-      // initial check
-      const { data } = await supabase.auth.getSession();
-      const supabaseId = data.session?.user?.id ?? null;
-      setSupabaseUserId(supabaseId);
-      const hasSession = !!supabaseId;
-      const recovering = isRecoveryActive();
+        // initial check
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const supabaseId = data.session?.user?.id ?? null;
+        setSupabaseUserId(supabaseId);
+        const hasSession = !!supabaseId;
+        const recovering = isRecoveryActive();
 
-      if (hasSession) {
-        if (authData.userId !== MASTER_USER_ID) {
-          setAuthData({ userId: MASTER_USER_ID });
-        }
-
-        // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
-        if (recovering) {
-          if (!/#\/NewPassword/i.test(window.location.hash)) {
-            window.location.hash = '#/NewPassword';
+        if (hasSession) {
+          if (authData.userId !== MASTER_USER_ID) {
+            setAuthData({ userId: MASTER_USER_ID });
           }
-        } else {
-          setHistory([{ page: 'feed', context: {} }]);
-        }
 
-        trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-      } else if (authData.userId !== null) {
-        setAuthData({ userId: null });
-        setSupabaseUserId(null);
-        setHistory([{ page: 'feed', context: {} }]);
-      }
-
-      // subscribe to future changes
-      const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-        const recoveringNow = isRecoveryActive();
-
-        if (session?.user) {
-          setSupabaseUserId(session.user.id);
-          setAuthData({ userId: MASTER_USER_ID });
-
-          if (recoveringNow) {
+          // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
+          if (recovering) {
             if (!/#\/NewPassword/i.test(window.location.hash)) {
               window.location.hash = '#/NewPassword';
             }
@@ -376,17 +364,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
 
           trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-        } else {
-          setSupabaseUserId(null);
+        } else if (authData.userId !== null) {
           setAuthData({ userId: null });
+          setSupabaseUserId(null);
           setHistory([{ page: 'feed', context: {} }]);
-          // Leaving auth state; clear recovery guard just in case
-          setRecoveryFlag(false);
-          trackEvent('logout', { via: 'supabase' });
         }
-      });
 
-      unsub = () => sub.subscription.unsubscribe();
+        // subscribe to future changes
+        const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+          const recoveringNow = isRecoveryActive();
+
+          if (session?.user) {
+            setSupabaseUserId(session.user.id);
+            setAuthData({ userId: MASTER_USER_ID });
+
+            if (recoveringNow) {
+              if (!/#\/NewPassword/i.test(window.location.hash)) {
+                window.location.hash = '#/NewPassword';
+              }
+            } else {
+              setHistory([{ page: 'feed', context: {} }]);
+            }
+
+            trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+          } else {
+            setSupabaseUserId(null);
+            setAuthData({ userId: null });
+            setHistory([{ page: 'feed', context: {} }]);
+            // Leaving auth state; clear recovery guard just in case
+            setRecoveryFlag(false);
+            trackEvent('logout', { via: 'supabase' });
+          }
+        });
+
+        unsub = () => sub.subscription.unsubscribe();
+      } catch (error) {
+        console.error('[AppProvider] Supabase auth bridge failed', error);
+        setSupabaseUserId(null);
+        setAuthData({ userId: MASTER_USER_ID });
+        setHistory([{ page: 'feed', context: {} }]);
+      }
     })();
 
     return () => unsub();
@@ -394,6 +411,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, []); // run once
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return () => {};
+    }
     let active = true;
     const failures: string[] = [];
 
@@ -481,6 +501,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [supabaseUserId]);
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return () => {};
+    }
     const offs: Array<() => void> = [];
 
     offs.push(
@@ -679,6 +702,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
+    if (!isSupabaseConfigured) {
+      trackEvent('data_refreshed', { via: 'demo' });
+      return;
+    }
     const failures: string[] = [];
 
     try {
@@ -855,9 +882,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Also sign out from Supabase so refresh doesn't auto-login
   const logout = () => {
     try {
-      supabase.auth.signOut().catch((e) =>
-        console.warn('[logout] supabase signOut error:', e),
-      );
+      if (isSupabaseConfigured) {
+        supabase.auth.signOut().catch((e) =>
+          console.warn('[logout] supabase signOut error:', e),
+        );
+      }
     } finally {
       setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
@@ -872,6 +901,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const base =
       typeof window !== 'undefined' ? window.location.origin : 'https://creatorzonly.com';
     const redirectTo = `${base}/#/NewPassword`;
+    if (!isSupabaseConfigured) {
+      window.alert('Password reset emails require Supabase to be configured.');
+      return;
+    }
+
     supabase.auth
       .resetPasswordForEmail(email, { redirectTo })
       .then(({ error }) => {
