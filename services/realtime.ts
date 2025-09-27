@@ -1,231 +1,82 @@
-// src/services/realtime.ts
-// Centralized, safe helpers for Supabase Realtime.
-// Every subscribe* function RETURNS A FUNCTION for React effect cleanup
-// and also exposes a `.cleanup` alias for backward compatibility.
-
 import { supabase } from '../lib/supabaseClient';
 
-type RowEvent = 'INSERT' | 'UPDATE' | 'DELETE' | '*';
-
-export type ChangeHandler<T = any> = (payload: {
-  schema: string;
-  table: string;
-  eventType: RowEvent;
-  new?: T;
-  old?: T;
-}) => void;
-
-export interface Handlers<T = any> {
-  onInsert?: ChangeHandler<T>;
-  onUpdate?: ChangeHandler<T>;
-  onDelete?: ChangeHandler<T>;
-  onAny?: ChangeHandler<T>;
-  onError?: (e: unknown) => void;
-}
-
-export interface TableSubscriptionOptions {
-  table: string;
-  event?: RowEvent;      // defaults to '*'
-  filter?: string;       // e.g. 'user_id=eq.123'
-  schema?: string;       // defaults to 'public'
-  channelName?: string;  // optional explicit channel name
-}
+// --- Messages realtime helpers ---------------------------------------------
 
 /**
- * Subscribe to a single Postgres table changes feed.
- * Returns a FUNCTION to unsubscribe. Also sets `fn.cleanup = fn` for old callers.
- */
-export function subscribeToTable<T = any>(
-  opts: TableSubscriptionOptions,
-  handlers: Handlers<T> = {}
-): () => void {
-  const schema = opts.schema ?? 'public';
-  const event: RowEvent = opts.event ?? '*';
-  const channelName =
-    opts.channelName ?? `rt_${schema}_${opts.table}_${Math.random().toString(36).slice(2)}`;
-
-  const channel = supabase.channel(channelName);
-
-  channel.on(
-    'postgres_changes',
-    {
-      event,
-      schema,
-      table: opts.table,
-      // Supabase expects e.g. 'user_id=eq.123' or undefined
-      filter: opts.filter || undefined,
-    },
-    (payload: any) => {
-      try {
-        const wrapped = {
-          schema,
-          table: opts.table,
-          eventType: payload.eventType as RowEvent,
-          new: payload.new,
-          old: payload.old,
-        };
-        handlers.onAny?.(wrapped);
-        if (wrapped.eventType === 'INSERT') handlers.onInsert?.(wrapped);
-        if (wrapped.eventType === 'UPDATE') handlers.onUpdate?.(wrapped);
-        if (wrapped.eventType === 'DELETE') handlers.onDelete?.(wrapped);
-      } catch (e) {
-        handlers.onError?.(e);
-      }
-    }
-  );
-
-  channel.subscribe((status) => {
-    // Light console breadcrumb; non-blocking
-    if (status === 'SUBSCRIBED') {
-      console.log('[Realtime] channel status: SUBSCRIBED');
-    } else if (status === 'CLOSED') {
-      console.warn('[Realtime] channel status: CLOSED');
-    } else if (status === 'CHANNEL_ERROR') {
-      console.error('[Realtime] channel status: CHANNEL_ERROR');
-    }
-  });
-
-  const off = () => {
-    try {
-      supabase.removeChannel(channel);
-    } catch (e) {
-      handlers.onError?.(e);
-    }
-  };
-
-  // Back-compat for callers that used `.cleanup`
-  (off as any).cleanup = off;
-  return off;
-}
-
-/**
- * Convenience helpers for common tables.
- * These simply call subscribeToTable with the right table name.
- */
-export function subscribeToPosts<T = any>(
-  handlers: Handlers<T>,
-  filter?: string
-) {
-  return subscribeToTable<T>({ table: 'posts', event: '*', filter }, handlers);
-}
-
-export function subscribeToProfiles<T = any>(
-  handlers: Handlers<T>,
-  filter?: string
-) {
-  return subscribeToTable<T>({ table: 'profiles', event: '*', filter }, handlers);
-}
-
-export function subscribeToNotifications<T = any>(
-  handlers: Handlers<T>,
-  filter?: string
-) {
-  return subscribeToTable<T>({ table: 'notifications', event: '*', filter }, handlers);
-}
-
-export function buildMessageParticipantFilter(userId: string | null | undefined) {
-  if (!userId) return undefined;
-  const normalizedId = encodeRealtimeValue(userId);
-  return `or(sender_id=eq.${normalizedId},receiver_id=eq.${normalizedId})`;
-}
-
-function encodeRealtimeValue(value: string) {
-  // Supabase realtime channel filters expect PostgREST-style query segments.
-  // Values should be URI encoded so characters like commas or parentheses do not
-  // break the composed filter. Use encodeURIComponent but keep `*` unescaped to
-  // align with PostgREST wildcard semantics if they are ever passed through.
-  return encodeURIComponent(value).replace(/%2A/gi, '*');
-}
-
-export function subscribeToMessages<T = any>(
-  handlers: Handlers<T>,
-  filter?: string
-) {
-  return subscribeToTable<T>({ table: 'messages', event: '*', filter }, handlers);
-}
-
-export function subscribeToConversations<T = any>(
-  handlers: Handlers<T>,
-  filter?: string
-) {
-  return subscribeToTable<T>({ table: 'conversations', event: '*', filter }, handlers);
-}
-
-/**
- * Composite subscription used by pages that want "the whole app realtime".
- * Pass the current user's UUID so we can scope some streams if desired.
+ * Build a Supabase realtime filter that includes BOTH directions:
+ * messages where the current user is either the sender or receiver.
  *
- * Returns ONE cleanup function that tears down all channels.
+ * Example returned filter:
+ *   or(sender_id.eq.<uid>,receiver_id.eq.<uid>)
+ */
+export function buildMessageParticipantFilter(userId: string) {
+  const trimmed = String(userId).trim();
+  return `or(sender_id.eq.${trimmed},receiver_id.eq.${trimmed})`;
+}
+
+export type Direction = 'inbound' | 'outbound';
+
+export type AppRealtimeUnsubscribe = () => void;
+
+/**
+ * Subscribe to messages table for a given user (both inbound and outbound).
+ * Logs lifecycle and errors; returns an unsubscribe function.
  */
 export function subscribeToAppRealtime(
-  userId: string | null | undefined,
-  opts?: {
-    posts?: Handlers;
-    profiles?: Handlers;
-    notifications?: Handlers;
-    messages?: Handlers;
-    conversations?: Handlers;
-  }
-): () => void {
-  const offs: Array<() => void> = [];
+  userId: string,
+  onEvent: (payload: any, direction: Direction) => void,
+  onError?: (err: any) => void
+): AppRealtimeUnsubscribe {
+  const filter = buildMessageParticipantFilter(userId);
+  console.log('[Realtime] Subscribing to messages with filter:', filter);
 
-  // Posts: everyone’s public posts (keep simple; small project scale)
-  if (opts?.posts) {
-    offs.push(subscribeToPosts(opts.posts));
-  }
-
-  // Profiles: reflect public profile changes across devices
-  if (opts?.profiles) {
-    offs.push(subscribeToProfiles(opts.profiles));
-  }
-
-  // Notifications scoped to the logged-in user (if provided)
-  if (opts?.notifications) {
-    const filter = userId ? `user_id=eq.${userId}` : undefined;
-    offs.push(subscribeToNotifications(opts.notifications, filter));
-  }
-
-  // Messages + conversations scoped to the participant (if provided)
-  if (opts?.messages) {
-    const filter = buildMessageParticipantFilter(userId ?? undefined);
-    if (filter) {
-      console.debug('[Realtime] subscribing to messages with filter:', filter);
-    } else {
-      console.debug('[Realtime] subscribing to messages without participant filter');
-    }
-    offs.push(
-      subscribeToMessages(
+  try {
+    const channel = supabase
+      .channel(`messages:${userId}:${Date.now()}`)
+      .on(
+        'postgres_changes',
         {
-          ...opts.messages,
-          onAny: (payload) => {
-            console.debug('[Realtime] message event received', {
-              eventType: payload.eventType,
-              messageId: payload.new?.id ?? payload.old?.id,
-            });
-            opts.messages?.onAny?.(payload);
-          },
-          onError: (error) => {
-            console.error('[Realtime] message subscription error', error);
-            opts.messages?.onError?.(error);
-          },
+          event: '*',
+          schema: 'public',
+          table: 'messages',
+          filter, // includes both sender and receiver
         },
-        filter,
-      ),
-    );
-  }
-  if (opts?.conversations) {
-    offs.push(subscribeToConversations(opts.conversations));
-  }
+        (payload) => {
+          try {
+            const row = (payload as any)?.new ?? (payload as any)?.old ?? {};
+            const direction: Direction =
+              row?.sender_id === userId ? 'outbound' : 'inbound';
 
-  const offAll = () => {
-    for (const off of offs) {
+            console.log('[Realtime] message event:', {
+              type: payload.eventType,
+              direction,
+              id: row?.id,
+              sender_id: row?.sender_id,
+              receiver_id: row?.receiver_id,
+            });
+
+            onEvent(payload, direction);
+          } catch (err) {
+            console.error('[Realtime] Handler error:', err);
+            onError?.(err);
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('[Realtime] messages channel status:', status);
+      });
+
+    return () => {
       try {
-        off();
-      } catch {
-        /* noop */
+        supabase.removeChannel(channel);
+        console.log('[Realtime] Unsubscribed from messages channel');
+      } catch (err) {
+        console.warn('[Realtime] Unsubscribe error:', err);
       }
-    }
-  };
-  (offAll as any).cleanup = offAll;
-  return offAll;
+    };
+  } catch (err) {
+    console.error('[Realtime] Subscription error:', err);
+    onError?.(err);
+    return () => {};
+  }
 }
