@@ -123,6 +123,20 @@ export function subscribeToNotifications<T = any>(
   return subscribeToTable<T>({ table: 'notifications', event: '*', filter }, handlers);
 }
 
+export function buildMessageParticipantFilter(userId: string | null | undefined) {
+  if (!userId) return undefined;
+  const normalizedId = encodeRealtimeValue(userId);
+  return `or(sender_id=eq.${normalizedId},receiver_id=eq.${normalizedId})`;
+}
+
+function encodeRealtimeValue(value: string) {
+  // Supabase realtime channel filters expect PostgREST-style query segments.
+  // Values should be URI encoded so characters like commas or parentheses do not
+  // break the composed filter. Use encodeURIComponent but keep `*` unescaped to
+  // align with PostgREST wildcard semantics if they are ever passed through.
+  return encodeURIComponent(value).replace(/%2A/gi, '*');
+}
+
 export function subscribeToMessages<T = any>(
   handlers: Handlers<T>,
   filter?: string
@@ -173,8 +187,31 @@ export function subscribeToAppRealtime(
 
   // Messages + conversations scoped to the participant (if provided)
   if (opts?.messages) {
-    const filter = userId ? `sender_id=eq.${userId}` : undefined;
-    offs.push(subscribeToMessages(opts.messages, filter));
+    const filter = buildMessageParticipantFilter(userId ?? undefined);
+    if (filter) {
+      console.debug('[Realtime] subscribing to messages with filter:', filter);
+    } else {
+      console.debug('[Realtime] subscribing to messages without participant filter');
+    }
+    offs.push(
+      subscribeToMessages(
+        {
+          ...opts.messages,
+          onAny: (payload) => {
+            console.debug('[Realtime] message event received', {
+              eventType: payload.eventType,
+              messageId: payload.new?.id ?? payload.old?.id,
+            });
+            opts.messages?.onAny?.(payload);
+          },
+          onError: (error) => {
+            console.error('[Realtime] message subscription error', error);
+            opts.messages?.onError?.(error);
+          },
+        },
+        filter,
+      ),
+    );
   }
   if (opts?.conversations) {
     offs.push(subscribeToConversations(opts.conversations));

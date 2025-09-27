@@ -1,15 +1,17 @@
 // src/services/friendRequests.ts
 import { supabase } from '../lib/supabaseClient';
+import { FriendRequest, FriendRequestStatus } from '../types';
 import { subscribeToTable } from './realtime';
 
-export type FriendRequest = {
-  id: string;
-  sender_id: string;
-  receiver_id: string;
-  status: 'pending' | 'accepted' | 'declined';
-  created_at?: string;
-  updated_at?: string;
-};
+function rowToFriendRequest(row: any): FriendRequest {
+  return {
+    id: row.id,
+    fromUserId: row.sender_id,
+    toUserId: row.receiver_id,
+    status: row.status as FriendRequestStatus,
+    timestamp: row.created_at ?? new Date().toISOString(),
+  };
+}
 
 /**
  * Send a friend request
@@ -34,7 +36,7 @@ export async function sendFriendRequest(receiverId: string): Promise<FriendReque
     .single();
 
   if (error) throw error;
-  return data as FriendRequest;
+  return rowToFriendRequest(data);
 }
 
 /**
@@ -49,7 +51,7 @@ export async function acceptFriendRequest(id: string): Promise<FriendRequest> {
     .single();
 
   if (error) throw error;
-  return data as FriendRequest;
+  return rowToFriendRequest(data);
 }
 
 /**
@@ -64,7 +66,15 @@ export async function declineFriendRequest(id: string): Promise<FriendRequest> {
     .single();
 
   if (error) throw error;
-  return data as FriendRequest;
+  return rowToFriendRequest(data);
+}
+
+export async function cancelFriendRequest(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('friend_requests')
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
 }
 
 /**
@@ -82,7 +92,7 @@ export async function getMyFriendRequests(): Promise<FriendRequest[]> {
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data as FriendRequest[]) || [];
+  return (data ?? []).map(rowToFriendRequest);
 }
 
 /**

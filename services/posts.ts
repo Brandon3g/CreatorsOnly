@@ -46,3 +46,12 @@ export async function fetchProfilePosts(profileId: string, limit = 30) {
   if (error) throw error;
   return (data ?? []) as Post[];
 }
+
+export async function deletePost(postId: string) {
+  if (!postId) throw new Error('deletePost: missing postId');
+  const { error } = await supabase
+    .from('posts')
+    .delete()
+    .eq('id', postId);
+  if (error) throw error;
+}
