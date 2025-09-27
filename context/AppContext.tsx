@@ -40,7 +40,6 @@ import {
   MOCK_NOTIFICATIONS,
   MOCK_CONVERSATIONS,
   MOCK_COLLABORATIONS,
-  MASTER_USER_ID,
   MOCK_FEEDBACK,
   MOCK_FRIEND_REQUESTS,
 } from '../constants';
@@ -461,25 +460,30 @@ useEffect(() => {
   }
 }, [currentUser?.id]);
 
-  // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
-  useEffect(() => {
-    let unsub = () => {};
+ // Map any signed-in Supabase user to a REAL Supabase-backed profile (no more MASTER_USER_ID)
+useEffect(() => {
+  let unsub = () => {};
 
-    (async () => {
-      // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
+  (async () => {
+    try {
+      // keep your recovery flag behavior
       if (urlLooksLikeRecovery()) setRecoveryFlag(true);
 
       // initial check
-      const { data } = await supabase.auth.getSession();
-      const hasSession = !!data.session?.user;
+      const { data, error } = await supabase.auth.getSession();
+      if (error) console.warn('[Auth] getSession error:', error);
+
+      const supaUser = data?.session?.user ?? null;
       const recovering = isRecoveryActive();
 
-      if (hasSession) {
-        if (authData.userId !== MASTER_USER_ID) {
-          setAuthData({ userId: MASTER_USER_ID });
-        }
+      const MASTER_UID = import.meta.env.VITE_MASTER_UID as string | undefined;
+      const isMaster =
+        (supaUser?.id && MASTER_UID && supaUser.id === MASTER_UID) ||
+        ((supaUser?.app_metadata as any)?.role === 'master');
 
-        // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
+      if (supaUser) {
+        setAuthData({ userId: supaUser.id, source: 'supabase', appMetadata: supaUser.app_metadata, role: isMaster ? 'master' : 'user' });
+
         if (recovering) {
           if (!/#\/NewPassword/i.test(window.location.hash)) {
             window.location.hash = '#/NewPassword';
@@ -488,20 +492,33 @@ useEffect(() => {
           setHistory([{ page: 'feed', context: {} }]);
         }
 
-        trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-      } else if (authData.userId !== null) {
-        setAuthData({ userId: null });
+        trackEvent('login_success', { userId: supaUser.id, via: 'supabase' });
+      } else {
+        // no session
+        if (authData.userId !== null) {
+          setAuthData({ userId: null });
+        }
         setHistory([{ page: 'feed', context: {} }]);
       }
 
-      // subscribe to future changes
+      // subscribe to future auth changes
       const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-        const recoveringNow = isRecoveryActive();
+        const user = session?.user ?? null;
+        const recNow = isRecoveryActive();
 
-        if (session?.user) {
-          setAuthData({ userId: MASTER_USER_ID });
+        if (user) {
+          const isM =
+            (MASTER_UID && user.id === MASTER_UID) ||
+            ((user.app_metadata as any)?.role === 'master');
 
-          if (recoveringNow) {
+          setAuthData({
+            userId: user.id,
+            source: 'supabase',
+            appMetadata: user.app_metadata,
+            role: isM ? 'master' : 'user',
+          });
+
+          if (recNow) {
             if (!/#\/NewPassword/i.test(window.location.hash)) {
               window.location.hash = '#/NewPassword';
             }
@@ -509,18 +526,26 @@ useEffect(() => {
             setHistory([{ page: 'feed', context: {} }]);
           }
 
-          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+          trackEvent('login_success', { userId: user.id, via: 'supabase' });
         } else {
           setAuthData({ userId: null });
           setHistory([{ page: 'feed', context: {} }]);
-          // Leaving auth state; clear recovery guard just in case
           setRecoveryFlag(false);
           trackEvent('logout', { via: 'supabase' });
         }
       });
 
       unsub = () => sub.subscription.unsubscribe();
-    })();
+    } catch (err) {
+      console.error('[Auth] bridge error:', err);
+    }
+  })();
+
+  return () => {
+    try { unsub?.(); } catch {}
+  };
+}, []);
+
 
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
