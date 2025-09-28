@@ -15,7 +15,6 @@ import {
   Notification,
   Conversation,
   Collaboration,
-  Message,
   Platform,
   ConversationFolder,
   NotificationType,
@@ -40,7 +39,46 @@ import {
 } from '../constants';
 
 import { trackEvent } from '../services/analytics';
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+import {
+  fetchUsers as fetchUsersFromDb,
+  fetchPosts as fetchPostsFromDb,
+  fetchNotifications as fetchNotificationsFromDb,
+  fetchCollaborations as fetchCollaborationsFromDb,
+  fetchFeedback as fetchFeedbackFromDb,
+  fetchFriendRequests as fetchFriendRequestsFromDb,
+  fetchPushSubscriptions as fetchPushSubscriptionsFromDb,
+  fetchConversations as fetchConversationsFromDb,
+  upsertPushSubscription,
+  createNotification as createNotificationRow,
+  markNotificationsRead,
+  createCollaboration as createCollaborationRow,
+  updateCollaborationRow,
+  deleteCollaborationRow,
+  upsertCollaborationInterest,
+  createMessage as createMessageRow,
+  ensureConversation,
+  submitFeedback as submitFeedbackRow,
+  updateConversationFolder as updateConversationFolderRow,
+  updateUserFriends,
+  updateUserBlocked,
+  mapDbPostToLegacy,
+  mapRowToUser,
+  mapRowToNotification,
+  mapRowToCollaboration,
+  mapRowToMessage,
+  mapRowToConversation,
+  mapRowToFeedback,
+  mapRowToFriendRequest,
+} from '../services/appData.ts';
+import {
+  sendFriendRequest as sendFriendRequestRow,
+  acceptFriendRequest as acceptFriendRequestRow,
+  declineFriendRequest as declineFriendRequestRow,
+  cancelFriendRequest as cancelFriendRequestRow,
+} from '../services/friendRequests';
+import { createPost, deletePost as deletePostFromDb } from '../services/posts';
+import { subscribeToAppRealtime, subscribeToTable } from '../services/realtime';
 
 /* ---------------------------------------------------------------------------
  * Recovery helpers
@@ -100,44 +138,9 @@ const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
 /* ---------------------------------------------------------------------------
  * Simulated Web Push (uses SW message to show notification)
  * -------------------------------------------------------------------------*/
-const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
-
-const sendWebPush = (
-  userId: string,
-  title: string,
-  body: string,
-  url: string,
-) => {
-  console.log(`[PUSH_SIM] Sending push to user ${userId}: ${title}`);
-  const subscriptions = JSON.parse(
-    localStorage.getItem(PUSH_SUBSCRIPTIONS_STORAGE_KEY) || '{}',
-  );
-  if (subscriptions[userId]) {
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({
-        type: 'show-notification',
-        payload: {
-          title,
-          options: { body, data: { url } },
-        },
-      });
-    }
-  } else {
-    console.warn(`[PUSH_SIM] No push subscription found for user ${userId}`);
-  }
-};
-
 /* ---------------------------------------------------------------------------
  * Storage keys
  * -------------------------------------------------------------------------*/
-const USERS_STORAGE_KEY = 'creatorsOnlyUsers';
-const POSTS_STORAGE_KEY = 'creatorsOnlyPosts';
-const NOTIFICATIONS_STORAGE_KEY = 'creatorsOnlyNotifications';
-const CONVERSATIONS_STORAGE_KEY = 'creatorsOnlyConversations';
-const COLLABORATIONS_STORAGE_KEY = 'creatorsOnlyCollaborations';
-const FEEDBACK_STORAGE_KEY = 'creatorsOnlyFeedback';
-const FRIEND_REQUESTS_STORAGE_KEY = 'creatorsOnlyFriendRequests';
-const AUTH_STORAGE_KEY = 'creatorsOnlyAuth';
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 
 /* ---------------------------------------------------------------------------
@@ -189,35 +192,35 @@ interface AppContextType {
 
   updateUserProfile: (updatedUser: User) => void;
 
-  sendFriendRequest: (toUserId: string) => void;
-  cancelFriendRequest: (toUserId: string) => void;
-  acceptFriendRequest: (requestId: string) => void;
-  declineFriendRequest: (requestId: string) => void;
-  removeFriend: (friendId: string) => void;
-  toggleBlockUser: (userId: string) => void;
+  sendFriendRequest: (toUserId: string) => Promise<void>;
+  cancelFriendRequest: (toUserId: string) => Promise<void>;
+  acceptFriendRequest: (requestId: string) => Promise<void>;
+  declineFriendRequest: (requestId: string) => Promise<void>;
+  removeFriend: (friendId: string) => Promise<void>;
+  toggleBlockUser: (userId: string) => Promise<void>;
 
   getFriendRequest: (userId1: string, userId2: string) => FriendRequest | undefined;
   getFriendRequestById: (id: string) => FriendRequest | undefined;
 
-  addPost: (content: string, image?: string) => void;
-  deletePost: (postId: string) => void;
+  addPost: (content: string, image?: string) => Promise<void>;
+  deletePost: (postId: string) => Promise<void>;
 
   addCollaboration: (
     collab: Omit<Collaboration, 'id' | 'authorId' | 'timestamp' | 'interestedUserIds'>
-  ) => void;
-  updateCollaboration: (updatedCollab: Collaboration) => void;
-  deleteCollaboration: (collabId: string) => void;
-  toggleCollaborationInterest: (collabId: string) => void;
+  ) => Promise<void>;
+  updateCollaboration: (updatedCollab: Collaboration) => Promise<void>;
+  deleteCollaboration: (collabId: string) => Promise<void>;
+  toggleCollaborationInterest: (collabId: string) => Promise<void>;
 
-  sendMessage: (conversationId: string, text: string) => void;
-  viewConversation: (participantId: string) => void;
+  sendMessage: (conversationId: string, text: string) => Promise<void>;
+  viewConversation: (participantId: string) => Promise<void>;
   setSelectedConversationId: (id: string | null) => void;
 
   setEditingCollaborationId: (id: string | null) => void;
-  moveConversationToFolder: (conversationId: string, folder: ConversationFolder) => void;
+  moveConversationToFolder: (conversationId: string, folder: ConversationFolder) => Promise<void>;
 
-  markNotificationsAsRead: (ids: string[]) => void;
-  sendFeedback: (content: string, type: 'Bug Report' | 'Suggestion') => void;
+  markNotificationsAsRead: (ids: string[]) => Promise<void>;
+  sendFeedback: (content: string, type: 'Bug Report' | 'Suggestion') => Promise<void>;
 
   navigate: (page: Page, context?: PageContext) => void;
   goBack: () => void;
@@ -232,7 +235,7 @@ interface AppContextType {
   // Real email reset via Supabase (redirects to #/NewPassword)
   sendPasswordResetLink: (email: string) => void;
 
-  subscribeToPushNotifications: (subscription: PushSubscriptionObject) => void;
+  subscribeToPushNotifications: (subscription: PushSubscriptionObject) => Promise<void>;
 
   setTheme: (theme: 'light' | 'dark') => void;
 
@@ -248,67 +251,42 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
  * Provider
  * -------------------------------------------------------------------------*/
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // localStorage state helper
-  function useLocalStorage<T>(
-    key: string,
-    initialValue: T,
-  ): [T, (value: T | ((val: T) => T)) => void] {
-    const [storedValue, setStoredValue] = useState<T>(() => {
-      try {
-        const item = window.localStorage.getItem(key);
-        return item ? JSON.parse(item) : initialValue;
-      } catch {
-        return initialValue;
-      }
-    });
-
-    const setValue = (value: T | ((val: T) => T)) => {
-      try {
-        const valueToStore = value instanceof Function ? value(storedValue) : value;
-        setStoredValue(valueToStore);
-        window.localStorage.setItem(key, JSON.stringify(valueToStore));
-      } catch {}
-    };
-
-    return [storedValue, setValue];
-  }
-
   // --- State ---------------------------------------------------------------
-  const [users, setUsers] = useLocalStorage<User[]>(USERS_STORAGE_KEY, MOCK_USERS);
-  const [posts, setPosts] = useLocalStorage<Post[]>(POSTS_STORAGE_KEY, MOCK_POSTS);
-  const [notifications, setNotifications] = useLocalStorage<Notification[]>(
-    NOTIFICATIONS_STORAGE_KEY,
+  const [users, setUsers] = useState<User[]>(MOCK_USERS);
+  const [posts, setPosts] = useState<Post[]>(MOCK_POSTS);
+  const [notifications, setNotifications] = useState<Notification[]>(
     MOCK_NOTIFICATIONS,
   );
-  const [conversations, setConversations] = useLocalStorage<Conversation[]>(
-    CONVERSATIONS_STORAGE_KEY,
+  const [conversations, setConversations] = useState<Conversation[]>(
     MOCK_CONVERSATIONS,
   );
-  const [collaborations, setCollaborations] = useLocalStorage<Collaboration[]>(
-    COLLABORATIONS_STORAGE_KEY,
+  const [collaborations, setCollaborations] = useState<Collaboration[]>(
     MOCK_COLLABORATIONS,
   );
-  const [feedback, setFeedback] = useLocalStorage<Feedback[]>(
-    FEEDBACK_STORAGE_KEY,
-    MOCK_FEEDBACK,
-  );
-  const [friendRequests, setFriendRequests] = useLocalStorage<FriendRequest[]>(
-    FRIEND_REQUESTS_STORAGE_KEY,
+  const [feedback, setFeedback] = useState<Feedback[]>(MOCK_FEEDBACK);
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>(
     MOCK_FRIEND_REQUESTS,
   );
 
   // App-level "auth" is just a pointer to a user id from the users array
-  const [authData, setAuthData] = useLocalStorage<{ userId: string | null }>(
-    AUTH_STORAGE_KEY,
-    { userId: null },
-  );
+  const [authData, setAuthData] = useState<{ userId: string | null }>({
+    userId: null,
+  });
 
-  const [pushSubscriptions, setPushSubscriptions] = useLocalStorage<Record<string, PushSubscriptionObject>>(
-    PUSH_SUBSCRIPTIONS_STORAGE_KEY,
-    {},
-  );
+  const [pushSubscriptions, setPushSubscriptions] = useState<
+    Record<string, PushSubscriptionObject>
+  >({});
 
-  const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(THEME_STORAGE_KEY, 'dark');
+  const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
+    try {
+      const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+      return stored ? (JSON.parse(stored) as 'light' | 'dark') : 'dark';
+    } catch {
+      return 'dark';
+    }
+  });
+
+  const [supabaseUserId, setSupabaseUserId] = useState<string | null>(null);
 
   const [isRegistering, setIsRegistering] = useState(false);
 
@@ -324,57 +302,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
 
-  // --- Cross-tab sync (except AUTH) ----------------------------------------
   useEffect(() => {
-    const syncState = (event: StorageEvent) => {
-      if (event.key === AUTH_STORAGE_KEY) return;
-      if (!event.key || event.newValue === null) return;
-
-      try {
-        const value = JSON.parse(event.newValue);
-        switch (event.key) {
-          case USERS_STORAGE_KEY:
-            setUsers(value);
-            break;
-          case POSTS_STORAGE_KEY:
-            setPosts(value);
-            break;
-          case NOTIFICATIONS_STORAGE_KEY:
-            setNotifications(value);
-            break;
-          case CONVERSATIONS_STORAGE_KEY:
-            setConversations(value);
-            break;
-          case COLLABORATIONS_STORAGE_KEY:
-            setCollaborations(value);
-            break;
-          case FEEDBACK_STORAGE_KEY:
-            setFeedback(value);
-            break;
-          case FRIEND_REQUESTS_STORAGE_KEY:
-            setFriendRequests(value);
-            break;
-          case THEME_STORAGE_KEY:
-            setThemeState(value);
-            break;
-        }
-      } catch (err) {
-        console.error(`Error syncing state for key ${event.key}:`, err);
-      }
-    };
-
-    window.addEventListener('storage', syncState);
-    return () => window.removeEventListener('storage', syncState);
-  }, [
-    setUsers,
-    setPosts,
-    setNotifications,
-    setConversations,
-    setCollaborations,
-    setFeedback,
-    setFriendRequests,
-    setThemeState,
-  ]);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(theme));
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
 
   // --- Derived -------------------------------------------------------------
   const currentUser = users.find((u) => u.id === authData.userId) || null;
@@ -391,45 +325,37 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // --- Supabase → AppContext **BRIDGE** -----------------------------------
   // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setSupabaseUserId(null);
+      setRecoveryFlag(false);
+      setAuthData({ userId: MASTER_USER_ID });
+      setHistory([{ page: 'feed', context: {} }]);
+      trackEvent('login_success', { userId: MASTER_USER_ID, via: 'demo' });
+      return;
+    }
+
     let unsub = () => {};
 
     (async () => {
-      // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
-      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
+      try {
+        // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
+        if (urlLooksLikeRecovery()) setRecoveryFlag(true);
 
-      // initial check
-      const { data } = await supabase.auth.getSession();
-      const hasSession = !!data.session?.user;
-      const recovering = isRecoveryActive();
+        // initial check
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        const supabaseId = data.session?.user?.id ?? null;
+        setSupabaseUserId(supabaseId);
+        const hasSession = !!supabaseId;
+        const recovering = isRecoveryActive();
 
-      if (hasSession) {
-        if (authData.userId !== MASTER_USER_ID) {
-          setAuthData({ userId: MASTER_USER_ID });
-        }
-
-        // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
-        if (recovering) {
-          if (!/#\/NewPassword/i.test(window.location.hash)) {
-            window.location.hash = '#/NewPassword';
+        if (hasSession) {
+          if (authData.userId !== MASTER_USER_ID) {
+            setAuthData({ userId: MASTER_USER_ID });
           }
-        } else {
-          setHistory([{ page: 'feed', context: {} }]);
-        }
 
-        trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-      } else if (authData.userId !== null) {
-        setAuthData({ userId: null });
-        setHistory([{ page: 'feed', context: {} }]);
-      }
-
-      // subscribe to future changes
-      const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-        const recoveringNow = isRecoveryActive();
-
-        if (session?.user) {
-          setAuthData({ userId: MASTER_USER_ID });
-
-          if (recoveringNow) {
+          // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
+          if (recovering) {
             if (!/#\/NewPassword/i.test(window.location.hash)) {
               window.location.hash = '#/NewPassword';
             }
@@ -438,27 +364,436 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
 
           trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-        } else {
+        } else if (authData.userId !== null) {
           setAuthData({ userId: null });
+          setSupabaseUserId(null);
           setHistory([{ page: 'feed', context: {} }]);
-          // Leaving auth state; clear recovery guard just in case
-          setRecoveryFlag(false);
-          trackEvent('logout', { via: 'supabase' });
         }
-      });
 
-      unsub = () => sub.subscription.unsubscribe();
+        // subscribe to future changes
+        const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+          const recoveringNow = isRecoveryActive();
+
+          if (session?.user) {
+            setSupabaseUserId(session.user.id);
+            setAuthData({ userId: MASTER_USER_ID });
+
+            if (recoveringNow) {
+              if (!/#\/NewPassword/i.test(window.location.hash)) {
+                window.location.hash = '#/NewPassword';
+              }
+            } else {
+              setHistory([{ page: 'feed', context: {} }]);
+            }
+
+            trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+          } else {
+            setSupabaseUserId(null);
+            setAuthData({ userId: null });
+            setHistory([{ page: 'feed', context: {} }]);
+            // Leaving auth state; clear recovery guard just in case
+            setRecoveryFlag(false);
+            trackEvent('logout', { via: 'supabase' });
+          }
+        });
+
+        unsub = () => sub.subscription.unsubscribe();
+      } catch (error) {
+        console.error('[AppProvider] Supabase auth bridge failed', error);
+        setSupabaseUserId(null);
+        setAuthData({ userId: MASTER_USER_ID });
+        setHistory([{ page: 'feed', context: {} }]);
+      }
     })();
 
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // run once
 
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return () => {};
+    }
+    if (!supabaseUserId) {
+      // Wait for an authenticated Supabase session before hydrating remote state.
+      // Until then we keep the seeded demo data so the UI can render without errors.
+      return () => {};
+    }
+    let active = true;
+    const failures: string[] = [];
+
+    async function hydrate() {
+      try {
+        const remoteUsers = await fetchUsersFromDb();
+        if (active && remoteUsers.length > 0) {
+          setUsers(remoteUsers);
+        }
+      } catch (error) {
+        console.error('[AppProvider] failed to load users from Supabase', error);
+        failures.push('profiles');
+      }
+
+      try {
+        const remotePosts = await fetchPostsFromDb();
+        if (active) setPosts(remotePosts);
+      } catch (error) {
+        console.error('[AppProvider] failed to load posts from Supabase', error);
+        failures.push('posts');
+      }
+
+      try {
+        const remoteCollaborations = await fetchCollaborationsFromDb();
+        if (active) setCollaborations(remoteCollaborations);
+      } catch (error) {
+        console.error('[AppProvider] failed to load collaborations', error);
+        failures.push('collaborations');
+      }
+
+      try {
+        const remoteFeedback = await fetchFeedbackFromDb();
+        if (active) setFeedback(remoteFeedback);
+      } catch (error) {
+        console.error('[AppProvider] failed to load feedback', error);
+        failures.push('feedback');
+      }
+
+      try {
+        const remoteConversations = await fetchConversationsFromDb();
+        if (active) setConversations(remoteConversations);
+      } catch (error) {
+        console.error('[AppProvider] failed to load conversations', error);
+        failures.push('messages');
+      }
+
+      try {
+        const remoteSubscriptions = await fetchPushSubscriptionsFromDb();
+        if (active) setPushSubscriptions(remoteSubscriptions);
+      } catch (error) {
+        console.error('[AppProvider] failed to load push subscriptions', error);
+        failures.push('push notifications');
+      }
+
+      if (supabaseUserId) {
+        try {
+          const remoteNotifications = await fetchNotificationsFromDb(supabaseUserId);
+          if (active) setNotifications(remoteNotifications);
+        } catch (error) {
+          console.error('[AppProvider] failed to load notifications', error);
+          failures.push('notifications');
+        }
+
+        try {
+          const remoteFriendRequests = await fetchFriendRequestsFromDb(supabaseUserId);
+          if (active) setFriendRequests(remoteFriendRequests);
+        } catch (error) {
+          console.error('[AppProvider] failed to load friend requests', error);
+          failures.push('friend requests');
+        }
+      }
+
+      if (failures.length > 0 && active) {
+        window.alert(
+          `Some data could not be refreshed from the server: ${failures.join(', ')}`,
+        );
+      }
+    }
+
+    hydrate();
+
+    return () => {
+      active = false;
+    };
+  }, [supabaseUserId]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return () => {};
+    }
+    if (!supabaseUserId) {
+      return () => {};
+    }
+    const offs: Array<() => void> = [];
+
+    offs.push(
+      subscribeToAppRealtime(supabaseUserId ?? null, {
+        posts: {
+          onInsert: (payload) => {
+            if (!payload.new) return;
+            const post = mapDbPostToLegacy(payload.new as any);
+            setPosts((prev) => [post, ...prev.filter((p) => p.id !== post.id)]);
+          },
+          onUpdate: (payload) => {
+            if (!payload.new) return;
+            const post = mapDbPostToLegacy(payload.new as any);
+            setPosts((prev) =>
+              prev.map((p) => (p.id === post.id ? post : p)),
+            );
+          },
+          onDelete: (payload) => {
+            if (!payload.old) return;
+            setPosts((prev) => prev.filter((p) => p.id !== payload.old.id));
+          },
+        },
+        notifications: {
+          onInsert: (payload) => {
+            if (!payload.new) return;
+            const notification = mapRowToNotification(payload.new);
+            setNotifications((prev) => [notification, ...prev.filter((n) => n.id !== notification.id)]);
+          },
+          onUpdate: (payload) => {
+            if (!payload.new) return;
+            const notification = mapRowToNotification(payload.new);
+            setNotifications((prev) =>
+              prev.map((n) => (n.id === notification.id ? notification : n)),
+            );
+          },
+          onDelete: (payload) => {
+            if (!payload.old) return;
+            setNotifications((prev) => prev.filter((n) => n.id !== payload.old.id));
+          },
+        },
+        messages: {
+          onInsert: (payload) => {
+            if (!payload.new) return;
+            const message = mapRowToMessage(payload.new);
+            const conversationId = (payload.new as any).conversation_id;
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === conversationId
+                  ? c.messages.some((m) => m.id === message.id)
+                    ? c
+                    : { ...c, messages: [...c.messages, message] }
+                  : c,
+              ),
+            );
+          },
+        },
+        conversations: {
+          onInsert: (payload) => {
+            if (!payload.new) return;
+            const conversation = mapRowToConversation(payload.new, []);
+            setConversations((prev) => {
+              const existing = prev.find((c) => c.id === conversation.id);
+              if (existing) {
+                return prev.map((c) =>
+                  c.id === conversation.id
+                    ? { ...conversation, messages: existing.messages }
+                    : c,
+                );
+              }
+              return [...prev, conversation];
+            });
+          },
+          onUpdate: (payload) => {
+            if (!payload.new) return;
+            const conversation = mapRowToConversation(payload.new, []);
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === conversation.id
+                  ? { ...conversation, messages: c.messages }
+                  : c,
+              ),
+            );
+          },
+        },
+      }),
+    );
+
+    offs.push(
+      subscribeToTable(
+        { table: 'collaborations', event: '*' },
+        {
+          onInsert: (payload) => {
+            if (!payload.new) return;
+            const collab = mapRowToCollaboration(payload.new);
+            setCollaborations((prev) => [collab, ...prev.filter((c) => c.id !== collab.id)]);
+          },
+          onUpdate: (payload) => {
+            if (!payload.new) return;
+            const collab = mapRowToCollaboration(payload.new);
+            setCollaborations((prev) =>
+              prev.map((c) => (c.id === collab.id ? collab : c)),
+            );
+          },
+          onDelete: (payload) => {
+            if (!payload.old) return;
+            setCollaborations((prev) => prev.filter((c) => c.id !== payload.old.id));
+          },
+        },
+      ),
+    );
+
+    offs.push(
+      subscribeToTable(
+        { table: 'users', event: '*' },
+        {
+          onInsert: (payload) => {
+            if (!payload.new) return;
+            const user = mapRowToUser(payload.new);
+            setUsers((prev) => [user, ...prev.filter((u) => u.id !== user.id)]);
+          },
+          onUpdate: (payload) => {
+            if (!payload.new) return;
+            const user = mapRowToUser(payload.new);
+            setUsers((prev) => prev.map((u) => (u.id === user.id ? user : u)));
+          },
+          onDelete: (payload) => {
+            if (!payload.old) return;
+            setUsers((prev) => prev.filter((u) => u.id !== payload.old.id));
+          },
+        },
+      ),
+    );
+
+    offs.push(
+      subscribeToTable(
+        { table: 'friend_requests', event: '*' },
+        {
+          onInsert: (payload) => {
+            if (!payload.new) return;
+            const request = mapRowToFriendRequest(payload.new);
+            setFriendRequests((prev) => [request, ...prev.filter((fr) => fr.id !== request.id)]);
+          },
+          onUpdate: (payload) => {
+            if (!payload.new) return;
+            const request = mapRowToFriendRequest(payload.new);
+            setFriendRequests((prev) =>
+              prev.map((fr) => (fr.id === request.id ? request : fr)),
+            );
+          },
+          onDelete: (payload) => {
+            if (!payload.old) return;
+            setFriendRequests((prev) => prev.filter((fr) => fr.id !== payload.old.id));
+          },
+        },
+      ),
+    );
+
+    offs.push(
+      subscribeToTable(
+        { table: 'feedback', event: 'INSERT' },
+        {
+          onInsert: (payload) => {
+            if (!payload.new) return;
+            const entry = mapRowToFeedback(payload.new);
+            setFeedback((prev) => [entry, ...prev]);
+          },
+        },
+      ),
+    );
+
+    offs.push(
+      subscribeToTable(
+        { table: 'push_subscriptions', event: '*' },
+        {
+          onAny: () => {
+            fetchPushSubscriptionsFromDb()
+              .then((subs) => setPushSubscriptions(subs))
+              .catch((error) =>
+                console.error('[AppProvider] failed to refresh push subscriptions', error),
+              );
+          },
+        },
+      ),
+    );
+
+    return () => {
+      offs.forEach((off) => {
+        try {
+          off();
+        } catch {
+          /* ignore */
+        }
+      });
+    };
+  }, [supabaseUserId]);
+
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
-    await new Promise((res) => setTimeout(res, 600));
+    if (!isSupabaseConfigured) {
+      trackEvent('data_refreshed', { via: 'demo' });
+      return;
+    }
+    if (!supabaseUserId) {
+      trackEvent('data_refreshed', { via: 'supabase-no-session' });
+      return;
+    }
+    const failures: string[] = [];
+
+    try {
+      const remotePosts = await fetchPostsFromDb();
+      setPosts(remotePosts);
+    } catch (error) {
+      console.error('[AppProvider] refresh posts failed', error);
+      failures.push('posts');
+    }
+
+    try {
+      const remoteCollabs = await fetchCollaborationsFromDb();
+      setCollaborations(remoteCollabs);
+    } catch (error) {
+      console.error('[AppProvider] refresh collaborations failed', error);
+      failures.push('collaborations');
+    }
+
+    try {
+      const remoteFeedback = await fetchFeedbackFromDb();
+      setFeedback(remoteFeedback);
+    } catch (error) {
+      console.error('[AppProvider] refresh feedback failed', error);
+      failures.push('feedback');
+    }
+
+    try {
+      const remoteConversations = await fetchConversationsFromDb();
+      setConversations(remoteConversations);
+    } catch (error) {
+      console.error('[AppProvider] refresh conversations failed', error);
+      failures.push('messages');
+    }
+
+    try {
+      const remoteUsers = await fetchUsersFromDb();
+      if (remoteUsers.length > 0) setUsers(remoteUsers);
+    } catch (error) {
+      console.error('[AppProvider] refresh users failed', error);
+      failures.push('profiles');
+    }
+
+    try {
+      const remoteSubscriptions = await fetchPushSubscriptionsFromDb();
+      setPushSubscriptions(remoteSubscriptions);
+    } catch (error) {
+      console.error('[AppProvider] refresh push subscriptions failed', error);
+      failures.push('push notifications');
+    }
+
+    if (supabaseUserId) {
+      try {
+        const remoteNotifications = await fetchNotificationsFromDb(supabaseUserId);
+        setNotifications(remoteNotifications);
+      } catch (error) {
+        console.error('[AppProvider] refresh notifications failed', error);
+        failures.push('notifications');
+      }
+
+      try {
+        const remoteRequests = await fetchFriendRequestsFromDb(supabaseUserId);
+        setFriendRequests(remoteRequests);
+      } catch (error) {
+        console.error('[AppProvider] refresh friend requests failed', error);
+        failures.push('friend requests');
+      }
+    }
+
+    if (failures.length > 0) {
+      window.alert(
+        `Refresh completed with issues: ${failures.join(', ')}`,
+      );
+    }
+
     trackEvent('data_refreshed');
-  }, []);
+  }, [supabaseUserId]);
 
   // --- Theme ---------------------------------------------------------------
   useEffect(() => {
@@ -472,6 +807,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       trackEvent('theme_changed', { theme: newTheme });
     },
     [setThemeState],
+  );
+
+  const sendPushNotification = useCallback(
+    (userId: string, title: string, body: string, url: string) => {
+      console.log(`[PUSH_SIM] Sending push to user ${userId}: ${title}`);
+      const subscription = pushSubscriptions[userId];
+      if (!subscription) {
+        console.warn(`[PUSH_SIM] No push subscription found for user ${userId}`);
+        return;
+      }
+
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'show-notification',
+          payload: {
+            title,
+            options: { body, data: { url } },
+          },
+        });
+      }
+    },
+    [pushSubscriptions],
   );
 
   // --- Scrolling container -------------------------------------------------
@@ -537,9 +894,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Also sign out from Supabase so refresh doesn't auto-login
   const logout = () => {
     try {
-      supabase.auth.signOut().catch((e) =>
-        console.warn('[logout] supabase signOut error:', e),
-      );
+      if (isSupabaseConfigured) {
+        supabase.auth.signOut().catch((e) =>
+          console.warn('[logout] supabase signOut error:', e),
+        );
+      }
     } finally {
       setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
@@ -554,6 +913,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const base =
       typeof window !== 'undefined' ? window.location.origin : 'https://creatorzonly.com';
     const redirectTo = `${base}/#/NewPassword`;
+    if (!isSupabaseConfigured) {
+      window.alert('Password reset emails require Supabase to be configured.');
+      return;
+    }
+
     supabase.auth
       .resetPasswordForEmail(email, { redirectTo })
       .then(({ error }) => {
@@ -646,173 +1010,196 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     friendRequests.find((fr) => fr.id === id);
 
   const sendFriendRequest = useCallback(
-    (toUserId: string) => {
+    async (toUserId: string) => {
       if (!currentUser) return;
       const fromUserId = currentUser.id;
 
       const existing = getFriendRequest(fromUserId, toUserId);
       if (existing) return;
 
-      const newRequest: FriendRequest = {
-        id: `fr${friendRequests.length + 1}`,
-        fromUserId,
-        toUserId,
-        status: FriendRequestStatus.PENDING,
-        timestamp: new Date().toISOString(),
-      };
-      setFriendRequests((p) => [...p, newRequest]);
+      try {
+        const request = await sendFriendRequestRow(toUserId);
+        setFriendRequests((prev) => [request, ...prev]);
 
-      const notification: Notification = {
-        id: `n${notifications.length + 1}`,
-        userId: toUserId,
-        actorId: fromUserId,
-        type: NotificationType.FRIEND_REQUEST,
-        entityType: 'friend_request',
-        entityId: newRequest.id,
-        message: `${currentUser.name} sent you a friend request.`,
-        isRead: false,
-        timestamp: new Date().toISOString(),
-      };
-      setNotifications((p) => [...p, notification]);
-      emitSocketEvent(toUserId, 'notification:new', notification);
-      sendWebPush(
-        toUserId,
-        'New Friend Request',
-        notification.message,
-        `/profile/${currentUser.username}`,
-      );
-      trackEvent('friend_request_sent', { from: fromUserId, to: toUserId });
+        const notification = await createNotificationRow({
+          userId: toUserId,
+          actorId: fromUserId,
+          type: NotificationType.FRIEND_REQUEST,
+          entityType: 'friend_request',
+          entityId: request.id,
+          message: `${currentUser.name} sent you a friend request.`,
+        });
+        setNotifications((prev) => [notification, ...prev]);
+        emitSocketEvent(toUserId, 'notification:new', notification);
+        sendPushNotification(
+          toUserId,
+          'New Friend Request',
+          notification.message,
+          `/profile/${currentUser.username}`,
+        );
+        trackEvent('friend_request_sent', { from: fromUserId, to: toUserId });
+      } catch (error) {
+        console.error('[AppProvider] failed to send friend request', error);
+        window.alert('Unable to send friend request right now. Please try again later.');
+      }
     },
     [
       currentUser,
-      friendRequests,
-      setFriendRequests,
-      notifications,
-      setNotifications,
       getFriendRequest,
+      setFriendRequests,
+      setNotifications,
+      sendPushNotification,
     ],
   );
 
   const cancelFriendRequest = useCallback(
-    (toUserId: string) => {
+    async (toUserId: string) => {
       if (!currentUser) return;
-      setFriendRequests((p) =>
-        p.filter(
-          (fr) =>
-            !(
-              fr.fromUserId === currentUser.id &&
-              fr.toUserId === toUserId &&
-              fr.status === FriendRequestStatus.PENDING
-            ),
-        ),
+      const request = friendRequests.find(
+        (fr) =>
+          fr.fromUserId === currentUser.id &&
+          fr.toUserId === toUserId &&
+          fr.status === FriendRequestStatus.PENDING,
       );
-      trackEvent('friend_request_cancelled', {
-        from: currentUser.id,
-        to: toUserId,
-      });
+      if (!request) return;
+
+      try {
+        await cancelFriendRequestRow(request.id);
+        setFriendRequests((prev) => prev.filter((fr) => fr.id !== request.id));
+        trackEvent('friend_request_cancelled', {
+          from: currentUser.id,
+          to: toUserId,
+        });
+      } catch (error) {
+        console.error('[AppProvider] failed to cancel friend request', error);
+        window.alert('Unable to cancel the friend request right now.');
+      }
     },
-    [currentUser, setFriendRequests],
+    [currentUser, friendRequests, setFriendRequests],
   );
 
   const acceptFriendRequest = useCallback(
-    (requestId: string) => {
+    async (requestId: string) => {
       const request = friendRequests.find((fr) => fr.id === requestId);
       if (!request || !currentUser || request.toUserId !== currentUser.id) return;
 
-      // Update request status
-      setFriendRequests((prev) =>
-        prev.map((fr) =>
-          fr.id === requestId ? { ...fr, status: FriendRequestStatus.ACCEPTED } : fr,
-        ),
-      );
+      try {
+        const updated = await acceptFriendRequestRow(requestId);
+        setFriendRequests((prev) =>
+          prev.map((fr) => (fr.id === requestId ? updated : fr)),
+        );
 
-      // Connect both users
-      setUsers((prev) =>
-        prev.map((user) => {
-          if (user.id === request.fromUserId)
-            return { ...user, friendIds: [...user.friendIds, request.toUserId] };
-          if (user.id === request.toUserId)
-            return { ...user, friendIds: [...user.friendIds, request.fromUserId] };
-          return user;
-        }),
-      );
+        const sender = users.find((u) => u.id === updated.fromUserId);
+        const receiver = users.find((u) => u.id === updated.toUserId);
+        const nextSenderFriends = sender
+          ? Array.from(new Set([...sender.friendIds, updated.toUserId]))
+          : [updated.toUserId];
+        const nextReceiverFriends = receiver
+          ? Array.from(new Set([...receiver.friendIds, updated.fromUserId]))
+          : [updated.fromUserId];
 
-      // Notify requester
-      const fromUser = getUserById(request.fromUserId);
-      if (fromUser) {
-        const notification: Notification = {
-          id: `n${notifications.length + 1}`,
-          userId: request.fromUserId,
-          actorId: request.toUserId,
+        setUsers((prev) =>
+          prev.map((user) => {
+            if (user.id === updated.fromUserId) {
+              return { ...user, friendIds: nextSenderFriends };
+            }
+            if (user.id === updated.toUserId) {
+              return { ...user, friendIds: nextReceiverFriends };
+            }
+            return user;
+          }),
+        );
+
+        const friendSyncResults = await Promise.allSettled([
+          updateUserFriends(updated.fromUserId, nextSenderFriends),
+          updateUserFriends(updated.toUserId, nextReceiverFriends),
+        ]);
+        if (friendSyncResults.some((res) => res.status === 'rejected')) {
+          window.alert(
+            'Friend list sync failed. Changes may not appear on other devices yet.',
+          );
+        }
+
+        const notification = await createNotificationRow({
+          userId: updated.fromUserId,
+          actorId: updated.toUserId,
           type: NotificationType.FRIEND_REQUEST_ACCEPTED,
           entityType: 'user',
-          entityId: request.toUserId,
+          entityId: updated.toUserId,
           message: `${currentUser.name} accepted your friend request.`,
-          isRead: false,
-          timestamp: new Date().toISOString(),
-        };
-        setNotifications((p) => [...p, notification]);
-        emitSocketEvent(request.fromUserId, 'notification:new', notification);
-        sendWebPush(
-          request.fromUserId,
+        });
+        setNotifications((prev) => [notification, ...prev]);
+        emitSocketEvent(updated.fromUserId, 'notification:new', notification);
+        sendPushNotification(
+          updated.fromUserId,
           'Friend Request Accepted',
           notification.message,
           `/profile/${currentUser.username}`,
         );
-      }
 
-      trackEvent('friend_request_accepted', {
-        acceptedBy: request.toUserId,
-        requestedBy: request.fromUserId,
-      });
+        trackEvent('friend_request_accepted', {
+          acceptedBy: updated.toUserId,
+          requestedBy: updated.fromUserId,
+        });
+      } catch (error) {
+        console.error('[AppProvider] failed to accept friend request', error);
+        window.alert('Unable to accept the friend request right now.');
+      }
     },
     [
       friendRequests,
+      currentUser,
+      users,
       setFriendRequests,
       setUsers,
-      currentUser,
-      notifications,
       setNotifications,
-      getUserById,
+      sendPushNotification,
     ],
   );
 
   const declineFriendRequest = useCallback(
-    (requestId: string) => {
-      setFriendRequests((prev) =>
-        prev.map((fr) =>
-          fr.id === requestId ? { ...fr, status: FriendRequestStatus.DECLINED } : fr,
-        ),
-      );
+    async (requestId: string) => {
       const request = friendRequests.find((fr) => fr.id === requestId);
-      if (request) {
+      if (!request) return;
+
+      try {
+        const updated = await declineFriendRequestRow(requestId);
+        setFriendRequests((prev) =>
+          prev.map((fr) => (fr.id === requestId ? updated : fr)),
+        );
         trackEvent('friend_request_declined', {
           declinedBy: request.toUserId,
           requestedBy: request.fromUserId,
         });
+      } catch (error) {
+        console.error('[AppProvider] failed to decline friend request', error);
+        window.alert('Unable to decline the friend request right now.');
       }
     },
-    [setFriendRequests, friendRequests],
+    [friendRequests, setFriendRequests],
   );
 
   const removeFriend = useCallback(
-    (friendId: string) => {
+    async (friendId: string) => {
       if (!currentUser) return;
       const currentUserId = currentUser.id;
+
+      const currentState = users.find((u) => u.id === currentUserId);
+      const friendState = users.find((u) => u.id === friendId);
+      const nextCurrentFriends = currentState
+        ? currentState.friendIds.filter((id) => id !== friendId)
+        : [];
+      const nextFriendFriends = friendState
+        ? friendState.friendIds.filter((id) => id !== currentUserId)
+        : [];
 
       setUsers((prev) =>
         prev.map((user) => {
           if (user.id === currentUserId) {
-            return {
-              ...user,
-              friendIds: user.friendIds.filter((id) => id !== friendId),
-            };
+            return { ...user, friendIds: nextCurrentFriends };
           }
           if (user.id === friendId) {
-            return {
-              ...user,
-              friendIds: user.friendIds.filter((id) => id !== currentUserId),
-            };
+            return { ...user, friendIds: nextFriendFriends };
           }
           return user;
         }),
@@ -829,29 +1216,42 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ),
       );
 
+      const syncResults = await Promise.allSettled([
+        updateUserFriends(currentUserId, nextCurrentFriends),
+        updateUserFriends(friendId, nextFriendFriends),
+      ]);
+      if (syncResults.some((res) => res.status === 'rejected')) {
+        window.alert('Friend removal synced locally but not on the server.');
+      }
+
       trackEvent('friend_removed', { remover: currentUserId, removed: friendId });
     },
-    [currentUser, setUsers, setFriendRequests],
+    [currentUser, users, setUsers, setFriendRequests],
   );
 
   const toggleBlockUser = useCallback(
-    (userIdToBlock: string) => {
+    async (userIdToBlock: string) => {
       if (!currentUser) return;
       const currentUserId = currentUser.id;
-      const isBlocked = currentUser.blockedUserIds?.includes(userIdToBlock);
+      const currentState = users.find((u) => u.id === currentUserId);
+      const blocked = currentState?.blockedUserIds || [];
+      const isBlocked = blocked.includes(userIdToBlock);
+      const nextBlocked = isBlocked
+        ? blocked.filter((id) => id !== userIdToBlock)
+        : [...blocked, userIdToBlock];
 
       setUsers((prev) =>
-        prev.map((u) => {
-          if (u.id === currentUserId) {
-            const blocked = u.blockedUserIds || [];
-            const nextBlocked = isBlocked
-              ? blocked.filter((id) => id !== userIdToBlock)
-              : [...blocked, userIdToBlock];
-            return { ...u, blockedUserIds: nextBlocked };
-          }
-          return u;
-        }),
+        prev.map((u) =>
+          u.id === currentUserId ? { ...u, blockedUserIds: nextBlocked } : u,
+        ),
       );
+
+      try {
+        await updateUserBlocked(currentUserId, nextBlocked);
+      } catch (error) {
+        console.error('[AppProvider] failed to update block list', error);
+        window.alert('Unable to update your block list right now.');
+      }
 
       if (!isBlocked) removeFriend(userIdToBlock);
 
@@ -860,142 +1260,171 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         blocked: userIdToBlock,
       });
     },
-    [currentUser, setUsers, removeFriend],
+    [currentUser, users, setUsers, removeFriend],
   );
 
   // --- Posts ---------------------------------------------------------------
   const addPost = useCallback(
-    (content: string, image?: string) => {
+    async (content: string, image?: string) => {
       if (!currentUser) return;
-      const postId = posts.length + 100;
-      const newPost: Post = {
-        id: `p${posts.length + 1}`,
-        authorId: currentUser.id,
-        content,
-        image: image || `https://picsum.photos/seed/${postId}p/800/600`,
-        timestamp: new Date().toISOString(),
-        likes: 0,
-        comments: 0,
-        tags: [],
-      };
-      setPosts((prev) => [newPost, ...prev]);
-      trackEvent('post_created', { userId: currentUser.id, postId: newPost.id });
+
+      try {
+        const dbUserId = supabaseUserId ?? currentUser.id;
+        const created = await createPost(dbUserId, content, image);
+        const newPost = mapDbPostToLegacy(created);
+        if (currentUser.id !== newPost.authorId) {
+          newPost.authorId = currentUser.id;
+        }
+        setPosts((prev) => [newPost, ...prev]);
+        trackEvent('post_created', { userId: currentUser.id, postId: newPost.id });
+      } catch (error) {
+        console.error('[AppProvider] failed to create post', error);
+        window.alert('Unable to create post right now.');
+      }
     },
-    [currentUser, posts, setPosts],
+    [currentUser, setPosts, supabaseUserId],
   );
 
   const deletePost = useCallback(
-    (postId: string) => {
-      setPosts((prev) => prev.filter((p) => p.id !== postId));
-      trackEvent('post_deleted', { userId: currentUser?.id, postId });
+    async (postId: string) => {
+      try {
+        await deletePostFromDb(postId);
+        setPosts((prev) => prev.filter((p) => p.id !== postId));
+        trackEvent('post_deleted', { userId: currentUser?.id, postId });
+      } catch (error) {
+        console.error('[AppProvider] failed to delete post', error);
+        window.alert('Unable to delete this post right now.');
+      }
     },
     [setPosts, currentUser],
   );
 
   // --- Collaborations ------------------------------------------------------
   const addCollaboration = useCallback(
-    (
+    async (
       collabData: Omit<
         Collaboration,
         'id' | 'authorId' | 'timestamp' | 'interestedUserIds'
       >,
     ) => {
       if (!currentUser) return;
-      const newCollab: Collaboration = {
-        id: `collab${collaborations.length + 1}`,
-        authorId: currentUser.id,
-        timestamp: new Date().toISOString(),
-        interestedUserIds: [],
-        ...collabData,
-      };
-      setCollaborations((prev) => [newCollab, ...prev]);
-      trackEvent('collaboration_created', {
-        userId: currentUser.id,
-        collabId: newCollab.id,
-      });
+
+      try {
+        const created = await createCollaborationRow({
+          ...collabData,
+          authorId: currentUser.id,
+          status: collabData.status,
+        });
+        setCollaborations((prev) => [created, ...prev]);
+        trackEvent('collaboration_created', {
+          userId: currentUser.id,
+          collabId: created.id,
+        });
+      } catch (error) {
+        console.error('[AppProvider] failed to create collaboration', error);
+        window.alert('Unable to create collaboration right now.');
+      }
     },
-    [currentUser, collaborations, setCollaborations],
+    [currentUser, setCollaborations],
   );
 
   const updateCollaboration = useCallback(
-    (updatedCollab: Collaboration) => {
-      setCollaborations((prev) =>
-        prev.map((c) => (c.id === updatedCollab.id ? updatedCollab : c)),
-      );
-      trackEvent('collaboration_updated', {
-        userId: currentUser?.id,
-        collabId: updatedCollab.id,
-      });
+    async (updatedCollab: Collaboration) => {
+      try {
+        const saved = await updateCollaborationRow(updatedCollab.id, {
+          title: updatedCollab.title,
+          description: updatedCollab.description,
+          image: updatedCollab.image,
+          status: updatedCollab.status,
+          interestedUserIds: updatedCollab.interestedUserIds,
+        });
+        setCollaborations((prev) =>
+          prev.map((c) => (c.id === saved.id ? saved : c)),
+        );
+        trackEvent('collaboration_updated', {
+          userId: currentUser?.id,
+          collabId: saved.id,
+        });
+      } catch (error) {
+        console.error('[AppProvider] failed to update collaboration', error);
+        window.alert('Unable to update collaboration right now.');
+      }
     },
     [setCollaborations, currentUser],
   );
 
   const deleteCollaboration = useCallback(
-    (collabId: string) => {
-      setCollaborations((prev) => prev.filter((c) => c.id !== collabId));
-      trackEvent('collaboration_deleted', { userId: currentUser?.id, collabId });
+    async (collabId: string) => {
+      try {
+        await deleteCollaborationRow(collabId);
+        setCollaborations((prev) => prev.filter((c) => c.id !== collabId));
+        trackEvent('collaboration_deleted', { userId: currentUser?.id, collabId });
+      } catch (error) {
+        console.error('[AppProvider] failed to delete collaboration', error);
+        window.alert('Unable to delete collaboration right now.');
+      }
     },
     [setCollaborations, currentUser],
   );
 
   const toggleCollaborationInterest = useCallback(
-    (collabId: string) => {
+    async (collabId: string) => {
       if (!currentUser) return;
       const collab = collaborations.find((c) => c.id === collabId);
       if (!collab) return;
 
       const isInterested = collab.interestedUserIds.includes(currentUser.id);
+      const updatedIds = isInterested
+        ? collab.interestedUserIds.filter((id) => id !== currentUser.id)
+        : [...collab.interestedUserIds, currentUser.id];
 
-      setCollaborations((prev) =>
-        prev.map((c) => {
-          if (c.id !== collabId) return c;
-          const updatedIds = isInterested
-            ? c.interestedUserIds.filter((id) => id !== currentUser.id)
-            : [...c.interestedUserIds, currentUser.id];
-          return { ...c, interestedUserIds: updatedIds };
-        }),
-      );
-
-      if (!isInterested) {
-        const notification: Notification = {
-          id: `n${notifications.length + 1}`,
-          userId: collab.authorId,
-          actorId: currentUser.id,
-          type: NotificationType.COLLAB_REQUEST,
-          entityType: 'collaboration',
-          entityId: collab.id,
-          message: `${currentUser.name} is interested in your "${collab.title}" opportunity.`,
-          isRead: false,
-          timestamp: new Date().toISOString(),
-        };
-        setNotifications((p) => [...p, notification]);
-        emitSocketEvent(collab.authorId, 'notification:new', notification);
-        sendWebPush(
-          collab.authorId,
-          'New Interest in Opportunity',
-          notification.message,
-          `/collaborations`,
+      try {
+        const updated = await upsertCollaborationInterest(collabId, updatedIds);
+        setCollaborations((prev) =>
+          prev.map((c) => (c.id === collabId ? updated : c)),
         );
-      }
 
-      trackEvent('collaboration_interest_toggled', {
-        userId: currentUser.id,
-        collabId,
-        isInterested: !isInterested,
-      });
+        if (!isInterested) {
+          const notification = await createNotificationRow({
+            userId: collab.authorId,
+            actorId: currentUser.id,
+            type: NotificationType.COLLAB_REQUEST,
+            entityType: 'collaboration',
+            entityId: collab.id,
+            message: `${currentUser.name} is interested in your "${collab.title}" opportunity.`,
+          });
+          setNotifications((prev) => [notification, ...prev]);
+          emitSocketEvent(collab.authorId, 'notification:new', notification);
+          sendPushNotification(
+            collab.authorId,
+            'New Interest in Opportunity',
+            notification.message,
+            `/collaborations`,
+          );
+        }
+
+        trackEvent('collaboration_interest_toggled', {
+          userId: currentUser.id,
+          collabId,
+          isInterested: !isInterested,
+        });
+      } catch (error) {
+        console.error('[AppProvider] failed to toggle collaboration interest', error);
+        window.alert('Unable to update collaboration interest right now.');
+      }
     },
     [
       currentUser,
       collaborations,
       setCollaborations,
-      notifications,
       setNotifications,
+      sendPushNotification,
     ],
   );
 
   // --- Messaging -----------------------------------------------------------
   const sendMessage = useCallback(
-    (conversationId: string, text: string) => {
+    async (conversationId: string, text: string) => {
       if (!currentUser) return;
 
       const conversation = conversations.find((c) => c.id === conversationId);
@@ -1004,121 +1433,146 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const other = conversation.participantIds.find((id) => id !== currentUser.id);
       if (!other) return;
 
-      const newMessage: Message = {
-        id: `m${Date.now()}`,
-        senderId: currentUser.id,
-        receiverId: other,
-        text,
-        timestamp: new Date().toISOString(),
-      };
+      try {
+        const message = await createMessageRow(conversationId, {
+          senderId: currentUser.id,
+          receiverId: other,
+          text,
+        });
 
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === conversationId ? { ...c, messages: [...c.messages, newMessage] } : c,
-        ),
-      );
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === conversationId ? { ...c, messages: [...c.messages, message] } : c,
+          ),
+        );
 
-      const notification: Notification = {
-        id: `n${notifications.length + 1}`,
-        userId: other,
-        actorId: currentUser.id,
-        type: NotificationType.NEW_MESSAGE,
-        entityType: 'user',
-        entityId: currentUser.id,
-        message: `You have a new message from ${currentUser.name}.`,
-        isRead: false,
-        timestamp: new Date().toISOString(),
-      };
-      setNotifications((p) => [...p, notification]);
-      emitSocketEvent(other, 'notification:new', notification);
-      sendWebPush(other, `New message from ${currentUser.name}`, text, `/messages`);
+        const notification = await createNotificationRow({
+          userId: other,
+          actorId: currentUser.id,
+          type: NotificationType.NEW_MESSAGE,
+          entityType: 'user',
+          entityId: currentUser.id,
+          message: `You have a new message from ${currentUser.name}.`,
+        });
+        setNotifications((prev) => [notification, ...prev]);
+        emitSocketEvent(other, 'notification:new', notification);
+        sendPushNotification(
+          other,
+          `New message from ${currentUser.name}`,
+          text,
+          `/messages`,
+        );
 
-      trackEvent('message_sent', { from: currentUser.id, to: other });
+        trackEvent('message_sent', { from: currentUser.id, to: other });
+      } catch (error) {
+        console.error('[AppProvider] failed to send message', error);
+        window.alert('Unable to send your message right now.');
+      }
     },
     [
       currentUser,
       conversations,
       setConversations,
-      notifications,
       setNotifications,
+      sendPushNotification,
     ],
   );
 
   const viewConversation = useCallback(
-    (participantId: string) => {
+    async (participantId: string) => {
       if (!currentUser) return;
 
-      let conversation = conversations.find(
-        (c) =>
-          c.participantIds.includes(currentUser.id) &&
-          c.participantIds.includes(participantId),
-      );
-
-      if (!conversation) {
-        conversation = {
-          id: `c${conversations.length + 1}`,
-          participantIds: [currentUser.id, participantId],
-          messages: [],
-          folder: 'general',
-        };
-        setConversations((prev) => [...prev, conversation!]);
+      try {
+        const conversation = await ensureConversation([
+          currentUser.id,
+          participantId,
+        ]);
+        setConversations((prev) => {
+          const exists = prev.some((c) => c.id === conversation.id);
+          if (exists) {
+            return prev.map((c) => (c.id === conversation.id ? conversation : c));
+          }
+          return [...prev, conversation];
+        });
+        setSelectedConversationId(conversation.id);
+        navigate('messages');
+      } catch (error) {
+        console.error('[AppProvider] failed to load conversation', error);
+        window.alert('Unable to open this conversation right now.');
       }
-
-      setSelectedConversationId(conversation.id);
-      navigate('messages');
     },
-    [currentUser, conversations, setConversations, navigate],
+    [currentUser, setConversations, navigate],
   );
 
   const moveConversationToFolder = useCallback(
-    (conversationId: string, folder: ConversationFolder) => {
-      setConversations((prev) =>
-        prev.map((c) => (c.id === conversationId ? { ...c, folder } : c)),
-      );
-      trackEvent('conversation_moved', { conversationId, folder });
+    async (conversationId: string, folder: ConversationFolder) => {
+      try {
+        const updated = await updateConversationFolderRow(conversationId, folder);
+        setConversations((prev) =>
+          prev.map((c) => (c.id === conversationId ? updated : c)),
+        );
+        trackEvent('conversation_moved', { conversationId, folder });
+      } catch (error) {
+        console.error('[AppProvider] failed to move conversation', error);
+        window.alert('Unable to move this conversation right now.');
+      }
     },
     [setConversations],
   );
 
   // --- Notifications -------------------------------------------------------
   const markNotificationsAsRead = useCallback(
-    (ids: string[]) => {
-      setTimeout(() => {
+    async (ids: string[]) => {
+      try {
+        const updated = await markNotificationsRead(ids);
+        const updatesById = new Map(updated.map((n) => [n.id, n]));
         setNotifications((prev) =>
-          prev.map((n) => (ids.includes(n.id) ? { ...n, isRead: true } : n)),
+          prev.map((n) => updatesById.get(n.id) ?? n),
         );
-      }, 500);
+      } catch (error) {
+        console.error('[AppProvider] failed to mark notifications as read', error);
+        window.alert('Unable to mark notifications as read right now.');
+      }
     },
     [setNotifications],
   );
 
   // --- Feedback ------------------------------------------------------------
   const sendFeedback = useCallback(
-    (content: string, type: 'Bug Report' | 'Suggestion') => {
+    async (content: string, type: 'Bug Report' | 'Suggestion') => {
       if (!currentUser) return;
-      const newFeedback: Feedback = {
-        id: `f${feedback.length + 1}`,
-        userId: currentUser.id,
-        type,
-        content,
-        timestamp: new Date().toISOString(),
-      };
-      setFeedback((prev) => [newFeedback, ...prev]);
-      trackEvent('feedback_sent', { userId: currentUser.id, type });
+      try {
+        const created = await submitFeedbackRow({
+          userId: currentUser.id,
+          type,
+          content,
+        });
+        setFeedback((prev) => [created, ...prev]);
+        trackEvent('feedback_sent', { userId: currentUser.id, type });
+      } catch (error) {
+        console.error('[AppProvider] failed to submit feedback', error);
+        window.alert('Unable to send feedback right now.');
+      }
     },
-    [currentUser, feedback, setFeedback],
+    [currentUser, setFeedback],
   );
 
   // --- Push subscriptions --------------------------------------------------
   const subscribeToPushNotifications = useCallback(
-    (subscription: PushSubscriptionObject) => {
+    async (subscription: PushSubscriptionObject) => {
       if (!currentUser) return;
-      setPushSubscriptions((prev) => ({
-        ...prev,
-        [currentUser.id]: subscription,
-      }));
-      console.log(`[PUSH_SIM] User ${currentUser.id} subscribed.`);
-      trackEvent('push_subscribed', { userId: currentUser.id });
+      try {
+        await upsertPushSubscription(currentUser.id, subscription);
+        setPushSubscriptions((prev) => ({
+          ...prev,
+          [currentUser.id]: subscription,
+        }));
+        console.log(`[PUSH_SIM] User ${currentUser.id} subscribed.`);
+        trackEvent('push_subscribed', { userId: currentUser.id });
+      } catch (error) {
+        console.error('[AppProvider] failed to save push subscription', error);
+        window.alert('Unable to save your push notification preference right now.');
+      }
     },
     [currentUser, setPushSubscriptions],
   );
