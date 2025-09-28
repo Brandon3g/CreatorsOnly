@@ -36,12 +36,17 @@ import {
   MOCK_COLLABORATIONS,
   MASTER_USER_ID,
   MOCK_FEEDBACK,
-  MOCK_FRIEND_REQUESTS,
 } from '../constants';
 
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 import { getMyProfile } from '../services/profile';
+import {
+  listFriendRequestsForUser,
+  sendFriendRequest as svcSendFriendRequest,
+  setFriendRequestStatus as svcSetFriendRequestStatus,
+  cancelFriendRequest as svcCancelFriendRequest,
+} from '../services/friendRequests';
 import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
 
 /* ---------------------------------------------------------------------------
@@ -191,10 +196,10 @@ interface AppContextType {
 
   updateUserProfile: (updatedUser: User) => void;
 
-  sendFriendRequest: (toUserId: string) => void;
-  cancelFriendRequest: (toUserId: string) => void;
-  acceptFriendRequest: (requestId: string) => void;
-  declineFriendRequest: (requestId: string) => void;
+  sendFriendRequest: (toUserId: string) => Promise<void>;
+  cancelFriendRequest: (toUserId: string) => Promise<void>;
+  acceptFriendRequest: (requestId: string) => Promise<void>;
+  declineFriendRequest: (requestId: string) => Promise<void>;
   removeFriend: (friendId: string) => void;
   toggleBlockUser: (userId: string) => void;
 
@@ -294,10 +299,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     FEEDBACK_STORAGE_KEY,
     MOCK_FEEDBACK,
   );
-  const [friendRequests, setFriendRequests] = useLocalStorage<FriendRequest[]>(
-    FRIEND_REQUESTS_STORAGE_KEY,
-    MOCK_FRIEND_REQUESTS,
-  );
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem(FRIEND_REQUESTS_STORAGE_KEY);
+    } catch {}
+  }, []);
 
   // App-level "auth" is just a pointer to a user id from the users array
   const [authData, setAuthData] = useLocalStorage<{ userId: string | null }>(
@@ -353,9 +361,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           case FEEDBACK_STORAGE_KEY:
             setFeedback(value);
             break;
-          case FRIEND_REQUESTS_STORAGE_KEY:
-            setFriendRequests(value);
-            break;
           case THEME_STORAGE_KEY:
             setThemeState(value);
             break;
@@ -374,9 +379,82 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setConversations,
     setCollaborations,
     setFeedback,
-    setFriendRequests,
     setThemeState,
   ]);
+
+  useEffect(() => {
+    let chReq: any;
+    let chRec: any;
+    let mounted = true;
+
+    (async () => {
+      if (!authData.userId) {
+        setFriendRequests([]);
+        return;
+      }
+      const uid = authData.userId;
+
+      try {
+        const rows = await listFriendRequestsForUser(uid);
+        if (mounted) setFriendRequests(rows);
+      } catch (e) {
+        console.error('friend_requests initial load failed', e);
+      }
+
+      const handle = (payload: any) => {
+        const row = (payload.new ?? payload.old) as any;
+        if (!row) return;
+
+        setFriendRequests((prev) => {
+          const fr: FriendRequest = {
+            id: row.id,
+            fromUserId: row.requester_id,
+            toUserId: row.recipient_id,
+            status: row.status as FriendRequestStatus,
+            timestamp: row.created_at ?? row.updated_at ?? new Date().toISOString(),
+          };
+
+          if (payload.eventType === 'INSERT') {
+            if (prev.some((p) => p.id === fr.id)) {
+              return prev.map((p) => (p.id === fr.id ? fr : p));
+            }
+            return [fr, ...prev];
+          }
+          if (payload.eventType === 'UPDATE') {
+            return prev.map((p) => (p.id === fr.id ? fr : p));
+          }
+          if (payload.eventType === 'DELETE') {
+            return prev.filter((p) => p.id !== fr.id);
+          }
+          return prev;
+        });
+      };
+
+      chReq = supabase
+        .channel(`fr:req:${uid}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'friend_requests', filter: `requester_id=eq.${uid}` },
+          handle,
+        )
+        .subscribe();
+
+      chRec = supabase
+        .channel(`fr:rec:${uid}`)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'friend_requests', filter: `recipient_id=eq.${uid}` },
+          handle,
+        )
+        .subscribe();
+    })();
+
+    return () => {
+      mounted = false;
+      chReq?.unsubscribe?.();
+      chRec?.unsubscribe?.();
+    };
+  }, [authData.userId]);
 
   // --- Derived -------------------------------------------------------------
   const currentUser = users.find((u) => u.id === authData.userId) || null;
@@ -711,153 +789,122 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     friendRequests.find((fr) => fr.id === id);
 
   const sendFriendRequest = useCallback(
-    (toUserId: string) => {
+    async (toUserId: string) => {
       if (!currentUser) return;
       const fromUserId = currentUser.id;
 
       const existing = getFriendRequest(fromUserId, toUserId);
-      if (existing) return;
+      if (existing && existing.status === FriendRequestStatus.PENDING) return;
 
-      const newRequest: FriendRequest = {
-        id: `fr${friendRequests.length + 1}`,
-        fromUserId,
-        toUserId,
-        status: FriendRequestStatus.PENDING,
-        timestamp: new Date().toISOString(),
-      };
-      setFriendRequests((p) => [...p, newRequest]);
-
-      const notification: Notification = {
-        id: `n${notifications.length + 1}`,
-        userId: toUserId,
-        actorId: fromUserId,
-        type: NotificationType.FRIEND_REQUEST,
-        entityType: 'friend_request',
-        entityId: newRequest.id,
-        message: `${currentUser.name} sent you a friend request.`,
-        isRead: false,
-        timestamp: new Date().toISOString(),
-      };
-      setNotifications((p) => [...p, notification]);
-      emitSocketEvent(toUserId, 'notification:new', notification);
-      sendWebPush(
-        toUserId,
-        'New Friend Request',
-        notification.message,
-        `/profile/${currentUser.username}`,
-      );
-      trackEvent('friend_request_sent', { from: fromUserId, to: toUserId });
+      try {
+        await svcSendFriendRequest(toUserId);
+        trackEvent('friend_request_sent', { from: fromUserId, to: toUserId });
+      } catch (e) {
+        console.error('sendFriendRequest failed', e);
+      }
     },
-    [
-      currentUser,
-      friendRequests,
-      setFriendRequests,
-      notifications,
-      setNotifications,
-      getFriendRequest,
-    ],
+    [currentUser, getFriendRequest],
   );
 
   const cancelFriendRequest = useCallback(
-    (toUserId: string) => {
+    async (toUserId: string) => {
       if (!currentUser) return;
-      setFriendRequests((p) =>
-        p.filter(
-          (fr) =>
-            !(
-              fr.fromUserId === currentUser.id &&
-              fr.toUserId === toUserId &&
-              fr.status === FriendRequestStatus.PENDING
-            ),
-        ),
+      const pending = friendRequests.find(
+        (fr) =>
+          fr.fromUserId === currentUser.id &&
+          fr.toUserId === toUserId &&
+          fr.status === FriendRequestStatus.PENDING,
       );
-      trackEvent('friend_request_cancelled', {
-        from: currentUser.id,
-        to: toUserId,
-      });
+      if (!pending) return;
+
+      try {
+        await svcCancelFriendRequest(pending.id);
+        trackEvent('friend_request_cancelled', {
+          from: currentUser.id,
+          to: toUserId,
+        });
+      } catch (e) {
+        console.error('cancelFriendRequest failed', e);
+      }
     },
-    [currentUser, setFriendRequests],
+    [currentUser, friendRequests],
   );
 
   const acceptFriendRequest = useCallback(
-    (requestId: string) => {
+    async (requestId: string) => {
       const request = friendRequests.find((fr) => fr.id === requestId);
       if (!request || !currentUser || request.toUserId !== currentUser.id) return;
 
-      // Update request status
-      setFriendRequests((prev) =>
-        prev.map((fr) =>
-          fr.id === requestId ? { ...fr, status: FriendRequestStatus.ACCEPTED } : fr,
-        ),
-      );
+      try {
+        await svcSetFriendRequestStatus(requestId, FriendRequestStatus.ACCEPTED);
 
-      // Connect both users
-      setUsers((prev) =>
-        prev.map((user) => {
-          if (user.id === request.fromUserId)
-            return { ...user, friendIds: [...user.friendIds, request.toUserId] };
-          if (user.id === request.toUserId)
-            return { ...user, friendIds: [...user.friendIds, request.fromUserId] };
-          return user;
-        }),
-      );
-
-      // Notify requester
-      const fromUser = getUserById(request.fromUserId);
-      if (fromUser) {
-        const notification: Notification = {
-          id: `n${notifications.length + 1}`,
-          userId: request.fromUserId,
-          actorId: request.toUserId,
-          type: NotificationType.FRIEND_REQUEST_ACCEPTED,
-          entityType: 'user',
-          entityId: request.toUserId,
-          message: `${currentUser.name} accepted your friend request.`,
-          isRead: false,
-          timestamp: new Date().toISOString(),
-        };
-        setNotifications((p) => [...p, notification]);
-        emitSocketEvent(request.fromUserId, 'notification:new', notification);
-        sendWebPush(
-          request.fromUserId,
-          'Friend Request Accepted',
-          notification.message,
-          `/profile/${currentUser.username}`,
+        setUsers((prev) =>
+          prev.map((user) => {
+            if (user.id === request.fromUserId)
+              return { ...user, friendIds: [...user.friendIds, request.toUserId] };
+            if (user.id === request.toUserId)
+              return { ...user, friendIds: [...user.friendIds, request.fromUserId] };
+            return user;
+          }),
         );
-      }
 
-      trackEvent('friend_request_accepted', {
-        acceptedBy: request.toUserId,
-        requestedBy: request.fromUserId,
-      });
+        const fromUser = getUserById(request.fromUserId);
+        if (fromUser) {
+          const notification: Notification = {
+            id: `n${notifications.length + 1}`,
+            userId: request.fromUserId,
+            actorId: request.toUserId,
+            type: NotificationType.FRIEND_REQUEST_ACCEPTED,
+            entityType: 'user',
+            entityId: request.toUserId,
+            message: `${currentUser.name} accepted your friend request.`,
+            isRead: false,
+            timestamp: new Date().toISOString(),
+          };
+          setNotifications((p) => [...p, notification]);
+          emitSocketEvent(request.fromUserId, 'notification:new', notification);
+          sendWebPush(
+            request.fromUserId,
+            'Friend Request Accepted',
+            notification.message,
+            `/profile/${currentUser.username}`,
+          );
+        }
+
+        trackEvent('friend_request_accepted', {
+          acceptedBy: request.toUserId,
+          requestedBy: request.fromUserId,
+        });
+      } catch (e) {
+        console.error('acceptFriendRequest failed', e);
+      }
     },
     [
       friendRequests,
-      setFriendRequests,
-      setUsers,
       currentUser,
+      setUsers,
+      getUserById,
       notifications,
       setNotifications,
-      getUserById,
     ],
   );
 
   const declineFriendRequest = useCallback(
-    (requestId: string) => {
-      setFriendRequests((prev) =>
-        prev.map((fr) =>
-          fr.id === requestId ? { ...fr, status: FriendRequestStatus.DECLINED } : fr,
-        ),
-      );
+    async (requestId: string) => {
       const request = friendRequests.find((fr) => fr.id === requestId);
-      if (request) {
+      if (!request) return;
+
+      try {
+        await svcSetFriendRequestStatus(requestId, FriendRequestStatus.DECLINED);
         trackEvent('friend_request_declined', {
           declinedBy: request.toUserId,
           requestedBy: request.fromUserId,
         });
+      } catch (e) {
+        console.error('declineFriendRequest failed', e);
       }
     },
-    [setFriendRequests, friendRequests],
+    [friendRequests],
   );
 
   const removeFriend = useCallback(
@@ -883,20 +930,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }),
       );
 
-      // Also strip any requests
-      setFriendRequests((prev) =>
-        prev.filter(
-          (fr) =>
-            !(
-              (fr.fromUserId === currentUserId && fr.toUserId === friendId) ||
-              (fr.fromUserId === friendId && fr.toUserId === currentUserId)
-            ),
-        ),
-      );
-
       trackEvent('friend_removed', { remover: currentUserId, removed: friendId });
     },
-    [currentUser, setUsers, setFriendRequests],
+    [currentUser, setUsers],
   );
 
   const toggleBlockUser = useCallback(

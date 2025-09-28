@@ -1,96 +1,78 @@
 // src/services/friendRequests.ts
 import { supabase } from '../lib/supabaseClient';
-import { subscribeToTable } from './realtime';
+import type { FriendRequest, FriendRequestStatus } from '../types';
 
-export type FriendRequest = {
+type FriendRequestRow = {
   id: string;
-  sender_id: string;
-  receiver_id: string;
-  status: 'pending' | 'accepted' | 'declined';
-  created_at?: string;
-  updated_at?: string;
+  requester_id: string;
+  recipient_id: string;
+  status: FriendRequestStatus;
+  created_at: string;
+  updated_at: string;
 };
 
-/**
- * Send a friend request
- */
-export async function sendFriendRequest(receiverId: string): Promise<FriendRequest> {
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
-  if (userErr) throw userErr;
-  if (!user) throw new Error('Not signed in');
-
-  const payload = {
-    sender_id: user.id,
-    receiver_id: receiverId,
-    status: 'pending',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+function toFriendRequest(r: FriendRequestRow): FriendRequest {
+  return {
+    id: r.id,
+    fromUserId: r.requester_id,
+    toUserId: r.recipient_id,
+    status: r.status,
+    timestamp: r.created_at,
   };
-
-  const { data, error } = await supabase
-    .from('friend_requests')
-    .insert(payload)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return data as FriendRequest;
 }
 
-/**
- * Accept a friend request
- */
-export async function acceptFriendRequest(id: string): Promise<FriendRequest> {
-  const { data, error } = await supabase
-    .from('friend_requests')
-    .update({ status: 'accepted', updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return data as FriendRequest;
-}
-
-/**
- * Decline a friend request
- */
-export async function declineFriendRequest(id: string): Promise<FriendRequest> {
-  const { data, error } = await supabase
-    .from('friend_requests')
-    .update({ status: 'declined', updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .select('*')
-    .single();
-
-  if (error) throw error;
-  return data as FriendRequest;
-}
-
-/**
- * Get all friend requests for the current user (sent + received)
- */
-export async function getMyFriendRequests(): Promise<FriendRequest[]> {
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
-  if (userErr) throw userErr;
-  if (!user) throw new Error('Not signed in');
-
+export async function listFriendRequestsForUser(userId: string) {
   const { data, error } = await supabase
     .from('friend_requests')
     .select('*')
-    .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+    .or(`requester_id.eq.${userId},recipient_id.eq.${userId}`)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data as FriendRequest[]) || [];
+  return (data as FriendRequestRow[]).map(toFriendRequest);
 }
 
-/**
- * Subscribe to realtime friend request changes
- *
- * @param onChange - callback fired when requests are inserted/updated/deleted
- * @returns cleanup function to unsubscribe
- */
-export function subscribeToFriendRequests(onChange: (payload: any) => void) {
-  return subscribeToTable('friend_requests', onChange);
+export async function sendFriendRequest(recipientId: string) {
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+
+  const requesterId = session?.user?.id;
+  if (!requesterId) throw new Error('Not authenticated');
+  if (requesterId === recipientId) throw new Error('Cannot send request to yourself');
+
+  const { data, error } = await supabase
+    .from('friend_requests')
+    .insert({
+      requester_id: requesterId,
+      recipient_id: recipientId,
+      status: FriendRequestStatus.PENDING,
+    })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return toFriendRequest(data as FriendRequestRow);
+}
+
+export async function setFriendRequestStatus(
+  id: string,
+  status: FriendRequestStatus,
+) {
+  const { data, error } = await supabase
+    .from('friend_requests')
+    .update({ status })
+    .eq('id', id)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return toFriendRequest(data as FriendRequestRow);
+}
+
+export async function cancelFriendRequest(id: string) {
+  const { error } = await supabase.from('friend_requests').delete().eq('id', id);
+  if (error) throw error;
 }
