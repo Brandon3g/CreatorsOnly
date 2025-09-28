@@ -10,12 +10,6 @@ import React, {
 } from 'react';
 
 import {
-  subscribeToAppRealtime,
-  buildMessageParticipantFilter,
-  type Direction,
-} from '../services/realtime';
-
-import {
   User,
   Post,
   Notification,
@@ -40,14 +34,15 @@ import {
   MOCK_NOTIFICATIONS,
   MOCK_CONVERSATIONS,
   MOCK_COLLABORATIONS,
+  MASTER_USER_ID,
   MOCK_FEEDBACK,
   MOCK_FRIEND_REQUESTS,
 } from '../constants';
 
-import { MASTER_USER_ID } from '../constants';
-
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
+import { getMyProfile } from '../services/profile';
+import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
 
 /* ---------------------------------------------------------------------------
  * Recovery helpers
@@ -395,97 +390,90 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const viewingCollaborationId =
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
-  // --- Supabase → AppContext **BRIDGE** -----------------------------------
-  // --- Realtime messages subscription (sender OR receiver) --------------------
-useEffect(() => {
-  const uid = (currentUser && currentUser.id) || null;
-  if (!uid) return;
+  const hydrateSupabaseUser = useCallback(
+    async (sessionUser: SupabaseAuthUser | null | undefined) => {
+      if (!sessionUser?.id) return;
 
-  try {
-    console.log('[Realtime] using filter:', buildMessageParticipantFilter(uid));
-
-    const unsubscribe = subscribeToAppRealtime(
-      uid,
-      (payload: any, direction: Direction) => {
-        try {
-          const row: any = (payload as any)?.new ?? (payload as any)?.old ?? {};
-          const convoId = row?.conversation_id;
-          if (!convoId) return;
-
-          // Merge into conversations in-place
-          setConversations((prev: any[]) => {
-            const idx = prev.findIndex((c: any) => c?.id === convoId);
-            if (idx === -1) {
-              const stub = {
-                id: convoId,
-                participantIds: [row?.sender_id, row?.receiver_id].filter(Boolean),
-                messages: row ? [row] : [],
-                updatedAt: Date.now(),
-              };
-              return [...prev, stub];
-            }
-            const next = [...prev];
-            const conv = { ...(next[idx] || {}) };
-            const msgs = Array.isArray(conv.messages) ? [...conv.messages] : [];
-            if (row) msgs.push(row);
-            conv.messages = msgs;
-            conv.updatedAt = Date.now();
-            next[idx] = conv;
-            return next;
-          });
-
-          console.log('[Realtime] message event', {
-            type: (payload as any).eventType,
-            direction, // 👈 typed as 'inbound' | 'outbound'
-            id: row?.id,
-            sender_id: row?.sender_id,
-            receiver_id: row?.receiver_id,
-          });
-        } catch (err) {
-          console.warn('[Realtime] merge error (non-fatal):', err);
-        }
-      },
-      (err) => {
-        console.error('[Realtime] subscription error:', err);
-      }
-    );
-
-    return () => {
+      let profile: Awaited<ReturnType<typeof getMyProfile>> | null = null;
       try {
-        unsubscribe?.();
-      } catch (err) {
-        console.warn('[Realtime] unsubscribe warning:', err);
+        profile = await getMyProfile(sessionUser.id);
+      } catch (error) {
+        console.warn('Failed to hydrate Supabase profile; using local data instead.', error);
       }
-    };
-  } catch (err) {
-    console.error('[Realtime] failed to start messages subscription:', err);
-  }
-}, [currentUser?.id]);
 
- // --- Map any signed-in Supabase user to a REAL Supabase-backed profile
-useEffect(() => {
-  let unsub = () => {};
+      setUsers((prevUsers) => {
+        const list = Array.isArray(prevUsers) ? [...prevUsers] : [];
+        const existingIndex = list.findIndex((u) => u.id === sessionUser.id);
+        const existing = existingIndex >= 0 ? list[existingIndex] : undefined;
 
-  (async () => {
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) console.warn('[Auth] getSession error:', error);
+        const base: User =
+          existing ??
+          ({
+            id: sessionUser.id,
+            name: 'Creator',
+            username: 'creator',
+            avatar: 'https://picsum.photos/seed/creators-only-avatar/200/200',
+            banner: 'https://picsum.photos/seed/creators-only-banner/1000/300',
+            bio: '',
+            email: sessionUser.email ?? undefined,
+            isVerified: false,
+            friendIds: [],
+            friendRequestIds: [],
+            platformLinks: [],
+            tags: [],
+            county: undefined,
+            state: undefined,
+            customLink: undefined,
+            blockedUserIds: [],
+          } as User);
 
-      const supaUser = data?.session?.user ?? null;
+        const merged: User = {
+          ...base,
+          id: sessionUser.id,
+          name:
+            profile?.display_name ??
+            base.name ??
+            sessionUser.user_metadata?.full_name ??
+            sessionUser.email?.split('@')[0] ??
+            'Creator',
+          username:
+            profile?.username ??
+            base.username ??
+            sessionUser.user_metadata?.user_name ??
+            sessionUser.email?.split('@')[0] ??
+            'creator',
+          avatar: profile?.avatar_url ?? base.avatar,
+          banner: profile?.banner_url ?? base.banner,
+          bio: profile?.bio ?? base.bio ?? '',
+          email: sessionUser.email ?? base.email,
+        };
+
+        if (existingIndex >= 0) {
+          list[existingIndex] = merged;
+          return list;
+        }
+        return [...list, merged];
+      });
+    },
+    [setUsers],
+  );
+
+  // --- Supabase → AppContext **BRIDGE** -----------------------------------
+  // Keep Supabase auth state in sync with AppContext and hydrate user profiles
+  useEffect(() => {
+    let unsub = () => {};
+
+    (async () => {
+      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
+
+      const { data } = await supabase.auth.getSession();
+      const sessionUser = data.session?.user ?? null;
       const recovering = isRecoveryActive();
 
-      const MASTER_UID = import.meta.env.VITE_MASTER_UID as string | undefined;
-      const isMaster =
-        (supaUser?.id && MASTER_UID && supaUser.id === MASTER_UID) ||
-        ((supaUser?.app_metadata as any)?.role === 'master');
+      if (sessionUser) {
+        setAuthData({ userId: sessionUser.id });
+        await hydrateSupabaseUser(sessionUser);
 
-      if (supaUser) {
-        setAuthData({
-          userId: supaUser.id,
-          source: 'supabase',
-          appMetadata: supaUser.app_metadata,
-          role: isMaster ? 'master' : 'user',
-        });
         if (recovering) {
           if (!/#\/NewPassword/i.test(window.location.hash)) {
             window.location.hash = '#/NewPassword';
@@ -493,32 +481,21 @@ useEffect(() => {
         } else {
           setHistory([{ page: 'feed', context: {} }]);
         }
-        trackEvent('login_success', { userId: supaUser.id, via: 'supabase' });
+
+        trackEvent('login_success', { userId: sessionUser.id, via: 'supabase' });
       } else {
-        if (authData.userId !== null) {
-          setAuthData({ userId: null });
-        }
+        setAuthData({ userId: null });
         setHistory([{ page: 'feed', context: {} }]);
       }
 
-      // subscribe to future auth changes
       const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-        const user = session?.user ?? null;
-        const recNow = isRecoveryActive();
+        const recoveringNow = isRecoveryActive();
 
-        if (user) {
-          const isM =
-            (MASTER_UID && user.id === MASTER_UID) ||
-            ((user.app_metadata as any)?.role === 'master');
+        if (session?.user) {
+          setAuthData({ userId: session.user.id });
+          void hydrateSupabaseUser(session.user);
 
-          setAuthData({
-            userId: user.id,
-            source: 'supabase',
-            appMetadata: user.app_metadata,
-            role: isM ? 'master' : 'user',
-          });
-
-          if (recNow) {
+          if (recoveringNow) {
             if (!/#\/NewPassword/i.test(window.location.hash)) {
               window.location.hash = '#/NewPassword';
             }
@@ -526,7 +503,7 @@ useEffect(() => {
             setHistory([{ page: 'feed', context: {} }]);
           }
 
-          trackEvent('login_success', { userId: user.id, via: 'supabase' });
+          trackEvent('login_success', { userId: session.user.id, via: 'supabase' });
         } else {
           setAuthData({ userId: null });
           setHistory([{ page: 'feed', context: {} }]);
@@ -536,18 +513,11 @@ useEffect(() => {
       });
 
       unsub = () => sub.subscription.unsubscribe();
-    } catch (err) {
-      console.error('[Auth] bridge error:', err);
-    }
-  })();
+    })();
 
-  return () => {
-    try {
-      unsub?.();
-    } catch {}
-  };
-}, []); // run once
-
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {

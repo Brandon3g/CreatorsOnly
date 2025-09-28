@@ -17,16 +17,8 @@ import {
    MOCK DATA
    =========================== */
 
-const masterUid = import.meta.env.VITE_MASTER_UID;
-
-if (!masterUid) {
-  throw new Error(
-    'VITE_MASTER_UID is not set. Please check your Vercel environment variables.'
-  );
-}
-
-export const MASTER_USER_ID = masterUid as string;
-
+export const MASTER_USER_ID = '1455cfa6-be0c-4085-b050-1a3019b30380';
+export const MASTER_USER_EMAIL = 'bgonzalez022@gmail.com';
 
 export const MOCK_USERS: User[] = [
   {
@@ -36,7 +28,7 @@ export const MOCK_USERS: User[] = [
     avatar: 'https://picsum.photos/id/1027/200/200',
     banner: 'https://picsum.photos/id/1015/1000/300',
     bio: 'Travel vlogger & photographer capturing the world one frame at a time.\n✈️ Collabs open!',
-    email: 'elena.voyage@example.com',
+    email: MASTER_USER_EMAIL,
     isVerified: true,
     friendIds: ['u2', 'u3', 'u4'],
     platformLinks: [
