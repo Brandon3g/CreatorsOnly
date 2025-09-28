@@ -44,6 +44,8 @@ import {
   MOCK_FRIEND_REQUESTS,
 } from '../constants';
 
+import { MASTER_USER_ID } from '../constants';
+
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 
