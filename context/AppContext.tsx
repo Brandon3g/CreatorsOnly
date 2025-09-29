@@ -383,8 +383,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ]);
 
   useEffect(() => {
-    let chReq: any;
-    let chRec: any;
+    let chReq: ReturnType<typeof supabase.channel> | null = null;
+    let chRec: ReturnType<typeof supabase.channel> | null = null;
     let mounted = true;
 
     (async () => {
@@ -392,6 +392,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setFriendRequests([]);
         return;
       }
+
       const uid = authData.userId;
 
       try {
@@ -402,31 +403,44 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
 
       const handle = (payload: any) => {
-        const row = (payload.new ?? payload.old) as any;
+        const row = (payload.new ?? payload.old) as
+          | (FriendRequest & {
+              requester_id?: string;
+              recipient_id?: string;
+              created_at?: string;
+              updated_at?: string;
+              status?: string;
+            })
+          | undefined;
         if (!row) return;
 
         setFriendRequests((prev) => {
           const fr: FriendRequest = {
             id: row.id,
-            fromUserId: row.requester_id,
-            toUserId: row.recipient_id,
-            status: row.status as FriendRequestStatus,
-            timestamp: row.created_at ?? row.updated_at ?? new Date().toISOString(),
+            fromUserId: (row as any).requester_id ?? row.fromUserId,
+            toUserId: (row as any).recipient_id ?? row.toUserId,
+            status: ((row as any).status ?? row.status) as FriendRequestStatus,
+            timestamp:
+              (row as any).created_at ??
+              row.timestamp ??
+              (row as any).updated_at ??
+              new Date().toISOString(),
           };
 
-          if (payload.eventType === 'INSERT') {
-            if (prev.some((p) => p.id === fr.id)) {
-              return prev.map((p) => (p.id === fr.id ? fr : p));
+          switch (payload.eventType) {
+            case 'INSERT': {
+              if (prev.some((p) => p.id === fr.id)) {
+                return prev.map((p) => (p.id === fr.id ? fr : p));
+              }
+              return [fr, ...prev];
             }
-            return [fr, ...prev];
+            case 'UPDATE':
+              return prev.map((p) => (p.id === fr.id ? fr : p));
+            case 'DELETE':
+              return prev.filter((p) => p.id !== fr.id);
+            default:
+              return prev;
           }
-          if (payload.eventType === 'UPDATE') {
-            return prev.map((p) => (p.id === fr.id ? fr : p));
-          }
-          if (payload.eventType === 'DELETE') {
-            return prev.filter((p) => p.id !== fr.id);
-          }
-          return prev;
         });
       };
 
@@ -434,7 +448,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         .channel(`fr:req:${uid}`)
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'friend_requests', filter: `requester_id=eq.${uid}` },
+          {
+            event: '*',
+            schema: 'public',
+            table: 'friend_requests',
+            filter: `requester_id=eq.${uid}`,
+          },
           handle,
         )
         .subscribe();
@@ -443,7 +462,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         .channel(`fr:rec:${uid}`)
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'friend_requests', filter: `recipient_id=eq.${uid}` },
+          {
+            event: '*',
+            schema: 'public',
+            table: 'friend_requests',
+            filter: `recipient_id=eq.${uid}`,
+          },
           handle,
         )
         .subscribe();
@@ -797,13 +821,44 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (existing && existing.status === FriendRequestStatus.PENDING) return;
 
       try {
-        await svcSendFriendRequest(toUserId);
+        const created = await svcSendFriendRequest(toUserId);
+
+        setFriendRequests((prev) => {
+          if (prev.some((fr) => fr.id === created.id)) return prev;
+          return [created, ...prev];
+        });
+
+        const notification: Notification = {
+          id: `n${notifications.length + 1}`,
+          userId: toUserId,
+          actorId: fromUserId,
+          type: NotificationType.FRIEND_REQUEST,
+          entityType: 'friend_request',
+          entityId: created.id,
+          message: `${currentUser.name} sent you a friend request.`,
+          isRead: false,
+          timestamp: new Date().toISOString(),
+        };
+        setNotifications((p) => [...p, notification]);
+        emitSocketEvent(toUserId, 'notification:new', notification);
+        sendWebPush(
+          toUserId,
+          'New Friend Request',
+          notification.message,
+          `/profile/${currentUser.username}`,
+        );
         trackEvent('friend_request_sent', { from: fromUserId, to: toUserId });
       } catch (e) {
         console.error('sendFriendRequest failed', e);
       }
     },
-    [currentUser, getFriendRequest],
+    [
+      currentUser,
+      getFriendRequest,
+      setFriendRequests,
+      notifications,
+      setNotifications,
+    ],
   );
 
   const cancelFriendRequest = useCallback(
@@ -819,6 +874,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       try {
         await svcCancelFriendRequest(pending.id);
+        setFriendRequests((p) => p.filter((fr) => fr.id !== pending.id));
         trackEvent('friend_request_cancelled', {
           from: currentUser.id,
           to: toUserId,
@@ -837,6 +893,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       try {
         await svcSetFriendRequestStatus(requestId, FriendRequestStatus.ACCEPTED);
+
+        setFriendRequests((prev) =>
+          prev.map((fr) =>
+            fr.id === requestId ? { ...fr, status: FriendRequestStatus.ACCEPTED } : fr,
+          ),
+        );
 
         setUsers((prev) =>
           prev.map((user) => {
@@ -882,6 +944,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [
       friendRequests,
       currentUser,
+      setFriendRequests,
       setUsers,
       getUserById,
       notifications,
@@ -896,6 +959,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       try {
         await svcSetFriendRequestStatus(requestId, FriendRequestStatus.DECLINED);
+        setFriendRequests((prev) =>
+          prev.map((fr) =>
+            fr.id === requestId ? { ...fr, status: FriendRequestStatus.DECLINED } : fr,
+          ),
+        );
         trackEvent('friend_request_declined', {
           declinedBy: request.toUserId,
           requestedBy: request.fromUserId,
@@ -930,9 +998,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }),
       );
 
+      // Also strip any requests
+      setFriendRequests((prev) =>
+        prev.filter(
+          (fr) =>
+            !(
+              (fr.fromUserId === currentUserId && fr.toUserId === friendId) ||
+              (fr.fromUserId === friendId && fr.toUserId === currentUserId)
+            ),
+        ),
+      );
+
       trackEvent('friend_removed', { remover: currentUserId, removed: friendId });
     },
-    [currentUser, setUsers],
+    [currentUser, setUsers, setFriendRequests],
   );
 
   const toggleBlockUser = useCallback(
