@@ -34,6 +34,13 @@ export async function getProfileById(userId: string): Promise<User | null> {
 }
 
 /**
+ * Alias used by some pages (e.g., TestAuth). Returns the current user's profile.
+ */
+export async function getMyProfile(userId: string): Promise<User | null> {
+  return getProfileById(userId);
+}
+
+/**
  * Fetch multiple profiles by a list of IDs.
  */
 export async function getProfilesByIds(userIds: string[]): Promise<User[]> {

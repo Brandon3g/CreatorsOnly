@@ -19,6 +19,7 @@ import {
 
 export const MASTER_USER_ID = '1455cfa6-be0c-4085-b050-1a3019b30380';
 export const MASTER_USER_EMAIL = 'bgonzalez022@gmail.com';
+export const CREATOR_TYPES = ['Model', 'Photographer', 'Videographer'];
 
 export const MOCK_USERS: User[] = [
   {
