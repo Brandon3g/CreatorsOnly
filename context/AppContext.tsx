@@ -16,7 +16,6 @@ import {
   Conversation,
   Collaboration,
   Message,
-  Platform,
   ConversationFolder,
   NotificationType,
   Feedback,
@@ -39,9 +38,11 @@ import {
   MOCK_FRIEND_REQUESTS,
 } from '../constants';
 
+import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
+
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
-import { upsertMyProfile } from '../services/profile';
+import { getMyProfile, upsertMyProfile, type Profile } from '../services/profile';
 
 /* ---------------------------------------------------------------------------
  * Recovery helpers
@@ -140,6 +141,26 @@ const FEEDBACK_STORAGE_KEY = 'creatorsOnlyFeedback';
 const FRIEND_REQUESTS_STORAGE_KEY = 'creatorsOnlyFriendRequests';
 const AUTH_STORAGE_KEY = 'creatorsOnlyAuth';
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
+const SUPABASE_LINKS_STORAGE_KEY = 'creatorsOnlySupabaseLinks';
+
+const FALLBACK_BANNER_SEED = 'default-banner';
+
+function getNextUserId(existing: User[]): string {
+  const numericIds = existing
+    .map((u) => {
+      const match = /^u(\d+)$/.exec(u.id);
+      return match ? Number.parseInt(match[1], 10) : NaN;
+    })
+    .filter((n) => Number.isFinite(n));
+
+  const maxId = numericIds.length ? Math.max(...(numericIds as number[])) : 0;
+  return `u${maxId + 1}`;
+}
+
+function initialsAvatar(seed: string): string {
+  const encoded = encodeURIComponent(seed || 'Creator');
+  return `https://api.dicebear.com/7.x/initials/svg?seed=${encoded}`;
+}
 
 /* ---------------------------------------------------------------------------
  * Context type
@@ -298,6 +319,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     MOCK_FRIEND_REQUESTS,
   );
 
+  const [supabaseUserLinks, setSupabaseUserLinks] = useLocalStorage<Record<string, string>>(
+    SUPABASE_LINKS_STORAGE_KEY,
+    {},
+  );
+
   // App-level "auth" is just a pointer to a user id from the users array
   const [authData, setAuthData] = useLocalStorage<{ userId: string | null }>(
     AUTH_STORAGE_KEY,
@@ -324,6 +350,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     useState<string | null>(null);
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
+  const supabaseUserLinksRef = useRef<Record<string, string>>(supabaseUserLinks);
+
+  useEffect(() => {
+    supabaseUserLinksRef.current = supabaseUserLinks;
+  }, [supabaseUserLinks]);
 
   // --- Cross-tab sync (except AUTH) ----------------------------------------
   useEffect(() => {
@@ -358,6 +389,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           case THEME_STORAGE_KEY:
             setThemeState(value);
             break;
+          case SUPABASE_LINKS_STORAGE_KEY:
+            setSupabaseUserLinks(value);
+            break;
         }
       } catch (err) {
         console.error(`Error syncing state for key ${event.key}:`, err);
@@ -375,6 +409,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setFeedback,
     setFriendRequests,
     setThemeState,
+    setSupabaseUserLinks,
   ]);
 
   // --- Derived -------------------------------------------------------------
@@ -389,26 +424,138 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const viewingCollaborationId =
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
-  // --- Supabase → AppContext **BRIDGE** -----------------------------------
-  // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
-  useEffect(() => {
-    let unsub = () => {};
+  const ensureLocalUserForSupabase = useCallback(
+    async (sessionUser: SupabaseAuthUser | null): Promise<string | null> => {
+      if (!sessionUser?.id) return null;
 
-    (async () => {
-      // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
-      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
-
-      // initial check
-      const { data } = await supabase.auth.getSession();
-      const hasSession = !!data.session?.user;
-      const recovering = isRecoveryActive();
-
-      if (hasSession) {
-        if (authData.userId !== MASTER_USER_ID) {
-          setAuthData({ userId: MASTER_USER_ID });
+      const supabaseId = sessionUser.id;
+      const linkedId = supabaseUserLinksRef.current[supabaseId];
+      if (linkedId) {
+        const linkedUser = users.find((u) => u.id === linkedId);
+        if (linkedUser) {
+          return linkedUser.id;
         }
 
-        // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
+        setSupabaseUserLinks((prev) => {
+          if (!prev[supabaseId]) return prev;
+          const next = { ...prev };
+          delete next[supabaseId];
+          return next;
+        });
+        const currentLinks = { ...supabaseUserLinksRef.current };
+        delete currentLinks[supabaseId];
+        supabaseUserLinksRef.current = currentLinks;
+      }
+
+      const email = sessionUser.email?.toLowerCase();
+      if (email) {
+        const emailMatch = users.find(
+          (u) => u.email && u.email.toLowerCase() === email,
+        );
+        if (emailMatch) {
+          setSupabaseUserLinks((prev) => {
+            if (prev[supabaseId] === emailMatch.id) return prev;
+            return { ...prev, [supabaseId]: emailMatch.id };
+          });
+          supabaseUserLinksRef.current = {
+            ...supabaseUserLinksRef.current,
+            [supabaseId]: emailMatch.id,
+          };
+          return emailMatch.id;
+        }
+      }
+
+      let profile: Profile | null = null;
+      try {
+        profile = await getMyProfile(supabaseId);
+      } catch (err) {
+        console.warn(
+          '[ensureLocalUserForSupabase] Unable to load profile; falling back to metadata:',
+          err,
+        );
+      }
+
+      let createdUserId: string | null = null;
+      setUsers((prev) => {
+        const nextId = getNextUserId(prev);
+        createdUserId = nextId;
+
+        const metadata = (sessionUser.user_metadata ?? {}) as Record<string, any>;
+        const baseUsername =
+          profile?.username ||
+          (metadata.username as string | undefined) ||
+          (email ? email.split('@')[0] : undefined) ||
+          `creator-${supabaseId.slice(0, 8)}`;
+
+        const displayName =
+          profile?.display_name ||
+          (metadata.full_name as string | undefined) ||
+          (metadata.name as string | undefined) ||
+          baseUsername ||
+          'New Creator';
+
+        const avatar =
+          profile?.avatar_url ||
+          (metadata.avatar_url as string | undefined) ||
+          initialsAvatar(displayName || baseUsername || 'Creator');
+
+        const bannerSeed = supabaseId.slice(0, 8) || FALLBACK_BANNER_SEED;
+        const banner =
+          profile?.banner_url ||
+          `https://picsum.photos/seed/${bannerSeed}/1000/300`;
+
+        const newUser: User = {
+          id: nextId,
+          name: displayName || 'New Creator',
+          username: baseUsername || `creator-${nextId}`,
+          avatar,
+          banner,
+          bio: profile?.bio ?? '',
+          email: sessionUser.email ?? undefined,
+          isVerified: false,
+          friendIds: [],
+          platformLinks: [],
+          tags: [],
+          blockedUserIds: [],
+        };
+
+        return [...prev, newUser];
+      });
+
+      if (!createdUserId) {
+        console.warn(
+          '[ensureLocalUserForSupabase] Failed to derive a local user id for Supabase user',
+          supabaseId,
+        );
+        return null;
+      }
+
+      setSupabaseUserLinks((prev) => ({ ...prev, [supabaseId]: createdUserId! }));
+      supabaseUserLinksRef.current = {
+        ...supabaseUserLinksRef.current,
+        [supabaseId]: createdUserId!,
+      };
+      return createdUserId;
+    },
+    [users, setSupabaseUserLinks, setUsers],
+  );
+
+  // --- Supabase → AppContext **BRIDGE** -----------------------------------
+  useEffect(() => {
+    let isCancelled = false;
+    let unsub = () => {};
+
+    const handleSession = async (sessionUser: SupabaseAuthUser | null) => {
+      const recovering = isRecoveryActive();
+
+      if (sessionUser) {
+        const resolvedUserId = await ensureLocalUserForSupabase(sessionUser);
+        if (isCancelled || !resolvedUserId) return;
+
+        setAuthData((prev) =>
+          prev.userId === resolvedUserId ? prev : { userId: resolvedUserId },
+        );
+
         if (recovering) {
           if (!/#\/NewPassword/i.test(window.location.hash)) {
             window.location.hash = '#/NewPassword';
@@ -417,43 +564,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setHistory([{ page: 'feed', context: {} }]);
         }
 
-        trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-      } else if (authData.userId !== null) {
-        setAuthData({ userId: null });
+        trackEvent('login_success', { userId: resolvedUserId, via: 'supabase' });
+      } else {
+        setAuthData((prev) => (prev.userId === null ? prev : { userId: null }));
         setHistory([{ page: 'feed', context: {} }]);
+        setRecoveryFlag(false);
+        trackEvent('logout', { via: 'supabase' });
       }
+    };
 
-      // subscribe to future changes
-      const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-        const recoveringNow = isRecoveryActive();
+    (async () => {
+      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
 
-        if (session?.user) {
-          setAuthData({ userId: MASTER_USER_ID });
+      const { data } = await supabase.auth.getSession();
+      await handleSession(data.session?.user ?? null);
 
-          if (recoveringNow) {
-            if (!/#\/NewPassword/i.test(window.location.hash)) {
-              window.location.hash = '#/NewPassword';
-            }
-          } else {
-            setHistory([{ page: 'feed', context: {} }]);
-          }
-
-          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-        } else {
-          setAuthData({ userId: null });
-          setHistory([{ page: 'feed', context: {} }]);
-          // Leaving auth state; clear recovery guard just in case
-          setRecoveryFlag(false);
-          trackEvent('logout', { via: 'supabase' });
-        }
+      const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+        handleSession(session?.user ?? null);
       });
 
       unsub = () => sub.subscription.unsubscribe();
     })();
 
-    return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once
+    return () => {
+      isCancelled = true;
+      unsub();
+    };
+  }, [ensureLocalUserForSupabase, setAuthData, setHistory]);
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
