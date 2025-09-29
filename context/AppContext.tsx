@@ -350,7 +350,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     useState<string | null>(null);
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
+  const usersRef = useRef<User[]>(users);
   const supabaseUserLinksRef = useRef<Record<string, string>>(supabaseUserLinks);
+
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
 
   useEffect(() => {
     supabaseUserLinksRef.current = supabaseUserLinks;
@@ -431,7 +436,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const supabaseId = sessionUser.id;
       const linkedId = supabaseUserLinksRef.current[supabaseId];
       if (linkedId) {
-        const linkedUser = users.find((u) => u.id === linkedId);
+        const linkedUser = usersRef.current.find((u) => u.id === linkedId);
         if (linkedUser) {
           return linkedUser.id;
         }
@@ -449,7 +454,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const email = sessionUser.email?.toLowerCase();
       if (email) {
-        const emailMatch = users.find(
+        const emailMatch = usersRef.current.find(
           (u) => u.email && u.email.toLowerCase() === email,
         );
         if (emailMatch) {
@@ -537,7 +542,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
       return createdUserId;
     },
-    [users, setSupabaseUserLinks, setUsers],
+    [setSupabaseUserLinks, setUsers],
   );
 
   // --- Supabase → AppContext **BRIDGE** -----------------------------------
@@ -552,24 +557,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const resolvedUserId = await ensureLocalUserForSupabase(sessionUser);
         if (isCancelled || !resolvedUserId) return;
 
-        setAuthData((prev) =>
-          prev.userId === resolvedUserId ? prev : { userId: resolvedUserId },
-        );
+        let authChanged = false;
+        setAuthData((prev) => {
+          if (prev.userId === resolvedUserId) return prev;
+          authChanged = true;
+          return { userId: resolvedUserId };
+        });
 
         if (recovering) {
           if (!/#\/NewPassword/i.test(window.location.hash)) {
             window.location.hash = '#/NewPassword';
           }
-        } else {
+        } else if (authChanged) {
           setHistory([{ page: 'feed', context: {} }]);
         }
 
-        trackEvent('login_success', { userId: resolvedUserId, via: 'supabase' });
+        if (authChanged) {
+          trackEvent('login_success', { userId: resolvedUserId, via: 'supabase' });
+        }
       } else {
-        setAuthData((prev) => (prev.userId === null ? prev : { userId: null }));
-        setHistory([{ page: 'feed', context: {} }]);
-        setRecoveryFlag(false);
-        trackEvent('logout', { via: 'supabase' });
+        let wasAuthenticated = false;
+        setAuthData((prev) => {
+          if (prev.userId === null) return prev;
+          wasAuthenticated = true;
+          return { userId: null };
+        });
+        if (wasAuthenticated) {
+          setHistory([{ page: 'feed', context: {} }]);
+          setRecoveryFlag(false);
+          trackEvent('logout', { via: 'supabase' });
+        }
       }
     };
 
