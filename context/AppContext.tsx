@@ -42,7 +42,12 @@ import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
 
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
-import { getMyProfile, upsertMyProfile, type Profile } from '../services/profile';
+import {
+  getMyProfile,
+  upsertMyProfile,
+  isValidProfileId,
+  type Profile,
+} from '../services/profile';
 
 /* ---------------------------------------------------------------------------
  * Recovery helpers
@@ -434,6 +439,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!sessionUser?.id) return null;
 
       const supabaseId = sessionUser.id;
+      const hasValidSupabaseId = isValidProfileId(supabaseId);
       const linkedId = supabaseUserLinksRef.current[supabaseId];
       if (linkedId) {
         const linkedUser = usersRef.current.find((u) => u.id === linkedId);
@@ -471,12 +477,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
 
       let profile: Profile | null = null;
-      try {
-        profile = await getMyProfile(supabaseId);
-      } catch (err) {
+      if (hasValidSupabaseId) {
+        try {
+          profile = await getMyProfile(supabaseId);
+        } catch (err) {
+          console.warn(
+            '[ensureLocalUserForSupabase] Unable to load profile; falling back to metadata:',
+            err,
+          );
+        }
+      } else {
         console.warn(
-          '[ensureLocalUserForSupabase] Unable to load profile; falling back to metadata:',
-          err,
+          '[ensureLocalUserForSupabase] Received non-UUID Supabase user id; skipping remote profile lookup:',
+          supabaseId,
         );
       }
 
@@ -785,11 +798,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } = await supabase.auth.getUser();
 
         if (sessionError) throw sessionError;
-        if (!sessionUser?.id) {
-          throw new Error('No authenticated Supabase user');
+        const supabaseId = sessionUser?.id ?? null;
+        if (!isValidProfileId(supabaseId)) {
+          throw new Error('No authenticated Supabase user with a valid id');
         }
 
-        const profile = await upsertMyProfile(sessionUser.id, {
+        const profile = await upsertMyProfile(supabaseId, {
           username: updatedUser.username,
           display_name: updatedUser.name,
           bio: updatedUser.bio,
