@@ -791,6 +791,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateUserProfile = useCallback(
     async (updatedUser: User) => {
+      let supabaseProfile: Profile | null = null;
+      let persistedVia: 'supabase' | 'local_only' = 'local_only';
+
       try {
         const {
           data: { user: sessionUser },
@@ -799,34 +802,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         if (sessionError) throw sessionError;
         const supabaseId = sessionUser?.id ?? null;
-        if (!isValidProfileId(supabaseId)) {
-          throw new Error('No authenticated Supabase user with a valid id');
+
+        if (isValidProfileId(supabaseId)) {
+          supabaseProfile = await upsertMyProfile(supabaseId, {
+            username: updatedUser.username,
+            display_name: updatedUser.name,
+            bio: updatedUser.bio,
+            avatar_url: updatedUser.avatar,
+            banner_url: updatedUser.banner,
+          });
+          persistedVia = 'supabase';
+        } else if (supabaseId) {
+          console.warn(
+            '[updateUserProfile] Supabase user id is not a valid UUID; applying local-only update',
+            supabaseId,
+          );
         }
-
-        const profile = await upsertMyProfile(supabaseId, {
-          username: updatedUser.username,
-          display_name: updatedUser.name,
-          bio: updatedUser.bio,
-          avatar_url: updatedUser.avatar,
-          banner_url: updatedUser.banner,
-        });
-
-        setUsers((prev) =>
-          prev.map((u) =>
-            u.id === updatedUser.id
-              ? {
-                  ...updatedUser,
-                  username: profile.username ?? updatedUser.username,
-                  name: profile.display_name ?? updatedUser.name,
-                  bio: profile.bio ?? updatedUser.bio,
-                  avatar: profile.avatar_url ?? updatedUser.avatar,
-                  banner: profile.banner_url ?? updatedUser.banner,
-                }
-              : u,
-          ),
-        );
-
-        trackEvent('profile_updated', { userId: updatedUser.id });
       } catch (error) {
         console.error('[updateUserProfile] Failed to update profile:', error);
         trackEvent('profile_update_failed', {
@@ -835,6 +826,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
         throw error;
       }
+
+      setUsers((prev) =>
+        prev.map((u) => {
+          if (u.id !== updatedUser.id) return u;
+
+          if (supabaseProfile) {
+            return {
+              ...updatedUser,
+              username: supabaseProfile.username ?? updatedUser.username,
+              name: supabaseProfile.display_name ?? updatedUser.name,
+              bio: supabaseProfile.bio ?? updatedUser.bio,
+              avatar: supabaseProfile.avatar_url ?? updatedUser.avatar,
+              banner: supabaseProfile.banner_url ?? updatedUser.banner,
+            };
+          }
+
+          return { ...updatedUser };
+        }),
+      );
+
+      trackEvent('profile_updated', {
+        userId: updatedUser.id,
+        persistedVia,
+      });
     },
     [setUsers],
   );
