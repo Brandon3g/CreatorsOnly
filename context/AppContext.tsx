@@ -41,7 +41,7 @@ import {
 
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
-import { updateMyProfile } from '../services/profile';
+import { upsertMyProfile } from '../services/profile';
 
 /* ---------------------------------------------------------------------------
  * Recovery helpers
@@ -635,7 +635,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           throw new Error('No authenticated Supabase user');
         }
 
-        const profile = await updateMyProfile(sessionUser.id, {
+        const profile = await upsertMyProfile(sessionUser.id, {
           username: updatedUser.username,
           display_name: updatedUser.name,
           bio: updatedUser.bio,
