@@ -795,13 +795,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       let persistedVia: 'supabase' | 'local_only' = 'local_only';
 
       try {
-        const {
-          data: { user: sessionUser },
-          error: sessionError,
-        } = await supabase.auth.getUser();
+        let supabaseId: string | null = null;
 
-        if (sessionError) throw sessionError;
-        const supabaseId = sessionUser?.id ?? null;
+        // Prefer a cached mapping from Supabase UUID ➜ local user id.
+        for (const [candidateId, localId] of Object.entries(
+          supabaseUserLinksRef.current,
+        )) {
+          if (localId === updatedUser.id) {
+            supabaseId = candidateId;
+            break;
+          }
+        }
+
+        if (!supabaseId) {
+          const {
+            data: { user: sessionUser },
+            error: sessionError,
+          } = await supabase.auth.getUser();
+
+          if (sessionError) throw sessionError;
+          supabaseId = sessionUser?.id ?? null;
+
+          if (supabaseId && supabaseUserLinksRef.current[supabaseId] !== updatedUser.id) {
+            setSupabaseUserLinks((prev) => {
+              if (prev[supabaseId!] === updatedUser.id) return prev;
+              return { ...prev, [supabaseId!]: updatedUser.id };
+            });
+            supabaseUserLinksRef.current = {
+              ...supabaseUserLinksRef.current,
+              [supabaseId]: updatedUser.id,
+            };
+          }
+        }
 
         if (isValidProfileId(supabaseId)) {
           supabaseProfile = await upsertMyProfile(supabaseId, {
@@ -851,7 +876,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         persistedVia,
       });
     },
-    [setUsers],
+    [setUsers, setSupabaseUserLinks],
   );
 
   // --- Social --------------------------------------------------------------
