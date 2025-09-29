@@ -1,7 +1,6 @@
 // services/profile.ts
 import { supabase } from '../lib/supabaseClient';
 
-/** DB-backed profile shape (matches `public.profiles`) */
 export type Profile = {
   id: string;
   username: string | null;
@@ -14,10 +13,19 @@ export type Profile = {
 const PROFILE_COLUMNS =
   'id, username, display_name, bio, avatar_url, updated_at';
 
+const WRITABLE_FIELDS = new Set<keyof Omit<Profile, 'id' | 'updated_at'>>([
+  'username',
+  'display_name',
+  'bio',
+  'avatar_url',
+]);
+
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function isValidProfileId(id: string | null | undefined): id is string {
+export function isValidProfileId(
+  id: string | null | undefined,
+): id is string {
   return typeof id === 'string' && UUID_REGEX.test(id);
 }
 
@@ -55,20 +63,13 @@ export async function getProfileById(profileId: string): Promise<Profile> {
   return data as Profile;
 }
 
-/** Only the columns that actually exist in the DB table. */
-type EditableFields = Pick<
-  Profile,
-  'username' | 'display_name' | 'bio' | 'avatar_url'
->;
+type EditableFields = Omit<Profile, 'id' | 'updated_at'>;
 
-/** Defensive filter: drop any keys the table doesn’t have. */
-function toAllowedPatch(patch: Partial<EditableFields>): Partial<EditableFields> {
-  const out: Partial<EditableFields> = {};
-  if ('username' in patch) out.username = patch.username ?? null;
-  if ('display_name' in patch) out.display_name = patch.display_name ?? null;
-  if ('bio' in patch) out.bio = patch.bio ?? null;
-  if ('avatar_url' in patch) out.avatar_url = patch.avatar_url ?? null;
-  return out;
+function sanitizePatch(patch: Partial<EditableFields>) {
+  if (!patch) return {};
+  return Object.fromEntries(
+    Object.entries(patch).filter(([key]) => WRITABLE_FIELDS.has(key as keyof EditableFields)),
+  ) as Partial<EditableFields>;
 }
 
 /** Update *the signed-in* user’s profile (partial). */
@@ -78,11 +79,11 @@ export async function updateMyProfile(
 ): Promise<Profile> {
   assertValidProfileId(dbUserId, 'updateMyProfile');
 
-  const allowed = toAllowedPatch(patch);
+  const updates = sanitizePatch(patch);
 
   const { data, error } = await supabase
     .from('profiles')
-    .update(allowed)
+    .update({ ...updates })
     .eq('id', dbUserId)
     .select(PROFILE_COLUMNS)
     .single();
@@ -95,7 +96,8 @@ export async function updateMyProfile(
  * Upsert the signed-in user’s profile.
  * - Creates a row if it doesn't exist
  * - Updates existing row otherwise
- * (Kept for older callers.)
+ *
+ * This satisfies older callers (e.g., TestAuth.tsx) that expect `upsertMyProfile`.
  */
 export async function upsertMyProfile(
   dbUserId: string,
@@ -103,11 +105,14 @@ export async function upsertMyProfile(
 ): Promise<Profile> {
   assertValidProfileId(dbUserId, 'upsertMyProfile');
 
-  const allowed = toAllowedPatch(patch);
+  const updates = sanitizePatch(patch);
 
   const { data, error } = await supabase
     .from('profiles')
-    .upsert({ id: dbUserId, ...allowed }, { onConflict: 'id' })
+    .upsert(
+      { id: dbUserId, ...updates },
+      { onConflict: 'id' } // ensure it merges on the PK
+    )
     .select(PROFILE_COLUMNS)
     .single();
 

@@ -42,12 +42,8 @@ import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
 
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
-import {
-  getMyProfile,
-  upsertMyProfile,
-  isValidProfileId,
-  type Profile,
-} from '../services/profile';
+import * as ProfileService from '../services/profile';
+import type { Profile } from '../services/profile';
 
 /* ---------------------------------------------------------------------------
  * Recovery helpers
@@ -167,6 +163,19 @@ function initialsAvatar(seed: string): string {
   return `https://api.dicebear.com/7.x/initials/svg?seed=${encoded}`;
 }
 
+const toNull = (v: any) => (v === '' || v === undefined ? null : v);
+function mapUiToDb(input: any) {
+  const patch: any = {};
+  if (input.username !== undefined) patch.username = toNull(input.username);
+  if (input.name !== undefined) patch.display_name = toNull(input.name);
+  if (input.display_name !== undefined) patch.display_name = toNull(input.display_name);
+  if (input.bio !== undefined) patch.bio = toNull(input.bio);
+  if (input.avatar !== undefined) patch.avatar_url = toNull(input.avatar);
+  if (input.avatar_url !== undefined) patch.avatar_url = toNull(input.avatar_url);
+  // IMPORTANT: do NOT include banner / banner_url (DB does not have this column)
+  return patch;
+}
+
 /* ---------------------------------------------------------------------------
  * Context type
  * -------------------------------------------------------------------------*/
@@ -214,7 +223,7 @@ interface AppContextType {
     > & { password?: string }
   ) => boolean;
 
-  updateUserProfile: (updatedUser: User) => Promise<void>;
+  updateUserProfile: (updatedUser: any) => Promise<Profile>;
 
   sendFriendRequest: (toUserId: string) => void;
   cancelFriendRequest: (toUserId: string) => void;
@@ -439,7 +448,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!sessionUser?.id) return null;
 
       const supabaseId = sessionUser.id;
-      const hasValidSupabaseId = isValidProfileId(supabaseId);
+      const hasValidSupabaseId = ProfileService.isValidProfileId(supabaseId);
       const linkedId = supabaseUserLinksRef.current[supabaseId];
       if (linkedId) {
         const linkedUser = usersRef.current.find((u) => u.id === linkedId);
@@ -479,7 +488,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       let profile: Profile | null = null;
       if (hasValidSupabaseId) {
         try {
-          profile = await getMyProfile(supabaseId);
+          profile = await ProfileService.getMyProfile(supabaseId);
         } catch (err) {
           console.warn(
             '[ensureLocalUserForSupabase] Unable to load profile; falling back to metadata:',
@@ -518,9 +527,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           initialsAvatar(displayName || baseUsername || 'Creator');
 
         const bannerSeed = supabaseId.slice(0, 8) || FALLBACK_BANNER_SEED;
-        const banner =
-          profile?.banner_url ||
-          `https://picsum.photos/seed/${bannerSeed}/1000/300`;
+        const banner = `https://picsum.photos/seed/${bannerSeed}/1000/300`;
 
         const newUser: User = {
           id: nextId,
@@ -790,93 +797,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   );
 
   const updateUserProfile = useCallback(
-    async (updatedUser: User) => {
-      let supabaseProfile: Profile | null = null;
-      let persistedVia: 'supabase' | 'local_only' = 'local_only';
-
+    async (input: any) => {
       try {
-        let supabaseId: string | null = null;
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
+        if (!authUser?.id) throw new Error('No signed-in user');
 
-        // Prefer a cached mapping from Supabase UUID ➜ local user id.
-        for (const [candidateId, localId] of Object.entries(
-          supabaseUserLinksRef.current,
-        )) {
-          if (localId === updatedUser.id) {
-            supabaseId = candidateId;
-            break;
-          }
-        }
+        const patch = mapUiToDb(input);
+        const updated = await ProfileService.updateMyProfile(authUser.id, patch);
 
-        if (!supabaseId) {
-          const {
-            data: { user: sessionUser },
-            error: sessionError,
-          } = await supabase.auth.getUser();
-
-          if (sessionError) throw sessionError;
-          supabaseId = sessionUser?.id ?? null;
-
-          if (supabaseId && supabaseUserLinksRef.current[supabaseId] !== updatedUser.id) {
-            setSupabaseUserLinks((prev) => {
-              if (prev[supabaseId!] === updatedUser.id) return prev;
-              return { ...prev, [supabaseId!]: updatedUser.id };
-            });
-            supabaseUserLinksRef.current = {
-              ...supabaseUserLinksRef.current,
-              [supabaseId]: updatedUser.id,
-            };
-          }
-        }
-
-        if (isValidProfileId(supabaseId)) {
-          supabaseProfile = await upsertMyProfile(supabaseId, {
-            username: updatedUser.username,
-            display_name: updatedUser.name,
-            bio: updatedUser.bio,
-            avatar_url: updatedUser.avatar,
-            banner_url: updatedUser.banner,
-          });
-          persistedVia = 'supabase';
-        } else if (supabaseId) {
-          console.warn(
-            '[updateUserProfile] Supabase user id is not a valid UUID; applying local-only update',
-            supabaseId,
-          );
-        }
-      } catch (error) {
-        console.error('[updateUserProfile] Failed to update profile:', error);
-        trackEvent('profile_update_failed', {
-          userId: updatedUser.id,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-
-      setUsers((prev) =>
-        prev.map((u) => {
-          if (u.id !== updatedUser.id) return u;
-
-          if (supabaseProfile) {
+        setUsers((prev) =>
+          prev.map((existing) => {
+            if (existing.id !== input.id) return existing;
             return {
-              ...updatedUser,
-              username: supabaseProfile.username ?? updatedUser.username,
-              name: supabaseProfile.display_name ?? updatedUser.name,
-              bio: supabaseProfile.bio ?? updatedUser.bio,
-              avatar: supabaseProfile.avatar_url ?? updatedUser.avatar,
-              banner: supabaseProfile.banner_url ?? updatedUser.banner,
+              ...existing,
+              username: updated.username ?? existing.username,
+              name: updated.display_name ?? existing.name,
+              bio: updated.bio ?? existing.bio,
+              avatar: updated.avatar_url ?? existing.avatar,
             };
-          }
+          }),
+        );
 
-          return { ...updatedUser };
-        }),
-      );
-
-      trackEvent('profile_updated', {
-        userId: updatedUser.id,
-        persistedVia,
-      });
+        trackEvent?.('profile_updated', {
+          userId: authUser.id,
+          persistedVia: 'supabase',
+        });
+        return updated;
+      } catch (err: any) {
+        console.error('updateUserProfile failed', err);
+        trackEvent?.('profile_update_failed', { reason: err?.message });
+        throw err;
+      }
     },
-    [setUsers, setSupabaseUserLinks],
+    [setUsers],
   );
 
   // --- Social --------------------------------------------------------------
