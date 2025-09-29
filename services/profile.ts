@@ -1,89 +1,85 @@
 // src/services/profile.ts
 import { supabase } from '../lib/supabaseClient';
+import { User } from '../types';
 
-export type MyProfile = {
-  id: string;
-  display_name: string | null;
-  bio: string | null;
-  avatar_url: string | null;
-  updated_at?: string | null;
-};
-
-// Supabase returns PGRST116 for `.single()` when no row exists.
-// Some stacks surface it as “Row not found”.
-function isRowNotFound(err: any) {
-  return (
-    err?.code === 'PGRST116' ||
-    err?.message?.toLowerCase?.().includes('row not found') ||
-    err?.status === 406
-  );
-}
-
-/** Get the signed-in user's profile (or null if none). */
-export async function getMyProfile(): Promise<MyProfile | null> {
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr) throw userErr;
-  if (!user) return null;
-
+/**
+ * Fetch a profile by user ID.
+ * Always includes display_name and username for proper rendering.
+ */
+export async function getProfileById(userId: string): Promise<User | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
-    .eq('id', user.id)
+    .select('id, display_name, username, avatar_url, bio, created_at, updated_at')
+    .eq('id', userId)
     .single();
 
   if (error) {
-    if (isRowNotFound(error)) return null;
-    throw error;
+    console.error('Error fetching profile by ID:', error);
+    return null;
   }
-  return data as MyProfile;
+
+  return data as User;
 }
 
-/** Upsert the signed-in user's profile. */
-export async function upsertMyProfile(p: Partial<MyProfile>): Promise<MyProfile> {
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr) throw userErr;
-  if (!user) throw new Error('Not signed in');
-
-  const payload = {
-    id: user.id,
-    display_name: p.display_name ?? null,
-    bio: p.bio ?? null,
-    avatar_url: p.avatar_url ?? null,
-    updated_at: new Date().toISOString(),
-  };
-
+/**
+ * Fetch multiple profiles by IDs.
+ */
+export async function getProfilesByIds(userIds: string[]): Promise<User[]> {
   const { data, error } = await supabase
     .from('profiles')
-    .upsert(payload, { onConflict: 'id' })
-    .select('*')
+    .select('id, display_name, username, avatar_url, bio, created_at, updated_at')
+    .in('id', userIds);
+
+  if (error) {
+    console.error('Error fetching profiles by IDs:', error);
+    return [];
+  }
+
+  return data as User[];
+}
+
+/**
+ * Update the current user's profile.
+ * Accepts a partial object with fields to update (e.g., display_name, bio, avatar_url).
+ */
+export async function updateProfile(userId: string, updates: Partial<User>): Promise<User | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .update({
+      display_name: updates.display_name,
+      username: updates.username,
+      avatar_url: updates.avatar_url,
+      bio: updates.bio,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', userId)
+    .select()
     .single();
 
-  if (error) throw error;
-  return data as MyProfile;
-}
-
-/** Get a profile by id (or null if not found). */
-export async function getProfileById(id: string): Promise<MyProfile | null> {
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', id).single();
   if (error) {
-    if (isRowNotFound(error)) return null;
-    throw error;
+    console.error('Error updating profile:', error);
+    return null;
   }
-  return data as MyProfile;
+
+  return data as User;
 }
 
-/** List all profiles (ordered by updated_at desc). */
-export async function listProfiles(): Promise<MyProfile[]> {
+/**
+ * Ensure a profile row exists for the given user.
+ * Use after signup if needed.
+ */
+export async function ensureProfile(userId: string): Promise<User | null> {
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
-    .order('updated_at', { ascending: false });
-  if (error) throw error;
-  return (data || []) as MyProfile[];
+    .upsert({ id: userId, display_name: 'New User' })
+    .eq('id', userId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error ensuring profile:', error);
+    return null;
+  }
+
+  return data as User;
 }
