@@ -448,32 +448,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const recoveringNow = isRecoveryActive();
 
         if (session?.user) {
-          (async () => {
-            setAuthData({ userId: MASTER_USER_ID });
+          setAuthData({ userId: MASTER_USER_ID });
 
-            if (recoveringNow) {
-              if (!/#\/NewPassword/i.test(window.location.hash)) {
-                window.location.hash = '#/NewPassword';
-              }
-            } else {
-              setHistory([{ page: 'feed', context: {} }]);
+          if (recoveringNow) {
+            if (!/#\/NewPassword/i.test(window.location.hash)) {
+              window.location.hash = '#/NewPassword';
             }
+          } else {
+            setHistory([{ page: 'feed', context: {} }]);
+          }
 
-          (async () => {
-            setAuthData({ userId: MASTER_USER_ID });
-
-            if (recoveringNow) {
-              if (!/#\/NewPassword/i.test(window.location.hash)) {
-                window.location.hash = '#/NewPassword';
-              }
-            } else {
-              setHistory([{ page: 'feed', context: {} }]);
+          // rehydrate users after session appears (no await needed here)
+          reloadUsers();
+          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
         } else {
           setAuthData({ userId: null });
           setHistory([{ page: 'feed', context: {} }]);
-          // Leaving auth state; clear recovery guard just in case
-          setRecoveryFlag(false);
-          trackEvent('logout', { via: 'supabase' });
         }
       });
 
