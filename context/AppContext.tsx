@@ -41,6 +41,7 @@ import {
 } from '../constants';
 
 import { trackEvent } from '../services/analytics';
+import { upsertMyProfile } from '../services/profile';
 import { supabase } from '../lib/supabaseClient';
 import { fetchAppState, upsertAppState } from '../services/appState';
 
