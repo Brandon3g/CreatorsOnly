@@ -696,7 +696,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // --- Demo login (username)  ---------------------------------------------
   const login = (username: string, _password: string) => {
     const user = users.find(
-      (u) => u.username.toLowerCase() === username.toLowerCase(),
+      (u) => (u.username ?? '').toLowerCase() === username.toLowerCase(),
     );
     if (user) {
       setAuthData({ userId: user.id });
@@ -807,18 +807,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const patch = mapUiToDb(input);
         const updated = await ProfileService.updateMyProfile(authUser.id, patch);
 
-        setUsers((prev) =>
-          prev.map((existing) => {
-            if (existing.id !== input.id) return existing;
-            return {
-              ...existing,
-              username: updated.username ?? existing.username,
-              name: updated.display_name ?? existing.name,
-              bio: updated.bio ?? existing.bio,
-              avatar: updated.avatar_url ?? existing.avatar,
-            };
-          }),
-        );
+        // Use the currently authenticated **local** user id, not input.id
+        const localId = currentUser?.id ?? authData.userId;
+        if (localId) {
+          setUsers((prev) =>
+            prev.map((existing) =>
+              existing.id === localId
+                ? {
+                    ...existing,
+                    username: updated.username ?? existing.username,
+                    name: updated.display_name ?? existing.name,
+                    bio: updated.bio ?? existing.bio,
+                    avatar: updated.avatar_url ?? existing.avatar,
+                  }
+                : existing,
+            ),
+          );
+        }
 
         trackEvent?.('profile_updated', {
           userId: authUser.id,
@@ -831,7 +836,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         throw err;
       }
     },
-    [setUsers],
+    [currentUser, authData.userId, setUsers],
   );
 
   // --- Social --------------------------------------------------------------
@@ -1397,7 +1402,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     getUserById,
     getUserByUsername: (username: string) =>
-      users.find((u) => u.username.toLowerCase() === username.toLowerCase()),
+      users.find((u) => (u.username ?? '').toLowerCase() === username.toLowerCase()),
 
     registerScrollableNode,
 
