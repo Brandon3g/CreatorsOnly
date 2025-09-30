@@ -448,17 +448,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const recoveringNow = isRecoveryActive();
 
         if (session?.user) {
-          setAuthData({ userId: MASTER_USER_ID });
+          (async () => {
+            setAuthData({ userId: MASTER_USER_ID });
 
-          if (recoveringNow) {
-            if (!/#\/NewPassword/i.test(window.location.hash)) {
-              window.location.hash = '#/NewPassword';
+            if (recoveringNow) {
+              if (!/#\/NewPassword/i.test(window.location.hash)) {
+                window.location.hash = '#/NewPassword';
+              }
+            } else {
+              setHistory([{ page: 'feed', context: {} }]);
             }
-          } else {
-            setHistory([{ page: 'feed', context: {} }]);
-          }
 
-          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+          (async () => {
+            setAuthData({ userId: MASTER_USER_ID });
+
+            if (recoveringNow) {
+              if (!/#\/NewPassword/i.test(window.location.hash)) {
+                window.location.hash = '#/NewPassword';
+              }
+            } else {
+              setHistory([{ page: 'feed', context: {} }]);
         } else {
           setAuthData({ userId: null });
           setHistory([{ page: 'feed', context: {} }]);
