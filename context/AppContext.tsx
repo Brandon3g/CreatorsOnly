@@ -6,6 +6,7 @@ import React, {
   ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
 } from 'react';
 
@@ -16,6 +17,7 @@ import {
   Conversation,
   Collaboration,
   Message,
+  Platform,
   ConversationFolder,
   NotificationType,
   Feedback,
@@ -38,12 +40,9 @@ import {
   MOCK_FRIEND_REQUESTS,
 } from '../constants';
 
-import type { User as SupabaseAuthUser } from '@supabase/supabase-js';
-
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
-import * as ProfileService from '../services/profile';
-import type { Profile } from '../services/profile';
+import { fetchAppState, upsertAppState } from '../services/appState';
 
 /* ---------------------------------------------------------------------------
  * Recovery helpers
@@ -106,15 +105,13 @@ const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
 const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
 
 const sendWebPush = (
+  subscriptions: Record<string, PushSubscriptionObject>,
   userId: string,
   title: string,
   body: string,
   url: string,
 ) => {
   console.log(`[PUSH_SIM] Sending push to user ${userId}: ${title}`);
-  const subscriptions = JSON.parse(
-    localStorage.getItem(PUSH_SUBSCRIPTIONS_STORAGE_KEY) || '{}',
-  );
   if (subscriptions[userId]) {
     if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({
@@ -142,39 +139,20 @@ const FEEDBACK_STORAGE_KEY = 'creatorsOnlyFeedback';
 const FRIEND_REQUESTS_STORAGE_KEY = 'creatorsOnlyFriendRequests';
 const AUTH_STORAGE_KEY = 'creatorsOnlyAuth';
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
-const SUPABASE_LINKS_STORAGE_KEY = 'creatorsOnlySupabaseLinks';
+const HISTORY_STORAGE_KEY = 'creatorsOnlyHistory';
 
-const FALLBACK_BANNER_SEED = 'default-banner';
-
-function getNextUserId(existing: User[]): string {
-  const numericIds = existing
-    .map((u) => {
-      const match = /^u(\d+)$/.exec(u.id);
-      return match ? Number.parseInt(match[1], 10) : NaN;
-    })
-    .filter((n) => Number.isFinite(n));
-
-  const maxId = numericIds.length ? Math.max(...(numericIds as number[])) : 0;
-  return `u${maxId + 1}`;
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function initialsAvatar(seed: string): string {
-  const encoded = encodeURIComponent(seed || 'Creator');
-  return `https://api.dicebear.com/7.x/initials/svg?seed=${encoded}`;
-}
-
-const toNull = (v: any) => (v === '' || v === undefined ? null : v);
-function mapUiToDb(input: any) {
-  const patch: any = {};
-  if (input.username !== undefined) patch.username = toNull(input.username);
-  if (input.name !== undefined) patch.display_name = toNull(input.name);
-  if (input.display_name !== undefined) patch.display_name = toNull(input.display_name);
-  if (input.bio !== undefined) patch.bio = toNull(input.bio);
-  if (input.avatar !== undefined) patch.avatar_url = toNull(input.avatar);
-  if (input.avatar_url !== undefined) patch.avatar_url = toNull(input.avatar_url);
-  // IMPORTANT: do NOT include banner / banner_url (DB does not have this column)
-  return patch;
-}
+const defaultHistory = (): NavigationEntry[] => [{ page: 'feed', context: {} }];
+const createDefaultUsers = () => clone(MOCK_USERS);
+const createDefaultPosts = () => clone(MOCK_POSTS);
+const createDefaultNotifications = () => clone(MOCK_NOTIFICATIONS);
+const createDefaultConversations = () => clone(MOCK_CONVERSATIONS);
+const createDefaultCollaborations = () => clone(MOCK_COLLABORATIONS);
+const createDefaultFeedback = () => clone(MOCK_FEEDBACK);
+const createDefaultFriendRequests = () => clone(MOCK_FRIEND_REQUESTS);
 
 /* ---------------------------------------------------------------------------
  * Context type
@@ -223,7 +201,7 @@ interface AppContextType {
     > & { password?: string }
   ) => boolean;
 
-  updateUserProfile: (updatedUser: any) => Promise<Profile>;
+  updateUserProfile: (updatedUser: User) => void;
 
   sendFriendRequest: (toUserId: string) => void;
   cancelFriendRequest: (toUserId: string) => void;
@@ -284,78 +262,131 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
  * Provider
  * -------------------------------------------------------------------------*/
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // localStorage state helper
-  function useLocalStorage<T>(
+  function useAppStateStorage<T>(
     key: string,
-    initialValue: T,
-  ): [T, (value: T | ((val: T) => T)) => void] {
-    const [storedValue, setStoredValue] = useState<T>(() => {
-      try {
-        const item = window.localStorage.getItem(key);
-        return item ? JSON.parse(item) : initialValue;
-      } catch {
-        return initialValue;
+    initialValueFactory: () => T,
+  ): [T, (value: T | ((val: T) => T)) => void, boolean, () => Promise<void>] {
+    const [currentKey, setCurrentKey] = useState(key);
+    const [state, setState] = useState<T>(() => initialValueFactory());
+    const [loaded, setLoaded] = useState(false);
+
+    useEffect(() => {
+      if (key !== currentKey) {
+        setCurrentKey(key);
+        setState(initialValueFactory());
+        setLoaded(false);
       }
-    });
+    }, [key, currentKey, initialValueFactory]);
 
-    const setValue = (value: T | ((val: T) => T)) => {
+    useEffect(() => {
+      let isMounted = true;
+
+      (async () => {
+        try {
+          const remote = await fetchAppState<T>(currentKey);
+          if (!isMounted) return;
+          if (remote !== null) {
+            setState(remote);
+          } else {
+            const fallback = initialValueFactory();
+            setState(fallback);
+            await upsertAppState(currentKey, fallback);
+          }
+        } catch (error) {
+          console.error(`[AppState] Hydration failed for key ${currentKey}`, error);
+        } finally {
+          if (isMounted) setLoaded(true);
+        }
+      })();
+
+      return () => {
+        isMounted = false;
+      };
+    }, [currentKey, initialValueFactory]);
+
+    const persist = useCallback(
+      (value: T | ((val: T) => T)) => {
+        setState((prev) => {
+          const next = value instanceof Function ? value(prev) : value;
+          upsertAppState(currentKey, next).catch((error) => {
+            console.error(`[AppState] Persist failed for key ${currentKey}`, error);
+          });
+          return next;
+        });
+      },
+      [currentKey],
+    );
+
+    const reload = useCallback(async () => {
       try {
-        const valueToStore = value instanceof Function ? value(storedValue) : value;
-        setStoredValue(valueToStore);
-        window.localStorage.setItem(key, JSON.stringify(valueToStore));
-      } catch {}
-    };
+        const remote = await fetchAppState<T>(currentKey);
+        if (remote !== null) {
+          setState(remote);
+        }
+      } catch (error) {
+        console.error(`[AppState] Reload failed for key ${currentKey}`, error);
+      }
+    }, [currentKey]);
 
-    return [storedValue, setValue];
+    return [state, persist, loaded, reload];
   }
 
   // --- State ---------------------------------------------------------------
-  const [users, setUsers] = useLocalStorage<User[]>(USERS_STORAGE_KEY, MOCK_USERS);
-  const [posts, setPosts] = useLocalStorage<Post[]>(POSTS_STORAGE_KEY, MOCK_POSTS);
-  const [notifications, setNotifications] = useLocalStorage<Notification[]>(
+  const [users, setUsers, , reloadUsers] = useAppStateStorage<User[]>(
+    USERS_STORAGE_KEY,
+    createDefaultUsers,
+  );
+  const [posts, setPosts, , reloadPosts] = useAppStateStorage<Post[]>(
+    POSTS_STORAGE_KEY,
+    createDefaultPosts,
+  );
+  const [notifications, setNotifications, , reloadNotifications] = useAppStateStorage<Notification[]>(
     NOTIFICATIONS_STORAGE_KEY,
-    MOCK_NOTIFICATIONS,
+    createDefaultNotifications,
   );
-  const [conversations, setConversations] = useLocalStorage<Conversation[]>(
+  const [conversations, setConversations, , reloadConversations] = useAppStateStorage<Conversation[]>(
     CONVERSATIONS_STORAGE_KEY,
-    MOCK_CONVERSATIONS,
+    createDefaultConversations,
   );
-  const [collaborations, setCollaborations] = useLocalStorage<Collaboration[]>(
+  const [collaborations, setCollaborations, , reloadCollaborations] = useAppStateStorage<Collaboration[]>(
     COLLABORATIONS_STORAGE_KEY,
-    MOCK_COLLABORATIONS,
+    createDefaultCollaborations,
   );
-  const [feedback, setFeedback] = useLocalStorage<Feedback[]>(
+  const [feedback, setFeedback, , reloadFeedback] = useAppStateStorage<Feedback[]>(
     FEEDBACK_STORAGE_KEY,
-    MOCK_FEEDBACK,
+    createDefaultFeedback,
   );
-  const [friendRequests, setFriendRequests] = useLocalStorage<FriendRequest[]>(
+  const [friendRequests, setFriendRequests, , reloadFriendRequests] = useAppStateStorage<FriendRequest[]>(
     FRIEND_REQUESTS_STORAGE_KEY,
-    MOCK_FRIEND_REQUESTS,
+    createDefaultFriendRequests,
   );
 
-  const [supabaseUserLinks, setSupabaseUserLinks] = useLocalStorage<Record<string, string>>(
-    SUPABASE_LINKS_STORAGE_KEY,
-    {},
-  );
-
-  // App-level "auth" is just a pointer to a user id from the users array
-  const [authData, setAuthData] = useLocalStorage<{ userId: string | null }>(
+  const [authData, setAuthData, , reloadAuth] = useAppStateStorage<{ userId: string | null }>(
     AUTH_STORAGE_KEY,
-    { userId: null },
+    () => ({ userId: null }),
   );
 
-  const [pushSubscriptions, setPushSubscriptions] = useLocalStorage<Record<string, PushSubscriptionObject>>(
-    PUSH_SUBSCRIPTIONS_STORAGE_KEY,
-    {},
-  );
+  const [pushSubscriptions, setPushSubscriptions, , reloadPushSubscriptions] =
+    useAppStateStorage<Record<string, PushSubscriptionObject>>(
+      PUSH_SUBSCRIPTIONS_STORAGE_KEY,
+      () => ({}),
+    );
 
-  const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(THEME_STORAGE_KEY, 'dark');
+  const [theme, setThemeState, , reloadTheme] = useAppStateStorage<'light' | 'dark'>(
+    THEME_STORAGE_KEY,
+    () => 'dark',
+  );
 
   const [isRegistering, setIsRegistering] = useState(false);
 
-  const [history, setHistory] = useState<NavigationEntry[]>([
-    { page: 'feed', context: {} },
-  ]);
+  const historyKey = useMemo(
+    () => `${HISTORY_STORAGE_KEY}:${authData.userId ?? 'guest'}`,
+    [authData.userId],
+  );
+  const [history, setHistory, , reloadHistory] = useAppStateStorage<NavigationEntry[]>(
+    historyKey,
+    defaultHistory,
+  );
 
   const [selectedConversationId, setSelectedConversationId] =
     useState<string | null>(null);
@@ -364,72 +395,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     useState<string | null>(null);
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
-  const usersRef = useRef<User[]>(users);
-  const supabaseUserLinksRef = useRef<Record<string, string>>(supabaseUserLinks);
-
-  useEffect(() => {
-    usersRef.current = users;
-  }, [users]);
-
-  useEffect(() => {
-    supabaseUserLinksRef.current = supabaseUserLinks;
-  }, [supabaseUserLinks]);
-
-  // --- Cross-tab sync (except AUTH) ----------------------------------------
-  useEffect(() => {
-    const syncState = (event: StorageEvent) => {
-      if (event.key === AUTH_STORAGE_KEY) return;
-      if (!event.key || event.newValue === null) return;
-
-      try {
-        const value = JSON.parse(event.newValue);
-        switch (event.key) {
-          case USERS_STORAGE_KEY:
-            setUsers(value);
-            break;
-          case POSTS_STORAGE_KEY:
-            setPosts(value);
-            break;
-          case NOTIFICATIONS_STORAGE_KEY:
-            setNotifications(value);
-            break;
-          case CONVERSATIONS_STORAGE_KEY:
-            setConversations(value);
-            break;
-          case COLLABORATIONS_STORAGE_KEY:
-            setCollaborations(value);
-            break;
-          case FEEDBACK_STORAGE_KEY:
-            setFeedback(value);
-            break;
-          case FRIEND_REQUESTS_STORAGE_KEY:
-            setFriendRequests(value);
-            break;
-          case THEME_STORAGE_KEY:
-            setThemeState(value);
-            break;
-          case SUPABASE_LINKS_STORAGE_KEY:
-            setSupabaseUserLinks(value);
-            break;
-        }
-      } catch (err) {
-        console.error(`Error syncing state for key ${event.key}:`, err);
-      }
-    };
-
-    window.addEventListener('storage', syncState);
-    return () => window.removeEventListener('storage', syncState);
-  }, [
-    setUsers,
-    setPosts,
-    setNotifications,
-    setConversations,
-    setCollaborations,
-    setFeedback,
-    setFriendRequests,
-    setThemeState,
-    setSupabaseUserLinks,
-  ]);
 
   // --- Derived -------------------------------------------------------------
   const currentUser = users.find((u) => u.id === authData.userId) || null;
@@ -443,197 +408,170 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const viewingCollaborationId =
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
-  const ensureLocalUserForSupabase = useCallback(
-    async (sessionUser: SupabaseAuthUser | null): Promise<string | null> => {
-      if (!sessionUser?.id) return null;
-
-      const supabaseId = sessionUser.id;
-      const hasValidSupabaseId = ProfileService.isValidProfileId(supabaseId);
-      const linkedId = supabaseUserLinksRef.current[supabaseId];
-      if (linkedId) {
-        const linkedUser = usersRef.current.find((u) => u.id === linkedId);
-        if (linkedUser) {
-          return linkedUser.id;
-        }
-
-        setSupabaseUserLinks((prev) => {
-          if (!prev[supabaseId]) return prev;
-          const next = { ...prev };
-          delete next[supabaseId];
-          return next;
-        });
-        const currentLinks = { ...supabaseUserLinksRef.current };
-        delete currentLinks[supabaseId];
-        supabaseUserLinksRef.current = currentLinks;
-      }
-
-      const email = sessionUser.email?.toLowerCase();
-      if (email) {
-        const emailMatch = usersRef.current.find(
-          (u) => u.email && u.email.toLowerCase() === email,
-        );
-        if (emailMatch) {
-          setSupabaseUserLinks((prev) => {
-            if (prev[supabaseId] === emailMatch.id) return prev;
-            return { ...prev, [supabaseId]: emailMatch.id };
-          });
-          supabaseUserLinksRef.current = {
-            ...supabaseUserLinksRef.current,
-            [supabaseId]: emailMatch.id,
-          };
-          return emailMatch.id;
-        }
-      }
-
-      let profile: Profile | null = null;
-      if (hasValidSupabaseId) {
-        try {
-          profile = await ProfileService.getMyProfile(supabaseId);
-        } catch (err) {
-          console.warn(
-            '[ensureLocalUserForSupabase] Unable to load profile; falling back to metadata:',
-            err,
-          );
-        }
-      } else {
-        console.warn(
-          '[ensureLocalUserForSupabase] Received non-UUID Supabase user id; skipping remote profile lookup:',
-          supabaseId,
-        );
-      }
-
-      let createdUserId: string | null = null;
-      setUsers((prev) => {
-        const nextId = getNextUserId(prev);
-        createdUserId = nextId;
-
-        const metadata = (sessionUser.user_metadata ?? {}) as Record<string, any>;
-        const baseUsername =
-          profile?.username ||
-          (metadata.username as string | undefined) ||
-          (email ? email.split('@')[0] : undefined) ||
-          `creator-${supabaseId.slice(0, 8)}`;
-
-        const displayName =
-          profile?.display_name ||
-          (metadata.full_name as string | undefined) ||
-          (metadata.name as string | undefined) ||
-          baseUsername ||
-          'New Creator';
-
-        const avatar =
-          profile?.avatar_url ||
-          (metadata.avatar_url as string | undefined) ||
-          initialsAvatar(displayName || baseUsername || 'Creator');
-
-        const bannerSeed = supabaseId.slice(0, 8) || FALLBACK_BANNER_SEED;
-        const banner = `https://picsum.photos/seed/${bannerSeed}/1000/300`;
-
-        const newUser: User = {
-          id: nextId,
-          name: displayName || 'New Creator',
-          username: baseUsername || `creator-${nextId}`,
-          avatar,
-          banner,
-          bio: profile?.bio ?? '',
-          email: sessionUser.email ?? undefined,
-          isVerified: false,
-          friendIds: [],
-          platformLinks: [],
-          tags: [],
-          blockedUserIds: [],
-        };
-
-        return [...prev, newUser];
-      });
-
-      if (!createdUserId) {
-        console.warn(
-          '[ensureLocalUserForSupabase] Failed to derive a local user id for Supabase user',
-          supabaseId,
-        );
-        return null;
-      }
-
-      setSupabaseUserLinks((prev) => ({ ...prev, [supabaseId]: createdUserId! }));
-      supabaseUserLinksRef.current = {
-        ...supabaseUserLinksRef.current,
-        [supabaseId]: createdUserId!,
-      };
-      return createdUserId;
-    },
-    [setSupabaseUserLinks, setUsers],
-  );
-
   // --- Supabase → AppContext **BRIDGE** -----------------------------------
+  // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
   useEffect(() => {
-    let isCancelled = false;
     let unsub = () => {};
 
-    const handleSession = async (sessionUser: SupabaseAuthUser | null) => {
+    (async () => {
+      // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
+      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
+
+      // initial check
+      const { data } = await supabase.auth.getSession();
+      const hasSession = !!data.session?.user;
       const recovering = isRecoveryActive();
 
-      if (sessionUser) {
-        const resolvedUserId = await ensureLocalUserForSupabase(sessionUser);
-        if (isCancelled || !resolvedUserId) return;
+      if (hasSession) {
+        if (authData.userId !== MASTER_USER_ID) {
+          setAuthData({ userId: MASTER_USER_ID });
+        }
 
-        let authChanged = false;
-        setAuthData((prev) => {
-          if (prev.userId === resolvedUserId) return prev;
-          authChanged = true;
-          return { userId: resolvedUserId };
-        });
-
+        // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
         if (recovering) {
           if (!/#\/NewPassword/i.test(window.location.hash)) {
             window.location.hash = '#/NewPassword';
           }
-        } else if (authChanged) {
+        } else {
           setHistory([{ page: 'feed', context: {} }]);
         }
 
-        if (authChanged) {
-          trackEvent('login_success', { userId: resolvedUserId, via: 'supabase' });
-        }
-      } else {
-        let wasAuthenticated = false;
-        setAuthData((prev) => {
-          if (prev.userId === null) return prev;
-          wasAuthenticated = true;
-          return { userId: null };
-        });
-        if (wasAuthenticated) {
+        trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+      } else if (authData.userId !== null) {
+        setAuthData({ userId: null });
+        setHistory([{ page: 'feed', context: {} }]);
+      }
+
+      // subscribe to future changes
+      const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+        const recoveringNow = isRecoveryActive();
+
+        if (session?.user) {
+          setAuthData({ userId: MASTER_USER_ID });
+
+          if (recoveringNow) {
+            if (!/#\/NewPassword/i.test(window.location.hash)) {
+              window.location.hash = '#/NewPassword';
+            }
+          } else {
+            setHistory([{ page: 'feed', context: {} }]);
+          }
+
+          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+        } else {
+          setAuthData({ userId: null });
           setHistory([{ page: 'feed', context: {} }]);
+          // Leaving auth state; clear recovery guard just in case
           setRecoveryFlag(false);
           trackEvent('logout', { via: 'supabase' });
         }
-      }
-    };
-
-    (async () => {
-      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
-
-      const { data } = await supabase.auth.getSession();
-      await handleSession(data.session?.user ?? null);
-
-      const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-        handleSession(session?.user ?? null);
       });
 
       unsub = () => sub.subscription.unsubscribe();
     })();
 
-    return () => {
-      isCancelled = true;
-      unsub();
-    };
-  }, [ensureLocalUserForSupabase, setAuthData, setHistory]);
+    return () => unsub();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
-    await new Promise((res) => setTimeout(res, 600));
+    await Promise.all([
+      reloadUsers(),
+      reloadPosts(),
+      reloadNotifications(),
+      reloadConversations(),
+      reloadCollaborations(),
+      reloadFeedback(),
+      reloadFriendRequests(),
+      reloadAuth(),
+      reloadPushSubscriptions(),
+      reloadTheme(),
+      reloadHistory(),
+    ]);
     trackEvent('data_refreshed');
-  }, []);
+  }, [
+    reloadAuth,
+    reloadCollaborations,
+    reloadConversations,
+    reloadFeedback,
+    reloadFriendRequests,
+    reloadHistory,
+    reloadNotifications,
+    reloadPosts,
+    reloadPushSubscriptions,
+    reloadTheme,
+    reloadUsers,
+  ]);
+
+  // Stay in sync with Supabase updates from other devices/tabs.
+  useEffect(() => {
+    const historyKeyForUser = `${HISTORY_STORAGE_KEY}:${authData.userId ?? 'guest'}`;
+
+    const keyReloadMap: Record<string, () => Promise<void>> = {
+      [USERS_STORAGE_KEY]: reloadUsers,
+      [POSTS_STORAGE_KEY]: reloadPosts,
+      [NOTIFICATIONS_STORAGE_KEY]: reloadNotifications,
+      [CONVERSATIONS_STORAGE_KEY]: reloadConversations,
+      [COLLABORATIONS_STORAGE_KEY]: reloadCollaborations,
+      [FEEDBACK_STORAGE_KEY]: reloadFeedback,
+      [FRIEND_REQUESTS_STORAGE_KEY]: reloadFriendRequests,
+      [AUTH_STORAGE_KEY]: reloadAuth,
+      [PUSH_SUBSCRIPTIONS_STORAGE_KEY]: reloadPushSubscriptions,
+      [THEME_STORAGE_KEY]: reloadTheme,
+      [historyKeyForUser]: reloadHistory,
+    };
+
+    const channelName = `app_state_sync_${authData.userId ?? 'guest'}`;
+    const channel = supabase.channel(channelName);
+
+    channel.on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'app_state',
+      },
+      (payload: any) => {
+        const changedKey = (payload?.new?.key ?? payload?.old?.key) as string | undefined;
+        if (!changedKey) return;
+
+        const reload = keyReloadMap[changedKey];
+        if (reload) {
+          reload().catch((error) =>
+            console.error(`[AppState] Realtime reload failed for key ${changedKey}`, error),
+          );
+        }
+      },
+    );
+
+    channel.subscribe((status) => {
+      if (status === 'CHANNEL_ERROR') {
+        console.error('[AppState] Realtime channel error');
+      }
+    });
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch (error) {
+        console.error('[AppState] Failed to remove realtime channel', error);
+      }
+    };
+  }, [
+    authData.userId,
+    reloadAuth,
+    reloadCollaborations,
+    reloadConversations,
+    reloadFeedback,
+    reloadFriendRequests,
+    reloadHistory,
+    reloadNotifications,
+    reloadPosts,
+    reloadPushSubscriptions,
+    reloadTheme,
+    reloadUsers,
+  ]);
 
   // --- Theme ---------------------------------------------------------------
   useEffect(() => {
@@ -696,7 +634,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // --- Demo login (username)  ---------------------------------------------
   const login = (username: string, _password: string) => {
     const user = users.find(
-      (u) => (u.username ?? '').toLowerCase() === username.toLowerCase(),
+      (u) => u.username.toLowerCase() === username.toLowerCase(),
     );
     if (user) {
       setAuthData({ userId: user.id });
@@ -797,46 +735,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   );
 
   const updateUserProfile = useCallback(
-    async (input: any) => {
-      try {
-        const {
-          data: { user: authUser },
-        } = await supabase.auth.getUser();
-        if (!authUser?.id) throw new Error('No signed-in user');
-
-        const patch = mapUiToDb(input);
-        const updated = await ProfileService.updateMyProfile(authUser.id, patch);
-
-        // Use the currently authenticated **local** user id, not input.id
-        const localId = currentUser?.id ?? authData.userId;
-        if (localId) {
-          setUsers((prev) =>
-            prev.map((existing) =>
-              existing.id === localId
-                ? {
-                    ...existing,
-                    username: updated.username ?? existing.username,
-                    name: updated.display_name ?? existing.name,
-                    bio: updated.bio ?? existing.bio,
-                    avatar: updated.avatar_url ?? existing.avatar,
-                  }
-                : existing,
-            ),
-          );
-        }
-
-        trackEvent?.('profile_updated', {
-          userId: authUser.id,
-          persistedVia: 'supabase',
-        });
-        return updated;
-      } catch (err: any) {
-        console.error('updateUserProfile failed', err);
-        trackEvent?.('profile_update_failed', { reason: err?.message });
-        throw err;
-      }
+    (updatedUser: User) => {
+      setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
+      trackEvent('profile_updated', { userId: updatedUser.id });
     },
-    [currentUser, authData.userId, setUsers],
+    [setUsers],
   );
 
   // --- Social --------------------------------------------------------------
@@ -886,6 +789,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setNotifications((p) => [...p, notification]);
       emitSocketEvent(toUserId, 'notification:new', notification);
       sendWebPush(
+        pushSubscriptions,
         toUserId,
         'New Friend Request',
         notification.message,
@@ -900,6 +804,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       notifications,
       setNotifications,
       getFriendRequest,
+      pushSubscriptions,
     ],
   );
 
@@ -964,6 +869,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setNotifications((p) => [...p, notification]);
         emitSocketEvent(request.fromUserId, 'notification:new', notification);
         sendWebPush(
+          pushSubscriptions,
           request.fromUserId,
           'Friend Request Accepted',
           notification.message,
@@ -984,6 +890,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       notifications,
       setNotifications,
       getUserById,
+      pushSubscriptions,
     ],
   );
 
@@ -1181,6 +1088,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setNotifications((p) => [...p, notification]);
         emitSocketEvent(collab.authorId, 'notification:new', notification);
         sendWebPush(
+          pushSubscriptions,
           collab.authorId,
           'New Interest in Opportunity',
           notification.message,
@@ -1200,6 +1108,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setCollaborations,
       notifications,
       setNotifications,
+      pushSubscriptions,
     ],
   );
 
@@ -1241,7 +1150,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
       setNotifications((p) => [...p, notification]);
       emitSocketEvent(other, 'notification:new', notification);
-      sendWebPush(other, `New message from ${currentUser.name}`, text, `/messages`);
+      sendWebPush(
+        pushSubscriptions,
+        other,
+        `New message from ${currentUser.name}`,
+        text,
+        `/messages`,
+      );
 
       trackEvent('message_sent', { from: currentUser.id, to: other });
     },
@@ -1251,6 +1166,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setConversations,
       notifications,
       setNotifications,
+      pushSubscriptions,
     ],
   );
 
@@ -1402,7 +1318,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     getUserById,
     getUserByUsername: (username: string) =>
-      users.find((u) => (u.username ?? '').toLowerCase() === username.toLowerCase()),
+      users.find((u) => u.username.toLowerCase() === username.toLowerCase()),
 
     registerScrollableNode,
 
