@@ -1,4 +1,4 @@
-// services/appState.ts (per-user version)
+// services/appState.ts — per-user, safe when no session
 import { supabase } from '../lib/supabaseClient';
 
 export interface AppStateRow<T> {
@@ -8,19 +8,20 @@ export interface AppStateRow<T> {
   updated_at?: string;
 }
 
-async function getUserId(): Promise<string> {
-  const { data, error } = await supabase.auth.getUser();
+// Returns the user id if logged in, else null (no throw)
+async function getUserIdOptional(): Promise<string | null> {
+  const { data, error } = await supabase.auth.getSession();
   if (error) {
-    console.error('[AppState] getUser error', error);
-    throw error;
+    console.warn('[AppState] getSession error', error);
+    return null;
   }
-  const user = data?.user;
-  if (!user) throw new Error('[AppState] No authenticated user');
-  return user.id;
+  return data?.session?.user?.id ?? null;
 }
 
 export async function fetchAppState<T>(key: string): Promise<T | null> {
-  const userId = await getUserId();
+  const userId = await getUserIdOptional();
+  if (!userId) return null; // not logged in yet
+
   const { data, error } = await supabase
     .from('app_state')
     .select('data')
@@ -30,26 +31,28 @@ export async function fetchAppState<T>(key: string): Promise<T | null> {
 
   if (error) {
     console.error(`[AppState] Failed to fetch key "${key}"`, error);
-    throw error;
+    return null;
   }
-  return data?.data ?? null;
+  return (data?.data as T) ?? null;
 }
 
 export async function upsertAppState<T>(key: string, value: T): Promise<void> {
-  const userId = await getUserId();
-  const { error } = await supabase.from('app_state').upsert({
-    user_id: userId,
-    key,
-    data: value,
-  }); // PK (user_id, key) makes this an upsert
+  const userId = await getUserIdOptional();
+  if (!userId) return; // no-op until logged in
+
+  const { error } = await supabase
+    .from('app_state')
+    .upsert({ user_id: userId, key, data: value });
+
   if (error) {
     console.error(`[AppState] Failed to upsert key "${key}"`, error);
-    throw error;
   }
 }
 
 export async function deleteAppState(key: string): Promise<void> {
-  const userId = await getUserId();
+  const userId = await getUserIdOptional();
+  if (!userId) return; // no-op until logged in
+
   const { error } = await supabase
     .from('app_state')
     .delete()
@@ -58,6 +61,5 @@ export async function deleteAppState(key: string): Promise<void> {
 
   if (error) {
     console.error(`[AppState] Failed to delete key "${key}"`, error);
-    throw error;
   }
 }
