@@ -736,11 +736,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   );
 
   const updateUserProfile = useCallback(
-    (updatedUser: User) => {
-      setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-      trackEvent('profile_updated', { userId: updatedUser.id });
+    async (patch: any) => {
+      // 1) Immediate UI update (local users array)
+      if (currentUser) {
+        setUsers((prev) =>
+          prev.map((u) => (u.id === currentUser.id ? { ...u, ...patch } : u)),
+        );
+      }
+
+      // 2) Persist to DB (if signed in)
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.warn('[profile] getSession error', error);
+        return;
+      }
+      const dbUserId = data?.session?.user?.id;
+      if (!dbUserId) return; // not logged in (e.g., guest)
+
+      // Map any UI fields to DB columns; ignore unknowns
+      const dbPatch: Record<string, any> = {};
+      if (typeof patch.username !== 'undefined')
+        dbPatch.username = patch.username ?? null;
+      if (typeof patch.display_name !== 'undefined')
+        dbPatch.display_name = patch.display_name ?? null;
+      if (typeof patch.name !== 'undefined' && typeof dbPatch.display_name === 'undefined')
+        dbPatch.display_name = patch.name ?? null;
+      if (typeof patch.bio !== 'undefined') dbPatch.bio = patch.bio ?? null;
+      if (typeof patch.avatar_url !== 'undefined')
+        dbPatch.avatar_url = patch.avatar_url ?? null;
+      if (typeof patch.avatar !== 'undefined' && typeof dbPatch.avatar_url === 'undefined')
+        dbPatch.avatar_url = patch.avatar ?? null;
+
+      try {
+        await upsertMyProfile(dbUserId, dbPatch); // writes to public.profiles
+      } catch (e) {
+        console.error('[profile] upsert failed', e);
+      }
+
+      trackEvent('profile_updated', { userId: dbUserId });
     },
-    [setUsers],
+    [currentUser, setUsers],
   );
 
   // --- Social --------------------------------------------------------------
