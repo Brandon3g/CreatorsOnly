@@ -202,7 +202,7 @@ interface AppContextType {
     > & { password?: string }
   ) => boolean;
 
-  updateUserProfile: (updatedUser: User) => void;
+  updateUserProfile: (patch: Partial<User> & Record<string, any>) => void;
 
   sendFriendRequest: (toUserId: string) => void;
   cancelFriendRequest: (toUserId: string) => void;
@@ -732,7 +732,7 @@ useEffect(() => {
   );
 
   const updateUserProfile = useCallback(
-    async (patch: any) => {
+    async (patch: Partial<User> & Record<string, any>) => {
       // 1) Immediate UI update (local users array)
       if (currentUser) {
         setUsers((prev) =>
@@ -751,16 +751,36 @@ useEffect(() => {
 
       // Map any UI fields to DB columns; ignore unknowns
       const dbPatch: Record<string, any> = {};
-      if (typeof patch.username !== 'undefined')
-        dbPatch.username = patch.username ?? null;
-      if (typeof patch.display_name !== 'undefined')
-        dbPatch.display_name = patch.display_name ?? null;
-      if (typeof patch.name !== 'undefined' && typeof dbPatch.display_name === 'undefined')
-        dbPatch.display_name = patch.name ?? null;
-      if (typeof patch.bio !== 'undefined') dbPatch.bio = patch.bio ?? null;
-      if (typeof patch.avatar_url !== 'undefined')
+      if (typeof patch.username !== 'undefined') {
+        const value =
+          typeof patch.username === 'string' ? patch.username.trim() : patch.username;
+        dbPatch.username = value ? value : null;
+      }
+
+      if (typeof patch.display_name !== 'undefined') {
+        const value =
+          typeof patch.display_name === 'string' ? patch.display_name.trim() : patch.display_name;
+        dbPatch.display_name = value ? value : null;
+      }
+
+      if (typeof patch.name !== 'undefined' && typeof dbPatch.display_name === 'undefined') {
+        const value = typeof patch.name === 'string' ? patch.name.trim() : patch.name;
+        dbPatch.display_name = value ? value : null;
+      }
+
+      if (typeof patch.bio !== 'undefined') {
+        const value =
+          typeof patch.bio === 'string' ? patch.bio.slice(0, 150) : patch.bio;
+        dbPatch.bio = value ?? null;
+      }
+
+      if (typeof patch.avatar_url !== 'undefined') {
         dbPatch.avatar_url = patch.avatar_url ?? null;
-      if (typeof patch.avatar !== 'undefined' && typeof dbPatch.avatar_url === 'undefined')
+      }
+
+      if (typeof patch.avatar !== 'undefined' && typeof dbPatch.avatar_url === 'undefined') {
+        dbPatch.avatar_url = patch.avatar ?? null;
+      }
         dbPatch.avatar_url = patch.avatar ?? null;
 
       try {
