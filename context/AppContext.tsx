@@ -410,69 +410,66 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
   // --- Supabase → AppContext **BRIDGE** -----------------------------------
-  // Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
-  useEffect(() => {
-    let unsub = () => {};
+// Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
+useEffect(() => {
+  // Initial session check (async)
+  (async () => {
+    // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
+    if (urlLooksLikeRecovery()) setRecoveryFlag(true);
 
-    (async () => {
-      // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
-      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
+    const { data } = await supabase.auth.getSession();
+    const hasSession = !!data.session?.user;
+    const recovering = isRecoveryActive();
 
-      // initial check
-      const { data } = await supabase.auth.getSession();
-      const hasSession = !!data.session?.user;
-      const recovering = isRecoveryActive();
+    if (hasSession) {
+      if (authData.userId !== MASTER_USER_ID) {
+        setAuthData({ userId: MASTER_USER_ID });
+      }
 
-      if (hasSession) {
-        if (authData.userId !== MASTER_USER_ID) {
-          setAuthData({ userId: MASTER_USER_ID });
+      // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
+      if (recovering) {
+        if (!/#\/NewPassword/i.test(window.location.hash)) {
+          window.location.hash = '#/NewPassword';
         }
-
-        // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
-        if (recovering) {
-          if (!/#\/NewPassword/i.test(window.location.hash)) {
-            window.location.hash = '#/NewPassword';
-          }
-        } else {
-          setHistory([{ page: 'feed', context: {} }]);
-        }
-
-        trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-      } else if (authData.userId !== null) {
-        setAuthData({ userId: null });
+      } else {
         setHistory([{ page: 'feed', context: {} }]);
       }
 
-      // subscribe to future changes
-      const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-        const recoveringNow = isRecoveryActive();
+      // Rehydrate after session appears
+      reloadUsers();
+      trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+    } else if (authData.userId !== null) {
+      setAuthData({ userId: null });
+      setHistory([{ page: 'feed', context: {} }]);
+    }
+  })();
 
-        if (session?.user) {
-          setAuthData({ userId: MASTER_USER_ID });
+  // Subscribe to future changes
+  const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+    const recoveringNow = isRecoveryActive();
 
-          if (recoveringNow) {
-            if (!/#\/NewPassword/i.test(window.location.hash)) {
-              window.location.hash = '#/NewPassword';
-            }
-          } else {
-            setHistory([{ page: 'feed', context: {} }]);
-          }
+    if (session?.user) {
+      setAuthData({ userId: MASTER_USER_ID });
 
-          // rehydrate users after session appears (no await needed here)
-          reloadUsers();
-          trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-        } else {
-          setAuthData({ userId: null });
-          setHistory([{ page: 'feed', context: {} }]);
+      if (recoveringNow) {
+        if (!/#\/NewPassword/i.test(window.location.hash)) {
+          window.location.hash = '#/NewPassword';
         }
-      });
+      } else {
+        setHistory([{ page: 'feed', context: {} }]);
+      }
 
-      unsub = () => sub.subscription.unsubscribe();
-    })();
+      // Rehydrate after session appears
+      reloadUsers();
+      trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
+    } else {
+      setAuthData({ userId: null });
+      setHistory([{ page: 'feed', context: {} }]);
+    }
+  });
 
-    return () => unsub();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once
+  return () => sub.subscription.unsubscribe();
+}, [reloadUsers]);
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
