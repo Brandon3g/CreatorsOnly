@@ -89,7 +89,7 @@ function useSupabaseList<T extends { id?: string }>(
     select = '*',
     where = {} as Record<string, string | number | boolean | null>,
     // If you pass order, we’ll only apply it when the column actually exists.
-    // This prevents 400s like: "column profiles.created_at does not exist".
+    // This prevents 400s like: "column X does not exist".
     order,
     channelKey,
   }: {
@@ -114,12 +114,12 @@ function useSupabaseList<T extends { id?: string }>(
       }
     }
 
-    // Apply order ONLY when explicitly provided; this avoids 400s on missing columns
+    // Apply order ONLY when explicitly provided
     if (order?.column) {
       try {
         query = query.order(order.column, { ascending: !!order.ascending });
       } catch {
-        // ignore — some drivers throw synchronously if invalid, but Supabase usually returns 400 later.
+        // ignore — we’ll just not order if driver complains synchronously
       }
     }
 
@@ -127,7 +127,6 @@ function useSupabaseList<T extends { id?: string }>(
     if (!error && Array.isArray(data)) {
       setRows(data as T[]);
     } else if (error) {
-      // Log once to console; keeps UI stable
       // eslint-disable-next-line no-console
       console.warn(`[useSupabaseList] Failed to load ${table}`, error);
     }
@@ -339,22 +338,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // where clauses that depend on auth
   const notificationsWhere = useMemo(
-    // IMPORTANT: column name is recipient_id in your DB (per earlier RLS + schema)
-    () => (currentUserId ? { recipient_id: currentUserId } : {}),
+    // In your schema, recipient is stored as user_id on notifications
+    () => (currentUserId ? { user_id: currentUserId } : {}),
     [currentUserId],
   );
   const feedbackWhere = useMemo(
     () => (currentUserId ? { user_id: currentUserId } : {}),
     [currentUserId],
   );
-  const friendRequestWhere = useMemo(
-    () => (currentUserId ? { recipient_id: currentUserId } : {}),
-    [currentUserId],
-  );
+  // Friend requests schema varies; to avoid 400s we won’t filter here.
 
   /* ── server-backed state (safe ordering) ─────────────────────────────────── */
 
-  // profiles: DO NOT pass order here (no created_at on your profiles)
+  // profiles: DO NOT pass order here (no created_at on your profiles table)
   const {
     rows: users,
     setRows: setUsers,
@@ -369,8 +365,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     upsert: upsertPost,
     remove: removePost,
   } = useSupabaseList<Post>('posts', {
-    // posts.timestamp exists in your seed code; if unsure, drop order to avoid 400s
-    order: { column: 'timestamp', ascending: false },
+    // Your table has created_at — NOT timestamp
+    order: { column: 'created_at', ascending: false },
   });
 
   const {
@@ -419,7 +415,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     upsert: upsertFriendRequest,
     remove: removeFriendRequest,
   } = useSupabaseList<FriendRequest>('friend_requests', {
-    where: friendRequestWhere,
     channelKey: currentUserId ? `friend_requests:${currentUserId}` : 'friend_requests',
   });
 
@@ -670,7 +665,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const notification: Notification = {
         id: crypto.randomUUID ? crypto.randomUUID() : `n${Date.now()}`,
-        userId: toUserId, // kept for UI compatibility
+        userId: toUserId, // keep for UI compatibility
         actorId: fromUserId,
         type: NotificationType.FRIEND_REQUEST,
         entityType: 'friend_request',
