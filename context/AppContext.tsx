@@ -17,7 +17,6 @@ import {
   Conversation,
   Collaboration,
   Message,
-  Platform,
   ConversationFolder,
   NotificationType,
   Feedback,
@@ -29,26 +28,14 @@ import {
   PushSubscriptionObject,
 } from '../types';
 
-import {
-  MOCK_USERS,
-  MOCK_POSTS,
-  MOCK_NOTIFICATIONS,
-  MOCK_CONVERSATIONS,
-  MOCK_COLLABORATIONS,
-  MASTER_USER_ID,
-  MOCK_FEEDBACK,
-  MOCK_FRIEND_REQUESTS,
-} from '../constants';
+import { MASTER_USER_ID } from '../constants';
 
 import { trackEvent } from '../services/analytics';
-import { upsertMyProfile } from '../services/profile';
 import { supabase } from '../lib/supabaseClient';
-import { fetchAppState, upsertAppState } from '../services/appState';
 
 /* ---------------------------------------------------------------------------
  * Recovery helpers
  * -------------------------------------------------------------------------*/
-// Read/write a session-scoped flag so recovery survives Supabase's hash cleaning
 const RECOVERY_FLAG = 'co-recovery-active';
 
 function getRecoveryFlag(): boolean {
@@ -65,8 +52,6 @@ function setRecoveryFlag(on: boolean) {
   } catch {}
 }
 
-// Detect if current URL is part of a password recovery/reset flow.
-// Works with "#/NewPassword", "#access_token=...&type=recovery", and multi-hash variants.
 function urlLooksLikeRecovery(): boolean {
   try {
     const href = window.location.href || '';
@@ -74,7 +59,7 @@ function urlLooksLikeRecovery(): boolean {
 
     if (/#\/NewPassword/i.test(hash)) return true;
 
-    const fragments = href.split('#').slice(1); // after first '#'
+    const fragments = href.split('#').slice(1);
     for (const frag of fragments) {
       const qs = new URLSearchParams(frag);
       const type = (qs.get('type') || '').toLowerCase();
@@ -86,7 +71,6 @@ function urlLooksLikeRecovery(): boolean {
   return false;
 }
 
-// Single source of truth: either URL looks like recovery OR a pre-boot script set the flag
 function isRecoveryActive(): boolean {
   return urlLooksLikeRecovery() || getRecoveryFlag();
 }
@@ -131,35 +115,109 @@ const sendWebPush = (
 /* ---------------------------------------------------------------------------
  * Storage keys
  * -------------------------------------------------------------------------*/
-const USERS_STORAGE_KEY = 'creatorsOnlyUsers';
-const POSTS_STORAGE_KEY = 'creatorsOnlyPosts';
-const NOTIFICATIONS_STORAGE_KEY = 'creatorsOnlyNotifications';
-const CONVERSATIONS_STORAGE_KEY = 'creatorsOnlyConversations';
-const COLLABORATIONS_STORAGE_KEY = 'creatorsOnlyCollaborations';
-const FEEDBACK_STORAGE_KEY = 'creatorsOnlyFeedback';
-const FRIEND_REQUESTS_STORAGE_KEY = 'creatorsOnlyFriendRequests';
-const AUTH_STORAGE_KEY = 'creatorsOnlyAuth';
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 const HISTORY_STORAGE_KEY = 'creatorsOnlyHistory';
 
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
 const defaultHistory = (): NavigationEntry[] => [{ page: 'feed', context: {} }];
-const createDefaultUsers = () => clone(MOCK_USERS);
-const createDefaultPosts = () => clone(MOCK_POSTS);
-const createDefaultNotifications = () => clone(MOCK_NOTIFICATIONS);
-const createDefaultConversations = () => clone(MOCK_CONVERSATIONS);
-const createDefaultCollaborations = () => clone(MOCK_COLLABORATIONS);
-const createDefaultFeedback = () => clone(MOCK_FEEDBACK);
-const createDefaultFriendRequests = () => clone(MOCK_FRIEND_REQUESTS);
+
+/* ---------------------------------------------------------------------------
+ * Supabase list helper
+ * -------------------------------------------------------------------------*/
+function useSupabaseList<T extends { id?: string }>(
+  table: string,
+  {
+    select = '*',
+    where = {} as Record<string, string | number | boolean | null>,
+    order = { column: 'created_at', ascending: false } as {
+      column?: string;
+      ascending?: boolean;
+    },
+    channelKey,
+  }: {
+    select?: string;
+    where?: Record<string, string | number | boolean | null>;
+    order?: { column?: string; ascending?: boolean };
+    channelKey?: string;
+  } = {},
+) {
+  const [rows, setRows] = React.useState<T[]>([]);
+  const whereString = React.useMemo(() => JSON.stringify(where ?? {}), [where]);
+  const channelRef = React.useRef(channelKey || table);
+
+  const refresh = React.useCallback(async () => {
+    let query = supabase.from(table).select(select);
+    const filters: Record<string, string | number | boolean | null> = JSON.parse(whereString);
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined) {
+        query = query.eq(key, value as any);
+      }
+    }
+    if (order?.column) {
+      query = query.order(order.column, { ascending: !!order.ascending });
+    }
+    const { data, error } = await query;
+    if (!error && Array.isArray(data)) {
+      setRows(data as T[]);
+    } else if (error) {
+      console.warn(`[useSupabaseList] Failed to load ${table}`, error);
+    }
+  }, [table, select, whereString, order?.column, order?.ascending]);
+
+  React.useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  React.useEffect(() => {
+    const channel = supabase
+      .channel(`realtime:${channelRef.current}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+        refresh();
+      });
+
+    channel.subscribe((status) => {
+      if (status === 'CHANNEL_ERROR') {
+        console.error(`[useSupabaseList] Realtime channel error for ${table}`);
+      }
+    });
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch (error) {
+        console.error(`[useSupabaseList] Failed to remove channel for ${table}`, error);
+      }
+    };
+  }, [table, refresh]);
+
+  const upsert = React.useCallback(
+    async (payload: T) => {
+      const { data, error } = await supabase.from(table).upsert(payload).select();
+      if (!error) {
+        refresh();
+      }
+      return { data, error };
+    },
+    [table, refresh],
+  );
+
+  const remove = React.useCallback(
+    async (id: string) => {
+      const { data, error } = await supabase.from(table).delete().eq('id', id).select();
+      if (!error) {
+        refresh();
+      }
+      return { data, error };
+    },
+    [table, refresh],
+  );
+
+  return { rows, setRows, refresh, upsert, remove } as const;
+}
 
 /* ---------------------------------------------------------------------------
  * Context type
  * -------------------------------------------------------------------------*/
 interface AppContextType {
-  // State
   users: User[];
   posts: Post[];
   notifications: Notification[];
@@ -183,7 +241,6 @@ interface AppContextType {
 
   theme: 'light' | 'dark';
 
-  // Actions
   login: (username: string, password: string) => boolean;
   logout: () => void;
 
@@ -218,7 +275,7 @@ interface AppContextType {
   deletePost: (postId: string) => void;
 
   addCollaboration: (
-    collab: Omit<Collaboration, 'id' | 'authorId' | 'timestamp' | 'interestedUserIds'>
+    collab: Omit<Collaboration, 'id' | 'authorId' | 'timestamp' | 'interestedUserIds'>,
   ) => void;
   updateCollaboration: (updatedCollab: Collaboration) => void;
   deleteCollaboration: (collabId: string) => void;
@@ -244,7 +301,6 @@ interface AppContextType {
 
   registerScrollableNode: (node: HTMLDivElement) => void;
 
-  // Real email reset via Supabase (redirects to #/NewPassword)
   sendPasswordResetLink: (email: string) => void;
 
   subscribeToPushNotifications: (subscription: PushSubscriptionObject) => void;
@@ -254,129 +310,153 @@ interface AppContextType {
   refreshData: () => Promise<void>;
 }
 
-/* ---------------------------------------------------------------------------
- * Context
- * -------------------------------------------------------------------------*/
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 /* ---------------------------------------------------------------------------
  * Provider
  * -------------------------------------------------------------------------*/
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  function useAppStateStorage<T>(
+  function useLocalStorage<T>(
     key: string,
-    initialValueFactory: () => T,
-  ): [T, (value: T | ((val: T) => T)) => void, boolean, () => Promise<void>] {
-    const [currentKey, setCurrentKey] = useState(key);
-    const [state, setState] = useState<T>(() => initialValueFactory());
-    const [loaded, setLoaded] = useState(false);
-
-    useEffect(() => {
-      if (key !== currentKey) {
-        setCurrentKey(key);
-        setState(initialValueFactory());
-        setLoaded(false);
-      }
-    }, [key, currentKey, initialValueFactory]);
-
-    useEffect(() => {
-      let isMounted = true;
-
-      (async () => {
-        try {
-          const remote = await fetchAppState<T>(currentKey);
-          if (!isMounted) return;
-          if (remote !== null) {
-            setState(remote);
-          } else {
-            const fallback = initialValueFactory();
-            setState(fallback);
-            await upsertAppState(currentKey, fallback);
-          }
-        } catch (error) {
-          console.error(`[AppState] Hydration failed for key ${currentKey}`, error);
-        } finally {
-          if (isMounted) setLoaded(true);
-        }
-      })();
-
-      return () => {
-        isMounted = false;
-      };
-    }, [currentKey, initialValueFactory]);
-
-    const persist = useCallback(
-      (value: T | ((val: T) => T)) => {
-        setState((prev) => {
-          const next = value instanceof Function ? value(prev) : value;
-          upsertAppState(currentKey, next).catch((error) => {
-            console.error(`[AppState] Persist failed for key ${currentKey}`, error);
-          });
-          return next;
-        });
-      },
-      [currentKey],
-    );
-
-    const reload = useCallback(async () => {
+    initialValue: T,
+  ): [T, (value: T | ((val: T) => T)) => void] {
+    const [storedValue, setStoredValue] = useState<T>(() => {
       try {
-        const remote = await fetchAppState<T>(currentKey);
-        if (remote !== null) {
-          setState(remote);
-        }
-      } catch (error) {
-        console.error(`[AppState] Reload failed for key ${currentKey}`, error);
+        const item = window.localStorage.getItem(key);
+        return item ? JSON.parse(item) : initialValue;
+      } catch {
+        return initialValue;
       }
-    }, [currentKey]);
-
-    return [state, persist, loaded, reload];
+    });
+    const setValue = (value: T | ((val: T) => T)) => {
+      try {
+        const valueToStore = value instanceof Function ? value(storedValue) : value;
+        setStoredValue(valueToStore);
+        window.localStorage.setItem(key, JSON.stringify(valueToStore));
+      } catch {}
+    };
+    return [storedValue, setValue];
   }
 
-  // --- State ---------------------------------------------------------------
-  const [users, setUsers, , reloadUsers] = useAppStateStorage<User[]>(
-    USERS_STORAGE_KEY,
-    createDefaultUsers,
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user) {
+        setCurrentUserId(data.user.id);
+      }
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      const recovering = isRecoveryActive();
+      if (session?.user) {
+        setCurrentUserId(session.user.id);
+        if (recovering && !/#\/NewPassword/i.test(window.location.hash)) {
+          window.location.hash = '#/NewPassword';
+        } else {
+          setHistory([{ page: 'feed', context: {} }]);
+        }
+        trackEvent('login_success', { userId: session.user.id, via: 'supabase' });
+      } else {
+        setCurrentUserId(null);
+        setHistory([{ page: 'feed', context: {} }]);
+        setRecoveryFlag(false);
+        trackEvent('logout', { via: 'supabase' });
+      }
+    });
+    return () => {
+      sub.subscription.unsubscribe();
+    };
+  }, []);
+
+  const notificationWhere = useMemo(
+    () => (currentUserId ? { userId: currentUserId } : {}),
+    [currentUserId],
   );
-  const [posts, setPosts, , reloadPosts] = useAppStateStorage<Post[]>(
-    POSTS_STORAGE_KEY,
-    createDefaultPosts,
+  const feedbackWhere = useMemo(
+    () => (currentUserId ? { userId: currentUserId } : {}),
+    [currentUserId],
   );
-  const [notifications, setNotifications, , reloadNotifications] = useAppStateStorage<Notification[]>(
-    NOTIFICATIONS_STORAGE_KEY,
-    createDefaultNotifications,
-  );
-  const [conversations, setConversations, , reloadConversations] = useAppStateStorage<Conversation[]>(
-    CONVERSATIONS_STORAGE_KEY,
-    createDefaultConversations,
-  );
-  const [collaborations, setCollaborations, , reloadCollaborations] = useAppStateStorage<Collaboration[]>(
-    COLLABORATIONS_STORAGE_KEY,
-    createDefaultCollaborations,
-  );
-  const [feedback, setFeedback, , reloadFeedback] = useAppStateStorage<Feedback[]>(
-    FEEDBACK_STORAGE_KEY,
-    createDefaultFeedback,
-  );
-  const [friendRequests, setFriendRequests, , reloadFriendRequests] = useAppStateStorage<FriendRequest[]>(
-    FRIEND_REQUESTS_STORAGE_KEY,
-    createDefaultFriendRequests,
+  const friendRequestWhere = useMemo(
+    () =>
+      currentUserId
+        ? { toUserId: currentUserId }
+        : {},
+    [currentUserId],
   );
 
-  const [authData, setAuthData, , reloadAuth] = useAppStateStorage<{ userId: string | null }>(
-    AUTH_STORAGE_KEY,
-    () => ({ userId: null }),
-  );
+  const {
+    rows: users,
+    setRows: setUsers,
+    refresh: refreshUsers,
+    upsert: upsertUser,
+  } = useSupabaseList<User>('users');
 
-  const [pushSubscriptions, setPushSubscriptions, , reloadPushSubscriptions] =
-    useAppStateStorage<Record<string, PushSubscriptionObject>>(
-      PUSH_SUBSCRIPTIONS_STORAGE_KEY,
-      () => ({}),
-    );
+  const {
+    rows: posts,
+    setRows: setPosts,
+    refresh: refreshPosts,
+    upsert: upsertPost,
+    remove: removePost,
+  } = useSupabaseList<Post>('posts', {
+    order: { column: 'timestamp', ascending: false },
+  });
 
-  const [theme, setThemeState, , reloadTheme] = useAppStateStorage<'light' | 'dark'>(
-    THEME_STORAGE_KEY,
-    () => 'dark',
-  );
+  const {
+    rows: notifications,
+    setRows: setNotifications,
+    refresh: refreshNotifications,
+    upsert: upsertNotification,
+  } = useSupabaseList<Notification>('notifications', {
+    where: notificationWhere,
+    channelKey: currentUserId ? `notifications:${currentUserId}` : 'notifications',
+  });
+
+  const {
+    rows: conversations,
+    setRows: setConversations,
+    refresh: refreshConversations,
+    upsert: upsertConversation,
+  } = useSupabaseList<Conversation>('conversations', {
+    channelKey: currentUserId ? `conversations:${currentUserId}` : 'conversations',
+  });
+
+  const {
+    rows: collaborations,
+    setRows: setCollaborations,
+    refresh: refreshCollaborations,
+    upsert: upsertCollaboration,
+    remove: removeCollaboration,
+  } = useSupabaseList<Collaboration>('collaborations', {
+    channelKey: currentUserId ? `collaborations:${currentUserId}` : 'collaborations',
+  });
+
+  const {
+    rows: feedback,
+    setRows: setFeedback,
+    refresh: refreshFeedback,
+    upsert: upsertFeedback,
+  } = useSupabaseList<Feedback>('feedback', {
+    where: feedbackWhere,
+    channelKey: currentUserId ? `feedback:${currentUserId}` : 'feedback',
+  });
+
+  const {
+    rows: friendRequests,
+    setRows: setFriendRequests,
+    refresh: refreshFriendRequests,
+    upsert: upsertFriendRequest,
+    remove: removeFriendRequest,
+  } = useSupabaseList<FriendRequest>('friend_requests', {
+    where: friendRequestWhere,
+    channelKey: currentUserId ? `friend_requests:${currentUserId}` : 'friend_requests',
+  });
+
+  const authData = { userId: currentUserId };
+  const setAuthData = (next: { userId: string | null }) => setCurrentUserId(next.userId);
+
+  const [pushSubscriptions, setPushSubscriptions] =
+    useLocalStorage<Record<string, PushSubscriptionObject>>(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
+  const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(THEME_STORAGE_KEY, 'dark');
 
   const [isRegistering, setIsRegistering] = useState(false);
 
@@ -384,10 +464,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     () => `${HISTORY_STORAGE_KEY}:${authData.userId ?? 'guest'}`,
     [authData.userId],
   );
-  const [history, setHistory, , reloadHistory] = useAppStateStorage<NavigationEntry[]>(
-    historyKey,
-    defaultHistory,
-  );
+  const [history, setHistory] = useLocalStorage<NavigationEntry[]>(historyKey, defaultHistory());
 
   const [selectedConversationId, setSelectedConversationId] =
     useState<string | null>(null);
@@ -397,261 +474,37 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
 
-  // --- Derived -------------------------------------------------------------
   const currentUser = users.find((u) => u.id === authData.userId) || null;
   const isAuthenticated = !!currentUser;
   const isMasterUser = currentUser?.id === MASTER_USER_ID;
 
   const currentEntry = history[history.length - 1] || { page: 'feed', context: {} };
   const currentPage = currentEntry.page;
-  const viewingProfileId =
-    (currentEntry.context as PageContext).viewingProfileId ?? null;
+  const viewingProfileId = (currentEntry.context as PageContext).viewingProfileId ?? null;
   const viewingCollaborationId =
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
-  // --- Supabase → AppContext **BRIDGE** -----------------------------------
-useEffect(() => {
-    let cancelled = false;
-
-    const ensureSupabaseUserRecord = async (sessionUser: any) => {
-      const supabaseUserId = sessionUser?.id;
-      if (!supabaseUserId || cancelled) return;
-
-      let profile: {
-        username?: string | null;
-        display_name?: string | null;
-        bio?: string | null;
-        avatar_url?: string | null;
-      } | null = null;
-
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('username, display_name, bio, avatar_url')
-          .eq('id', supabaseUserId)
-          .maybeSingle();
-
-        if (error) throw error;
-        profile = (data as typeof profile) ?? null;
-      } catch (error) {
-        console.warn('[AuthBridge] Failed to load Supabase profile', error);
-      }
-
-      if (cancelled) return;
-
-      const metadata = sessionUser?.user_metadata ?? {};
-      const fallbackUsername =
-        profile?.username?.trim() ||
-        (typeof metadata.preferred_username === 'string'
-          ? metadata.preferred_username.trim()
-          : '') ||
-        (sessionUser?.email ? sessionUser.email.split('@')[0] : '') ||
-        `user-${supabaseUserId.slice(0, 8)}`;
-
-      const displayName =
-        profile?.display_name?.trim() ||
-        (typeof metadata.full_name === 'string' ? metadata.full_name.trim() : '') ||
-        (typeof metadata.name === 'string' ? metadata.name.trim() : '') ||
-        fallbackUsername;
-
-      const resolvedAvatar =
-        profile?.avatar_url ||
-        (typeof metadata.avatar_url === 'string' ? metadata.avatar_url : undefined) ||
-        `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(displayName || fallbackUsername)}`;
-
-      const resolvedBanner = `https://picsum.photos/seed/${supabaseUserId.slice(0, 8)}-banner/1000/300`;
-
-      setUsers((prev) => {
-        const existing = prev.find((u) => u.id === supabaseUserId);
-        if (existing) {
-          const updatedUser = {
-            ...existing,
-            name: displayName || existing.name || fallbackUsername,
-            username: fallbackUsername || existing.username,
-            email: sessionUser?.email ?? existing.email,
-            bio: typeof profile?.bio === 'string' ? profile.bio : existing.bio ?? '',
-            avatar: resolvedAvatar ?? existing.avatar,
-          };
-          return prev.map((u) => (u.id === supabaseUserId ? updatedUser : u));
-        }
-
-        const newUser: User = {
-          id: supabaseUserId,
-          name: displayName || fallbackUsername,
-          username: fallbackUsername,
-          avatar: resolvedAvatar,
-          banner: resolvedBanner,
-          bio: typeof profile?.bio === 'string' ? profile.bio : '',
-          email: sessionUser?.email ?? undefined,
-          isVerified: false,
-          friendIds: [],
-          platformLinks: [],
-          blockedUserIds: [],
-        };
-
-        return [...prev, newUser];
-      });
-    };
-
-    const handleSignedInUser = async (sessionUser: any, recovering: boolean) => {
-      if (!sessionUser || cancelled) return;
-      const supabaseUserId = sessionUser.id;
-
-      setAuthData((prev) => (prev.userId === supabaseUserId ? prev : { userId: supabaseUserId }));
-      if (recovering) {
-        if (!/#\/NewPassword/i.test(window.location.hash)) {
-          window.location.hash = '#/NewPassword';
-        }
-      } else {
-        setHistory([{ page: 'feed', context: {} }]);
-      }
-
-      try {
-        await reloadUsers();
-      } catch (error) {
-        console.warn('[AuthBridge] Failed to reload users', error);
-      }
-
-      if (cancelled) return;
-      await ensureSupabaseUserRecord(sessionUser);
-
-      if (!cancelled) {
-        trackEvent('login_success', { userId: supabaseUserId, via: 'supabase' });
-      }
-    };
-
-    (async () => {
-      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
-
-      const { data } = await supabase.auth.getSession();
-      const sessionUser = data.session?.user;
-      const recovering = isRecoveryActive();
-
-      if (sessionUser) {
-        await handleSignedInUser(sessionUser, recovering);
-      } else {
-        setAuthData((prev) => (prev.userId === null ? prev : { userId: null }));
-        setHistory([{ page: 'feed', context: {} }]);
-      }
-    })();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-      const recoveringNow = isRecoveryActive();
-
-      if (session?.user) {
-        handleSignedInUser(session.user, recoveringNow);
-      } else {
-        setAuthData((prev) => (prev.userId === null ? prev : { userId: null }));
-        setHistory([{ page: 'feed', context: {} }]);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      sub.subscription.unsubscribe();
-    };
-  }, [reloadUsers, setAuthData, setHistory, setUsers]);
-
-  // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
     await Promise.all([
-      reloadUsers(),
-      reloadPosts(),
-      reloadNotifications(),
-      reloadConversations(),
-      reloadCollaborations(),
-      reloadFeedback(),
-      reloadFriendRequests(),
-      reloadAuth(),
-      reloadPushSubscriptions(),
-      reloadTheme(),
-      reloadHistory(),
+      refreshUsers(),
+      refreshPosts(),
+      refreshNotifications(),
+      refreshConversations(),
+      refreshCollaborations(),
+      refreshFeedback(),
+      refreshFriendRequests(),
     ]);
     trackEvent('data_refreshed');
   }, [
-    reloadAuth,
-    reloadCollaborations,
-    reloadConversations,
-    reloadFeedback,
-    reloadFriendRequests,
-    reloadHistory,
-    reloadNotifications,
-    reloadPosts,
-    reloadPushSubscriptions,
-    reloadTheme,
-    reloadUsers,
+    refreshUsers,
+    refreshPosts,
+    refreshNotifications,
+    refreshConversations,
+    refreshCollaborations,
+    refreshFeedback,
+    refreshFriendRequests,
   ]);
 
-  // Stay in sync with Supabase updates from other devices/tabs.
-  useEffect(() => {
-    const historyKeyForUser = `${HISTORY_STORAGE_KEY}:${authData.userId ?? 'guest'}`;
-
-    const keyReloadMap: Record<string, () => Promise<void>> = {
-      [USERS_STORAGE_KEY]: reloadUsers,
-      [POSTS_STORAGE_KEY]: reloadPosts,
-      [NOTIFICATIONS_STORAGE_KEY]: reloadNotifications,
-      [CONVERSATIONS_STORAGE_KEY]: reloadConversations,
-      [COLLABORATIONS_STORAGE_KEY]: reloadCollaborations,
-      [FEEDBACK_STORAGE_KEY]: reloadFeedback,
-      [FRIEND_REQUESTS_STORAGE_KEY]: reloadFriendRequests,
-      [AUTH_STORAGE_KEY]: reloadAuth,
-      [PUSH_SUBSCRIPTIONS_STORAGE_KEY]: reloadPushSubscriptions,
-      [THEME_STORAGE_KEY]: reloadTheme,
-      [historyKeyForUser]: reloadHistory,
-    };
-
-    const channelName = `app_state_sync_${authData.userId ?? 'guest'}`;
-    const channel = supabase.channel(channelName);
-
-    channel.on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table: 'app_state',
-      },
-      (payload: any) => {
-        const changedKey = (payload?.new?.key ?? payload?.old?.key) as string | undefined;
-        if (!changedKey) return;
-
-        const reload = keyReloadMap[changedKey];
-        if (reload) {
-          reload().catch((error) =>
-            console.error(`[AppState] Realtime reload failed for key ${changedKey}`, error),
-          );
-        }
-      },
-    );
-
-    channel.subscribe((status) => {
-      if (status === 'CHANNEL_ERROR') {
-        console.error('[AppState] Realtime channel error');
-      }
-    });
-
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch (error) {
-        console.error('[AppState] Failed to remove realtime channel', error);
-      }
-    };
-  }, [
-    authData.userId,
-    reloadAuth,
-    reloadCollaborations,
-    reloadConversations,
-    reloadFeedback,
-    reloadFriendRequests,
-    reloadHistory,
-    reloadNotifications,
-    reloadPosts,
-    reloadPushSubscriptions,
-    reloadTheme,
-    reloadUsers,
-  ]);
-
-  // --- Theme ---------------------------------------------------------------
   useEffect(() => {
     if (theme === 'light') document.documentElement.classList.remove('dark');
     else document.documentElement.classList.add('dark');
@@ -665,85 +518,77 @@ useEffect(() => {
     [setThemeState],
   );
 
-  // --- Scrolling container -------------------------------------------------
   const registerScrollableNode = useCallback((node: HTMLDivElement) => {
     scrollableNodeRef.current = node;
   }, []);
 
-  // --- Navigation ----------------------------------------------------------
   const navigate = useCallback(
     (page: Page, context: PageContext = {}) => {
       const last = history[history.length - 1];
-      if (scrollableNodeRef.current) {
+      if (scrollableNodeRef.current && last) {
         last.scrollTop = scrollableNodeRef.current.scrollTop;
       }
-      if (
-        last.page === page &&
-        JSON.stringify(last.context) === JSON.stringify(context)
-      ) {
+      if (last && last.page === page && JSON.stringify(last.context) === JSON.stringify(context)) {
         return;
       }
       setHistory((prev) => [...prev, { page, context, scrollTop: 0 }]);
       if (scrollableNodeRef.current) scrollableNodeRef.current.scrollTop = 0;
     },
-    [history],
+    [history, setHistory],
   );
 
-  const updateCurrentContext = useCallback((newContext: Partial<PageContext>) => {
-    setHistory((prev) => {
-      const next = [...prev];
-      const last = next[next.length - 1];
-      if (last) {
-        next[next.length - 1] = {
-          ...last,
-          context: { ...(last.context || {}), ...newContext },
-        };
-      }
-      return next;
-    });
-  }, []);
+  const updateCurrentContext = useCallback(
+    (newContext: Partial<PageContext>) => {
+      setHistory((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last) {
+          next[next.length - 1] = {
+            ...last,
+            context: { ...(last.context || {}), ...newContext },
+          };
+        }
+        return next;
+      });
+    },
+    [setHistory],
+  );
 
   const goBack = useCallback(() => {
     if (history.length > 1) setHistory((p) => p.slice(0, -1));
-  }, [history.length]);
+  }, [history.length, setHistory]);
 
   const viewProfile = (userId: string) => navigate('profile', { viewingProfileId: userId });
 
-  // --- Demo login (username)  ---------------------------------------------
-  const login = (username: string, _password: string) => {
-    const user = users.find(
-      (u) => u.username.toLowerCase() === username.toLowerCase(),
-    );
-    if (user) {
-      setAuthData({ userId: user.id });
-      setIsRegistering(false);
-      setHistory([{ page: 'feed', context: {} }]);
-      trackEvent('login_success', { userId: user.id, via: 'demo' });
-      return true;
-    }
-    trackEvent('login_failed', { username });
-    return false;
-  };
+  const login = useCallback(
+    (username: string, _password: string) => {
+      const user = users.find((u) => u.username?.toLowerCase() === username.toLowerCase());
+      if (user) {
+        setAuthData({ userId: user.id });
+        setIsRegistering(false);
+        setHistory([{ page: 'feed', context: {} }]);
+        trackEvent('login_success', { userId: user.id, via: 'demo' });
+        return true;
+      }
+      trackEvent('login_failed', { username });
+      return false;
+    },
+    [users, setAuthData, setHistory],
+  );
 
-  // Also sign out from Supabase so refresh doesn't auto-login
-  const logout = () => {
+  const logout = useCallback(() => {
     try {
-      supabase.auth.signOut().catch((e) =>
-        console.warn('[logout] supabase signOut error:', e),
-      );
+      supabase.auth.signOut().catch((error) => console.warn('[logout] supabase signOut error', error));
     } finally {
       setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
-      // Leaving the app → clear any lingering recovery guard
       setRecoveryFlag(false);
       trackEvent('logout', { userId: currentUser?.id, via: 'app_context' });
     }
-  };
+  }, [setAuthData, setHistory, currentUser]);
 
-  // --- Password reset (real; Supabase) ------------------------------------
-  const sendPasswordResetLink = (email: string) => {
-    const base =
-      typeof window !== 'undefined' ? window.location.origin : 'https://creatorzonly.com';
+  const sendPasswordResetLink = useCallback((email: string) => {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'https://creatorzonly.com';
     const redirectTo = `${base}/#/NewPassword`;
     supabase.auth
       .resetPasswordForEmail(email, { redirectTo })
@@ -755,9 +600,8 @@ useEffect(() => {
           trackEvent('password_reset_requested', { email, redirectTo });
         }
       });
-  };
+  }, []);
 
-  // --- Registration (mock) ------------------------------------------------
   const startRegistration = () => setIsRegistering(true);
   const cancelRegistration = () => setIsRegistering(false);
 
@@ -775,17 +619,15 @@ useEffect(() => {
       > & { password?: string },
     ) => {
       if (
-        users.some(
-          (u) => u.username.toLowerCase() === data.username.toLowerCase(),
-        )
+        users.some((u) => u.username?.toLowerCase() === data.username.toLowerCase())
       ) {
         trackEvent('registration_failed', { reason: 'username_taken' });
         return false;
       }
 
-      const newIdNumber = users.length + 100;
+      const newId = crypto.randomUUID ? crypto.randomUUID() : `u${Date.now()}`;
       const newUser: User = {
-        id: `u${users.length + 1}`,
+        id: newId,
         username: data.username,
         name: data.name,
         email: data.email,
@@ -794,102 +636,57 @@ useEffect(() => {
         state: data.state,
         county: data.county,
         customLink: data.customLink || '',
-        avatar: `https://picsum.photos/seed/${newIdNumber}a/200/200`,
-        banner: `https://picsum.photos/seed/${newIdNumber}b/1000/300`,
+        avatar: `https://picsum.photos/seed/${newId}-avatar/200/200`,
+        banner: `https://picsum.photos/seed/${newId}-banner/1000/300`,
         isVerified: false,
         friendIds: [],
         platformLinks: [],
         blockedUserIds: [],
       };
 
-      setUsers((p) => [...p, newUser]);
+      setUsers((prev) => [...prev, newUser]);
+      upsertUser(newUser);
       setAuthData({ userId: newUser.id });
       setIsRegistering(false);
       setHistory([{ page: 'feed', context: {} }]);
       trackEvent('registration_success', { userId: newUser.id });
       return true;
     },
-    [users, setUsers, setAuthData],
+    [users, setUsers, upsertUser, setAuthData, setHistory],
   );
 
   const updateUserProfile = useCallback(
-    async (patch: Partial<User> & Record<string, any>) => {
-      // 1) Immediate UI update (local users array)
-      if (currentUser) {
-        setUsers((prev) =>
-          prev.map((u) => (u.id === currentUser.id ? { ...u, ...patch } : u)),
-        );
-      }
-
-      // 2) Persist to DB (if signed in)
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        console.warn('[profile] getSession error', error);
-        return;
-      }
-      const dbUserId = data?.session?.user?.id;
-      if (!dbUserId) return; // not logged in (e.g., guest)
-
-      // Map any UI fields to DB columns; ignore unknowns
-      const dbPatch: Record<string, any> = {};
-      if (typeof patch.username !== 'undefined') {
-        const value =
-          typeof patch.username === 'string' ? patch.username.trim() : patch.username;
-        dbPatch.username = value ? value : null;
-      }
-
-      if (typeof patch.display_name !== 'undefined') {
-        const value =
-          typeof patch.display_name === 'string' ? patch.display_name.trim() : patch.display_name;
-        dbPatch.display_name = value ? value : null;
-      }
-
-      if (typeof patch.name !== 'undefined' && typeof dbPatch.display_name === 'undefined') {
-        const value = typeof patch.name === 'string' ? patch.name.trim() : patch.name;
-        dbPatch.display_name = value ? value : null;
-      }
-
-      if (typeof patch.bio !== 'undefined') {
-        const value =
-          typeof patch.bio === 'string' ? patch.bio.slice(0, 150) : patch.bio;
-        dbPatch.bio = value ?? null;
-      }
-
-      if (typeof patch.avatar_url !== 'undefined') {
-        dbPatch.avatar_url = patch.avatar_url ?? null;
-      }
-
-      if (typeof patch.avatar !== 'undefined' && typeof dbPatch.avatar_url === 'undefined') {
-        dbPatch.avatar_url = patch.avatar ?? null;
-      }
-        dbPatch.avatar_url = patch.avatar ?? null;
-
-      try {
-        await upsertMyProfile(dbUserId, dbPatch); // writes to public.profiles
-      } catch (e) {
-        console.error('[profile] upsert failed', e);
-      }
-
-      trackEvent('profile_updated', { userId: dbUserId });
+    (patch: Partial<User> & Record<string, any>) => {
+      if (!currentUser) return;
+      setUsers((prev) =>
+        prev.map((user) => (user.id === currentUser.id ? { ...user, ...patch } : user)),
+      );
+      const updatedUser = { ...currentUser, ...patch } as User;
+      upsertUser(updatedUser);
+      trackEvent('profile_updated', { userId: currentUser.id });
     },
-    [currentUser, setUsers],
+    [currentUser, setUsers, upsertUser],
   );
 
-  // --- Social --------------------------------------------------------------
   const getUserById = useCallback(
     (id: string) => users.find((u) => u.id === id),
     [users],
   );
 
-  const getFriendRequest = (userId1: string, userId2: string) =>
-    friendRequests.find(
-      (fr) =>
-        (fr.fromUserId === userId1 && fr.toUserId === userId2) ||
-        (fr.fromUserId === userId2 && fr.toUserId === userId1),
-    );
+  const getFriendRequest = useCallback(
+    (userId1: string, userId2: string) =>
+      friendRequests.find(
+        (fr) =>
+          (fr.fromUserId === userId1 && fr.toUserId === userId2) ||
+          (fr.fromUserId === userId2 && fr.toUserId === userId1),
+      ),
+    [friendRequests],
+  );
 
-  const getFriendRequestById = (id: string) =>
-    friendRequests.find((fr) => fr.id === id);
+  const getFriendRequestById = useCallback(
+    (id: string) => friendRequests.find((fr) => fr.id === id),
+    [friendRequests],
+  );
 
   const sendFriendRequest = useCallback(
     (toUserId: string) => {
@@ -900,16 +697,17 @@ useEffect(() => {
       if (existing) return;
 
       const newRequest: FriendRequest = {
-        id: `fr${friendRequests.length + 1}`,
+        id: crypto.randomUUID ? crypto.randomUUID() : `fr${Date.now()}`,
         fromUserId,
         toUserId,
         status: FriendRequestStatus.PENDING,
         timestamp: new Date().toISOString(),
       };
-      setFriendRequests((p) => [...p, newRequest]);
+      setFriendRequests((prev) => [...prev, newRequest]);
+      upsertFriendRequest(newRequest);
 
       const notification: Notification = {
-        id: `n${notifications.length + 1}`,
+        id: crypto.randomUUID ? crypto.randomUUID() : `n${Date.now()}`,
         userId: toUserId,
         actorId: fromUserId,
         type: NotificationType.FRIEND_REQUEST,
@@ -919,7 +717,8 @@ useEffect(() => {
         isRead: false,
         timestamp: new Date().toISOString(),
       };
-      setNotifications((p) => [...p, notification]);
+      setNotifications((prev) => [...prev, notification]);
+      upsertNotification(notification);
       emitSocketEvent(toUserId, 'notification:new', notification);
       sendWebPush(
         pushSubscriptions,
@@ -932,11 +731,11 @@ useEffect(() => {
     },
     [
       currentUser,
-      friendRequests,
-      setFriendRequests,
-      notifications,
-      setNotifications,
       getFriendRequest,
+      setFriendRequests,
+      upsertFriendRequest,
+      setNotifications,
+      upsertNotification,
       pushSubscriptions,
     ],
   );
@@ -944,22 +743,22 @@ useEffect(() => {
   const cancelFriendRequest = useCallback(
     (toUserId: string) => {
       if (!currentUser) return;
-      setFriendRequests((p) =>
-        p.filter(
-          (fr) =>
-            !(
-              fr.fromUserId === currentUser.id &&
-              fr.toUserId === toUserId &&
-              fr.status === FriendRequestStatus.PENDING
-            ),
-        ),
+      const pending = friendRequests.find(
+        (fr) =>
+          fr.fromUserId === currentUser.id &&
+          fr.toUserId === toUserId &&
+          fr.status === FriendRequestStatus.PENDING,
       );
+      if (!pending) return;
+
+      setFriendRequests((prev) => prev.filter((fr) => fr.id !== pending.id));
+      removeFriendRequest(pending.id);
       trackEvent('friend_request_cancelled', {
         from: currentUser.id,
         to: toUserId,
       });
     },
-    [currentUser, setFriendRequests],
+    [currentUser, friendRequests, setFriendRequests, removeFriendRequest],
   );
 
   const acceptFriendRequest = useCallback(
@@ -967,48 +766,59 @@ useEffect(() => {
       const request = friendRequests.find((fr) => fr.id === requestId);
       if (!request || !currentUser || request.toUserId !== currentUser.id) return;
 
-      // Update request status
       setFriendRequests((prev) =>
         prev.map((fr) =>
           fr.id === requestId ? { ...fr, status: FriendRequestStatus.ACCEPTED } : fr,
         ),
       );
+      upsertFriendRequest({ ...request, status: FriendRequestStatus.ACCEPTED });
 
-      // Connect both users
       setUsers((prev) =>
         prev.map((user) => {
           if (user.id === request.fromUserId)
-            return { ...user, friendIds: [...user.friendIds, request.toUserId] };
+            return { ...user, friendIds: [...new Set([...user.friendIds, request.toUserId])] };
           if (user.id === request.toUserId)
-            return { ...user, friendIds: [...user.friendIds, request.fromUserId] };
+            return { ...user, friendIds: [...new Set([...user.friendIds, request.fromUserId])] };
           return user;
         }),
       );
-
-      // Notify requester
       const fromUser = getUserById(request.fromUserId);
-      if (fromUser) {
-        const notification: Notification = {
-          id: `n${notifications.length + 1}`,
-          userId: request.fromUserId,
-          actorId: request.toUserId,
-          type: NotificationType.FRIEND_REQUEST_ACCEPTED,
-          entityType: 'user',
-          entityId: request.toUserId,
-          message: `${currentUser.name} accepted your friend request.`,
-          isRead: false,
-          timestamp: new Date().toISOString(),
-        };
-        setNotifications((p) => [...p, notification]);
-        emitSocketEvent(request.fromUserId, 'notification:new', notification);
-        sendWebPush(
-          pushSubscriptions,
-          request.fromUserId,
-          'Friend Request Accepted',
-          notification.message,
-          `/profile/${currentUser.username}`,
-        );
-      }
+      const updatedFromUser = fromUser
+        ? {
+            ...fromUser,
+            friendIds: [...new Set([...fromUser.friendIds, request.toUserId])],
+          }
+        : undefined;
+      if (updatedFromUser) upsertUser(updatedFromUser);
+      const updatedToUser = currentUser
+        ? {
+            ...currentUser,
+            friendIds: [...new Set([...currentUser.friendIds, request.fromUserId])],
+          }
+        : undefined;
+      if (updatedToUser) upsertUser(updatedToUser);
+
+      const notification: Notification = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `n${Date.now()}`,
+        userId: request.fromUserId,
+        actorId: request.toUserId,
+        type: NotificationType.FRIEND_REQUEST_ACCEPTED,
+        entityType: 'user',
+        entityId: request.toUserId,
+        message: `${currentUser.name} accepted your friend request.`,
+        isRead: false,
+        timestamp: new Date().toISOString(),
+      };
+      setNotifications((prev) => [...prev, notification]);
+      upsertNotification(notification);
+      emitSocketEvent(request.fromUserId, 'notification:new', notification);
+      sendWebPush(
+        pushSubscriptions,
+        request.fromUserId,
+        'Friend Request Accepted',
+        notification.message,
+        `/profile/${currentUser.username}`,
+      );
 
       trackEvent('friend_request_accepted', {
         acceptedBy: request.toUserId,
@@ -1017,32 +827,34 @@ useEffect(() => {
     },
     [
       friendRequests,
-      setFriendRequests,
-      setUsers,
       currentUser,
-      notifications,
-      setNotifications,
+      setFriendRequests,
+      upsertFriendRequest,
+      setUsers,
       getUserById,
+      upsertUser,
+      setNotifications,
+      upsertNotification,
       pushSubscriptions,
     ],
   );
 
   const declineFriendRequest = useCallback(
     (requestId: string) => {
+      const request = friendRequests.find((fr) => fr.id === requestId);
+      if (!request) return;
       setFriendRequests((prev) =>
         prev.map((fr) =>
           fr.id === requestId ? { ...fr, status: FriendRequestStatus.DECLINED } : fr,
         ),
       );
-      const request = friendRequests.find((fr) => fr.id === requestId);
-      if (request) {
-        trackEvent('friend_request_declined', {
-          declinedBy: request.toUserId,
-          requestedBy: request.fromUserId,
-        });
-      }
+      upsertFriendRequest({ ...request, status: FriendRequestStatus.DECLINED });
+      trackEvent('friend_request_declined', {
+        declinedBy: request.toUserId,
+        requestedBy: request.fromUserId,
+      });
     },
-    [setFriendRequests, friendRequests],
+    [friendRequests, setFriendRequests, upsertFriendRequest],
   );
 
   const removeFriend = useCallback(
@@ -1068,7 +880,19 @@ useEffect(() => {
         }),
       );
 
-      // Also strip any requests
+      const updatedCurrentUser = {
+        ...currentUser,
+        friendIds: currentUser.friendIds.filter((id) => id !== friendId),
+      };
+      upsertUser(updatedCurrentUser);
+      const friendUser = getUserById(friendId);
+      if (friendUser) {
+        upsertUser({
+          ...friendUser,
+          friendIds: friendUser.friendIds.filter((id) => id !== currentUserId),
+        });
+      }
+
       setFriendRequests((prev) =>
         prev.filter(
           (fr) =>
@@ -1081,7 +905,7 @@ useEffect(() => {
 
       trackEvent('friend_removed', { remover: currentUserId, removed: friendId });
     },
-    [currentUser, setUsers, setFriendRequests],
+    [currentUser, setUsers, upsertUser, getUserById, setFriendRequests],
   );
 
   const toggleBlockUser = useCallback(
@@ -1090,18 +914,16 @@ useEffect(() => {
       const currentUserId = currentUser.id;
       const isBlocked = currentUser.blockedUserIds?.includes(userIdToBlock);
 
-      setUsers((prev) =>
-        prev.map((u) => {
-          if (u.id === currentUserId) {
-            const blocked = u.blockedUserIds || [];
-            const nextBlocked = isBlocked
-              ? blocked.filter((id) => id !== userIdToBlock)
-              : [...blocked, userIdToBlock];
-            return { ...u, blockedUserIds: nextBlocked };
-          }
-          return u;
-        }),
-      );
+      const updatedBlocked = isBlocked
+        ? (currentUser.blockedUserIds || []).filter((id) => id !== userIdToBlock)
+        : [...new Set([...(currentUser.blockedUserIds || []), userIdToBlock])];
+
+      const patchedUser: User = {
+        ...currentUser,
+        blockedUserIds: updatedBlocked,
+      };
+      setUsers((prev) => prev.map((u) => (u.id === currentUserId ? patchedUser : u)));
+      upsertUser(patchedUser);
 
       if (!isBlocked) removeFriend(userIdToBlock);
 
@@ -1110,39 +932,38 @@ useEffect(() => {
         blocked: userIdToBlock,
       });
     },
-    [currentUser, setUsers, removeFriend],
+    [currentUser, setUsers, upsertUser, removeFriend],
   );
 
-  // --- Posts ---------------------------------------------------------------
   const addPost = useCallback(
     (content: string, image?: string) => {
       if (!currentUser) return;
-      const postId = posts.length + 100;
       const newPost: Post = {
-        id: `p${posts.length + 1}`,
+        id: crypto.randomUUID ? crypto.randomUUID() : `p${Date.now()}`,
         authorId: currentUser.id,
         content,
-        image: image || `https://picsum.photos/seed/${postId}p/800/600`,
+        image,
         timestamp: new Date().toISOString(),
         likes: 0,
         comments: 0,
         tags: [],
       };
       setPosts((prev) => [newPost, ...prev]);
+      upsertPost(newPost);
       trackEvent('post_created', { userId: currentUser.id, postId: newPost.id });
     },
-    [currentUser, posts, setPosts],
+    [currentUser, setPosts, upsertPost],
   );
 
   const deletePost = useCallback(
     (postId: string) => {
       setPosts((prev) => prev.filter((p) => p.id !== postId));
+      removePost(postId);
       trackEvent('post_deleted', { userId: currentUser?.id, postId });
     },
-    [setPosts, currentUser],
+    [setPosts, removePost, currentUser?.id],
   );
 
-  // --- Collaborations ------------------------------------------------------
   const addCollaboration = useCallback(
     (
       collabData: Omit<
@@ -1152,40 +973,43 @@ useEffect(() => {
     ) => {
       if (!currentUser) return;
       const newCollab: Collaboration = {
-        id: `collab${collaborations.length + 1}`,
+        id: crypto.randomUUID ? crypto.randomUUID() : `collab${Date.now()}`,
         authorId: currentUser.id,
         timestamp: new Date().toISOString(),
         interestedUserIds: [],
         ...collabData,
       };
       setCollaborations((prev) => [newCollab, ...prev]);
+      upsertCollaboration(newCollab);
       trackEvent('collaboration_created', {
         userId: currentUser.id,
         collabId: newCollab.id,
       });
     },
-    [currentUser, collaborations, setCollaborations],
+    [currentUser, setCollaborations, upsertCollaboration],
   );
 
   const updateCollaboration = useCallback(
     (updatedCollab: Collaboration) => {
       setCollaborations((prev) =>
-        prev.map((c) => (c.id === updatedCollab.id ? updatedCollab : c)),
+        prev.map((collab) => (collab.id === updatedCollab.id ? updatedCollab : collab)),
       );
+      upsertCollaboration(updatedCollab);
       trackEvent('collaboration_updated', {
         userId: currentUser?.id,
         collabId: updatedCollab.id,
       });
     },
-    [setCollaborations, currentUser],
+    [setCollaborations, upsertCollaboration, currentUser?.id],
   );
 
   const deleteCollaboration = useCallback(
     (collabId: string) => {
       setCollaborations((prev) => prev.filter((c) => c.id !== collabId));
+      removeCollaboration(collabId);
       trackEvent('collaboration_deleted', { userId: currentUser?.id, collabId });
     },
-    [setCollaborations, currentUser],
+    [setCollaborations, removeCollaboration, currentUser?.id],
   );
 
   const toggleCollaborationInterest = useCallback(
@@ -1196,19 +1020,21 @@ useEffect(() => {
 
       const isInterested = collab.interestedUserIds.includes(currentUser.id);
 
+      const updatedCollab: Collaboration = {
+        ...collab,
+        interestedUserIds: isInterested
+          ? collab.interestedUserIds.filter((id) => id !== currentUser.id)
+          : [...collab.interestedUserIds, currentUser.id],
+      };
+
       setCollaborations((prev) =>
-        prev.map((c) => {
-          if (c.id !== collabId) return c;
-          const updatedIds = isInterested
-            ? c.interestedUserIds.filter((id) => id !== currentUser.id)
-            : [...c.interestedUserIds, currentUser.id];
-          return { ...c, interestedUserIds: updatedIds };
-        }),
+        prev.map((c) => (c.id === collabId ? updatedCollab : c)),
       );
+      upsertCollaboration(updatedCollab);
 
       if (!isInterested) {
         const notification: Notification = {
-          id: `n${notifications.length + 1}`,
+          id: crypto.randomUUID ? crypto.randomUUID() : `n${Date.now()}`,
           userId: collab.authorId,
           actorId: currentUser.id,
           type: NotificationType.COLLAB_REQUEST,
@@ -1218,7 +1044,8 @@ useEffect(() => {
           isRead: false,
           timestamp: new Date().toISOString(),
         };
-        setNotifications((p) => [...p, notification]);
+        setNotifications((prev) => [...prev, notification]);
+        upsertNotification(notification);
         emitSocketEvent(collab.authorId, 'notification:new', notification);
         sendWebPush(
           pushSubscriptions,
@@ -1239,13 +1066,13 @@ useEffect(() => {
       currentUser,
       collaborations,
       setCollaborations,
-      notifications,
+      upsertCollaboration,
       setNotifications,
+      upsertNotification,
       pushSubscriptions,
     ],
   );
 
-  // --- Messaging -----------------------------------------------------------
   const sendMessage = useCallback(
     (conversationId: string, text: string) => {
       if (!currentUser) return;
@@ -1257,21 +1084,25 @@ useEffect(() => {
       if (!other) return;
 
       const newMessage: Message = {
-        id: `m${Date.now()}`,
+        id: crypto.randomUUID ? crypto.randomUUID() : `m${Date.now()}`,
         senderId: currentUser.id,
         receiverId: other,
         text,
         timestamp: new Date().toISOString(),
       };
 
+      const updatedConversation: Conversation = {
+        ...conversation,
+        messages: [...conversation.messages, newMessage],
+      };
+
       setConversations((prev) =>
-        prev.map((c) =>
-          c.id === conversationId ? { ...c, messages: [...c.messages, newMessage] } : c,
-        ),
+        prev.map((c) => (c.id === conversationId ? updatedConversation : c)),
       );
+      upsertConversation(updatedConversation);
 
       const notification: Notification = {
-        id: `n${notifications.length + 1}`,
+        id: crypto.randomUUID ? crypto.randomUUID() : `n${Date.now()}`,
         userId: other,
         actorId: currentUser.id,
         type: NotificationType.NEW_MESSAGE,
@@ -1281,7 +1112,8 @@ useEffect(() => {
         isRead: false,
         timestamp: new Date().toISOString(),
       };
-      setNotifications((p) => [...p, notification]);
+      setNotifications((prev) => [...prev, notification]);
+      upsertNotification(notification);
       emitSocketEvent(other, 'notification:new', notification);
       sendWebPush(
         pushSubscriptions,
@@ -1297,8 +1129,9 @@ useEffect(() => {
       currentUser,
       conversations,
       setConversations,
-      notifications,
+      upsertConversation,
       setNotifications,
+      upsertNotification,
       pushSubscriptions,
     ],
   );
@@ -1315,18 +1148,19 @@ useEffect(() => {
 
       if (!conversation) {
         conversation = {
-          id: `c${conversations.length + 1}`,
+          id: crypto.randomUUID ? crypto.randomUUID() : `c${Date.now()}`,
           participantIds: [currentUser.id, participantId],
           messages: [],
           folder: 'general',
         };
         setConversations((prev) => [...prev, conversation!]);
+        upsertConversation(conversation);
       }
 
       setSelectedConversationId(conversation.id);
       navigate('messages');
     },
-    [currentUser, conversations, setConversations, navigate],
+    [currentUser, conversations, setConversations, upsertConversation, navigate],
   );
 
   const moveConversationToFolder = useCallback(
@@ -1334,41 +1168,49 @@ useEffect(() => {
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? { ...c, folder } : c)),
       );
+      const conversation = conversations.find((c) => c.id === conversationId);
+      if (conversation) {
+        upsertConversation({ ...conversation, folder });
+      }
       trackEvent('conversation_moved', { conversationId, folder });
     },
-    [setConversations],
+    [setConversations, conversations, upsertConversation],
   );
 
-  // --- Notifications -------------------------------------------------------
   const markNotificationsAsRead = useCallback(
     (ids: string[]) => {
       setTimeout(() => {
         setNotifications((prev) =>
           prev.map((n) => (ids.includes(n.id) ? { ...n, isRead: true } : n)),
         );
+        ids.forEach((id) => {
+          const existing = notifications.find((n) => n.id === id);
+          if (existing) {
+            upsertNotification({ ...existing, isRead: true });
+          }
+        });
       }, 500);
     },
-    [setNotifications],
+    [setNotifications, notifications, upsertNotification],
   );
 
-  // --- Feedback ------------------------------------------------------------
   const sendFeedback = useCallback(
     (content: string, type: 'Bug Report' | 'Suggestion') => {
       if (!currentUser) return;
       const newFeedback: Feedback = {
-        id: `f${feedback.length + 1}`,
+        id: crypto.randomUUID ? crypto.randomUUID() : `f${Date.now()}`,
         userId: currentUser.id,
         type,
         content,
         timestamp: new Date().toISOString(),
       };
       setFeedback((prev) => [newFeedback, ...prev]);
+      upsertFeedback(newFeedback);
       trackEvent('feedback_sent', { userId: currentUser.id, type });
     },
-    [currentUser, feedback, setFeedback],
+    [currentUser, setFeedback, upsertFeedback],
   );
 
-  // --- Push subscriptions --------------------------------------------------
   const subscribeToPushNotifications = useCallback(
     (subscription: PushSubscriptionObject) => {
       if (!currentUser) return;
@@ -1382,7 +1224,6 @@ useEffect(() => {
     [currentUser, setPushSubscriptions],
   );
 
-  // --- Context value -------------------------------------------------------
   const value: AppContextType = {
     users,
     posts,
@@ -1451,11 +1292,10 @@ useEffect(() => {
 
     getUserById,
     getUserByUsername: (username: string) =>
-      users.find((u) => u.username.toLowerCase() === username.toLowerCase()),
+      users.find((u) => u.username?.toLowerCase() === username.toLowerCase()),
 
     registerScrollableNode,
 
-    // Real email reset (Supabase)
     sendPasswordResetLink,
 
     subscribeToPushNotifications,
@@ -1465,14 +1305,9 @@ useEffect(() => {
     refreshData,
   };
 
-  return (
-    <AppContext.Provider value={value}>{children}</AppContext.Provider>
-  );
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
-/* ---------------------------------------------------------------------------
- * Hook
- * -------------------------------------------------------------------------*/
 export const useAppContext = () => {
   const context = useContext(AppContext);
   if (context === undefined) {
