@@ -128,6 +128,7 @@ function useSupabaseList<T extends { id?: string }>(
   {
     select = '*',
     where = {} as Record<string, string | number | boolean | null>,
+    or, // <- NEW: pass a PostgREST OR filter string
     order = { column: 'created_at', ascending: false } as {
       column?: string;
       ascending?: boolean;
@@ -136,65 +137,48 @@ function useSupabaseList<T extends { id?: string }>(
   }: {
     select?: string;
     where?: Record<string, string | number | boolean | null>;
+    or?: string; // e.g. `recipient_id.eq.${uid},requester_id.eq.${uid}`
     order?: { column?: string; ascending?: boolean };
     channelKey?: string;
   } = {},
 ) {
   const [rows, setRows] = React.useState<T[]>([]);
-  const whereString = React.useMemo(() => JSON.stringify(where ?? {}), [where]);
-  const channelRef = React.useRef(channelKey || table);
+  const whereJSON = React.useMemo(() => JSON.stringify(where ?? {}), [where]);
+  const chanRef = React.useRef(channelKey || table);
 
   const refresh = React.useCallback(async () => {
-    let query = supabase.from(table).select(select);
-    const filters: Record<string, string | number | boolean | null> = JSON.parse(whereString);
-    for (const [key, value] of Object.entries(filters)) {
-      if (value !== undefined) {
-        query = query.eq(key, value as any);
-      }
+    let q = supabase.from(table).select(select);
+
+    // apply equality filters
+    const filters = JSON.parse(whereJSON) as Record<string, any>;
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== null) q = q.eq(k, v as any);
     }
-    if (order?.column) {
-      query = query.order(order.column, { ascending: !!order.ascending });
-    }
-    const { data, error } = await query;
-    if (!error && Array.isArray(data)) {
-      setRows(data as T[]);
-    } else if (error) {
-      console.warn(`[useSupabaseList] Failed to load ${table}`, error);
-    }
-  }, [table, select, whereString, order?.column, order?.ascending]);
+
+    // apply OR (PostgREST syntax: "a.eq.x,b.eq.x")
+    if (or && or.trim()) q = q.or(or);
+
+    if (order?.column) q = q.order(order.column, { ascending: !!order.ascending });
+
+    const { data, error } = await q;
+    if (!error && Array.isArray(data)) setRows(data as T[]);
+    else if (error) console.warn(`[useSupabaseList] load ${table} failed`, error);
+  }, [table, select, whereJSON, or, order?.column, order?.ascending]);
+
+  React.useEffect(() => { refresh(); }, [refresh]);
 
   React.useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  React.useEffect(() => {
-    const channel = supabase
-      .channel(`realtime:${channelRef.current}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
-        refresh();
-      });
-
-    channel.subscribe((status) => {
-      if (status === 'CHANNEL_ERROR') {
-        console.error(`[useSupabaseList] Realtime channel error for ${table}`);
-      }
-    });
-
-    return () => {
-      try {
-        supabase.removeChannel(channel);
-      } catch (error) {
-        console.error(`[useSupabaseList] Failed to remove channel for ${table}`, error);
-      }
-    };
+    const ch = supabase
+      .channel(`realtime:${chanRef.current}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table }, () => refresh())
+      .subscribe();
+    return () => { try { supabase.removeChannel(ch); } catch {} };
   }, [table, refresh]);
 
   const upsert = React.useCallback(
     async (payload: T) => {
       const { data, error } = await supabase.from(table).upsert(payload).select();
-      if (!error) {
-        refresh();
-      }
+      if (!error) refresh();
       return { data, error };
     },
     [table, refresh],
@@ -203,9 +187,7 @@ function useSupabaseList<T extends { id?: string }>(
   const remove = React.useCallback(
     async (id: string) => {
       const { data, error } = await supabase.from(table).delete().eq('id', id).select();
-      if (!error) {
-        refresh();
-      }
+      if (!error) refresh();
       return { data, error };
     },
     [table, refresh],
