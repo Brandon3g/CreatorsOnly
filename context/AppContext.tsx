@@ -290,6 +290,7 @@ interface AppContextType {
   setTheme: (theme: 'light' | 'dark') => void;
 
   refreshData: () => Promise<void>;
+  refreshConversations: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -1283,6 +1284,7 @@ function useMessages(conversationId?: string) {
     setTheme,
 
     refreshData,
+    refreshConversations,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
