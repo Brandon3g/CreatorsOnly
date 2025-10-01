@@ -384,72 +384,70 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [currentUserId],
   );
 
-  const {
-    rows: users,
-    setRows: setUsers,
-    refresh: refreshUsers,
-    upsert: upsertUser,
-  } = useSupabaseList<User>('users');
+  // 1) Users (public)
+const { rows: users, setRows: setUsers, upsert: upsertUser, refresh: refreshUsers } =
+  useSupabaseList<User>('profiles');
 
-  const {
-    rows: posts,
-    setRows: setPosts,
-    refresh: refreshPosts,
-    upsert: upsertPost,
-    remove: removePost,
-  } = useSupabaseList<Post>('posts', {
-    order: { column: 'timestamp', ascending: false },
-  });
+// 2) Posts (public feed)
+const { rows: posts, setRows: setPosts, upsert: upsertPost, remove: removePost, refresh: refreshPosts } =
+  useSupabaseList<Post>('posts', { order: { column: 'created_at', ascending: false } });
 
-  const {
-    rows: notifications,
-    setRows: setNotifications,
-    refresh: refreshNotifications,
-    upsert: upsertNotification,
-  } = useSupabaseList<Notification>('notifications', {
-    where: notificationWhere,
+// 3) Notifications (private to recipient)  ✅ user_id
+const { rows: notifications, setRows: setNotifications, upsert: upsertNotification, refresh: refreshNotifications } =
+  useSupabaseList<Notification>('notifications', {
+    where: currentUserId ? { user_id: currentUserId } : {},
     channelKey: currentUserId ? `notifications:${currentUserId}` : 'notifications',
   });
 
-  const {
-    rows: conversations,
-    setRows: setConversations,
-    refresh: refreshConversations,
-    upsert: upsertConversation,
-  } = useSupabaseList<Conversation>('conversations', {
-    channelKey: currentUserId ? `conversations:${currentUserId}` : 'conversations',
+// 4) Friend requests (sender OR recipient)  ✅ requester_id / recipient_id
+// Enhance the hook once to support an 'or' filter:
+const { rows: friendRequests, setRows: setFriendRequests, upsert: upsertFriendRequest, remove: removeFriendRequest, refresh: refreshFriendRequests } =
+  useSupabaseList<FriendRequest>('friend_requests', {
+    or: currentUserId ? `requester_id.eq.${currentUserId},recipient_id.eq.${currentUserId}` : undefined,
+    channelKey: currentUserId ? `friend_requests:${currentUserId}` : 'friend_requests',
   });
 
-  const {
-    rows: collaborations,
-    setRows: setCollaborations,
-    refresh: refreshCollaborations,
-    upsert: upsertCollaboration,
-    remove: removeCollaboration,
-  } = useSupabaseList<Collaboration>('collaborations', {
-    channelKey: currentUserId ? `collaborations:${currentUserId}` : 'collaborations',
-  });
+// 5) Collaborations (public read; author writes)  ✅ author_id
+const { rows: collaborations, setRows: setCollaborations, upsert: upsertCollab, remove: removeCollab, refresh: refreshCollabs } =
+  useSupabaseList<Collaboration>('collaborations', { /* no where for public list */ });
 
-  const {
-    rows: feedback,
-    setRows: setFeedback,
-    refresh: refreshFeedback,
-    upsert: upsertFeedback,
-  } = useSupabaseList<Feedback>('feedback', {
-    where: feedbackWhere,
+// 6) Feedback (private to author)  ✅ user_id
+const { rows: feedback, setRows: setFeedback, upsert: upsertFeedback, refresh: refreshFeedback } =
+  useSupabaseList<Feedback>('feedback', {
+    where: currentUserId ? { user_id: currentUserId } : {},
     channelKey: currentUserId ? `feedback:${currentUserId}` : 'feedback',
   });
 
-  const {
-    rows: friendRequests,
-    setRows: setFriendRequests,
-    refresh: refreshFriendRequests,
-    upsert: upsertFriendRequest,
-    remove: removeFriendRequest,
-  } = useSupabaseList<FriendRequest>('friend_requests', {
-    where: friendRequestWhere,
-    channelKey: currentUserId ? `friend_requests:${currentUserId}` : 'friend_requests',
+// 7) Conversations (membership-based via join)  ✅ conversation_members
+const [conversations, setConversations] = useState<Conversation[]>([]);
+useEffect(() => {
+  if (!currentUserId) { setConversations([]); return; }
+  supabase
+    .from('conversations')
+    .select('*, members:conversation_members!inner(user_id)')
+    .eq('members.user_id', currentUserId)
+    .then(({ data }) => setConversations((data as any) ?? []));
+  const ch = supabase
+    .channel(`realtime:conversations:${currentUserId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_members', filter: `user_id=eq.${currentUserId}` }, () => {
+      supabase
+        .from('conversations')
+        .select('*, members:conversation_members!inner(user_id)')
+        .eq('members.user_id', currentUserId)
+        .then(({ data }) => setConversations((data as any) ?? []));
+    })
+    .subscribe();
+  return () => supabase.removeChannel(ch);
+}, [currentUserId]);
+
+// 8) Messages – load per conversation when opened  ✅ conversation_id
+function useMessages(conversationId?: string) {
+  return useSupabaseList<Message>('messages', {
+    where: conversationId ? { conversation_id: conversationId } : {},
+    order: { column: 'created_at', ascending: true },
+    channelKey: conversationId ? `messages:${conversationId}` : 'messages',
   });
+}
 
   const authData = { userId: currentUserId };
   const setAuthData = (next: { userId: string | null }) => setCurrentUserId(next.userId);
