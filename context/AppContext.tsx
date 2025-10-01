@@ -29,13 +29,12 @@ import {
 } from '../types';
 
 import { MASTER_USER_ID } from '../constants';
-
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 
-/* ---------------------------------------------------------------------------
- * Recovery helpers
- * -------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Recovery helpers
+────────────────────────────────────────────────────────────────────────────── */
 const RECOVERY_FLAG = 'co-recovery-active';
 
 function getRecoveryFlag(): boolean {
@@ -70,23 +69,22 @@ function urlLooksLikeRecovery(): boolean {
   } catch {}
   return false;
 }
-
 function isRecoveryActive(): boolean {
   return urlLooksLikeRecovery() || getRecoveryFlag();
 }
 
-/* ---------------------------------------------------------------------------
- * Lightweight socket-style event emitter (simulated)
- * -------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Lightweight socket-style event emitter (simulated)
+────────────────────────────────────────────────────────────────────────────── */
 const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
   window.dispatchEvent(
     new CustomEvent('socket-event', { detail: { userId, eventName, payload } }),
   );
 };
 
-/* ---------------------------------------------------------------------------
- * Simulated Web Push (uses SW message to show notification)
- * -------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Simulated Web Push (uses SW message to show notification)
+────────────────────────────────────────────────────────────────────────────── */
 const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
 
 const sendWebPush = (
@@ -96,39 +94,31 @@ const sendWebPush = (
   body: string,
   url: string,
 ) => {
-  console.log(`[PUSH_SIM] Sending push to user ${userId}: ${title}`);
-  if (subscriptions[userId]) {
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({
-        type: 'show-notification',
-        payload: {
-          title,
-          options: { body, data: { url } },
-        },
-      });
-    }
-  } else {
-    console.warn(`[PUSH_SIM] No push subscription found for user ${userId}`);
+  if (!subscriptions[userId]) return;
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'show-notification',
+      payload: { title, options: { body, data: { url } } },
+    });
   }
 };
 
-/* ---------------------------------------------------------------------------
- * Storage keys
- * -------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Storage keys
+────────────────────────────────────────────────────────────────────────────── */
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 const HISTORY_STORAGE_KEY = 'creatorsOnlyHistory';
 
 const defaultHistory = (): NavigationEntry[] => [{ page: 'feed', context: {} }];
 
-/* ---------------------------------------------------------------------------
- * Supabase list helper
- * -------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Supabase list helper
+────────────────────────────────────────────────────────────────────────────── */
 function useSupabaseList<T extends { id?: string }>(
   table: string,
   {
     select = '*',
     where = {} as Record<string, string | number | boolean | null>,
-    or, // <- NEW: pass a PostgREST OR filter string
     order = { column: 'created_at', ascending: false } as {
       column?: string;
       ascending?: boolean;
@@ -137,42 +127,43 @@ function useSupabaseList<T extends { id?: string }>(
   }: {
     select?: string;
     where?: Record<string, string | number | boolean | null>;
-    or?: string; // e.g. `recipient_id.eq.${uid},requester_id.eq.${uid}`
     order?: { column?: string; ascending?: boolean };
     channelKey?: string;
   } = {},
 ) {
   const [rows, setRows] = React.useState<T[]>([]);
-  const whereJSON = React.useMemo(() => JSON.stringify(where ?? {}), [where]);
-  const chanRef = React.useRef(channelKey || table);
+  const whereString = React.useMemo(() => JSON.stringify(where ?? {}), [where]);
+  const channelRef = React.useRef(channelKey || table);
 
   const refresh = React.useCallback(async () => {
-    let q = supabase.from(table).select(select);
-
-    // apply equality filters
-    const filters = JSON.parse(whereJSON) as Record<string, any>;
-    for (const [k, v] of Object.entries(filters)) {
-      if (v !== undefined && v !== null) q = q.eq(k, v as any);
+    let query = supabase.from(table).select(select);
+    const filters: Record<string, string | number | boolean | null> = JSON.parse(whereString);
+    for (const [key, value] of Object.entries(filters)) {
+      if (value !== undefined) query = query.eq(key, value as any);
     }
-
-    // apply OR (PostgREST syntax: "a.eq.x,b.eq.x")
-    if (or && or.trim()) q = q.or(or);
-
-    if (order?.column) q = q.order(order.column, { ascending: !!order.ascending });
-
-    const { data, error } = await q;
+    if (order?.column) query = query.order(order.column, { ascending: !!order.ascending });
+    const { data, error } = await query;
     if (!error && Array.isArray(data)) setRows(data as T[]);
-    else if (error) console.warn(`[useSupabaseList] load ${table} failed`, error);
-  }, [table, select, whereJSON, or, order?.column, order?.ascending]);
-
-  React.useEffect(() => { refresh(); }, [refresh]);
+    else if (error) console.warn(`[useSupabaseList] Failed to load ${table}`, error);
+  }, [table, select, whereString, order?.column, order?.ascending]);
 
   React.useEffect(() => {
-    const ch = supabase
-      .channel(`realtime:${chanRef.current}`)
+    refresh();
+  }, [refresh]);
+
+  React.useEffect(() => {
+    const channel = supabase
+      .channel(`realtime:${channelRef.current}`)
       .on('postgres_changes', { event: '*', schema: 'public', table }, () => refresh())
       .subscribe();
-    return () => { try { supabase.removeChannel(ch); } catch {} };
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch (e) {
+        console.warn(`[useSupabaseList] cleanup failed for ${table}`, e);
+      }
+    };
   }, [table, refresh]);
 
   const upsert = React.useCallback(
@@ -196,9 +187,9 @@ function useSupabaseList<T extends { id?: string }>(
   return { rows, setRows, refresh, upsert, remove } as const;
 }
 
-/* ---------------------------------------------------------------------------
- * Context type
- * -------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Context type
+────────────────────────────────────────────────────────────────────────────── */
 interface AppContextType {
   users: User[];
   posts: Post[];
@@ -290,15 +281,18 @@ interface AppContextType {
   setTheme: (theme: 'light' | 'dark') => void;
 
   refreshData: () => Promise<void>;
+
+  /** explicitly exposed so pages like Messages can force-refresh */
   refreshConversations: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-/* ---------------------------------------------------------------------------
- * Provider
- * -------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Provider
+────────────────────────────────────────────────────────────────────────────── */
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  /* localStorage helper */
   function useLocalStorage<T>(
     key: string,
     initialValue: T,
@@ -321,14 +315,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return [storedValue, setValue];
   }
 
+  /* Resolve current Supabase user */
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      if (data?.user) {
-        setCurrentUserId(data.user.id);
-      }
+      if (data?.user) setCurrentUserId(data.user.id);
     });
+
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       const recovering = isRecoveryActive();
       if (session?.user) {
@@ -346,95 +340,96 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         trackEvent('logout', { via: 'supabase' });
       }
     });
-    return () => {
-      sub.subscription.unsubscribe();
-    };
+    return () => sub.subscription.unsubscribe();
   }, []);
 
+  /* WHERE helpers for per-user tables */
   const notificationWhere = useMemo(
-    () => (currentUserId ? { userId: currentUserId } : {}),
+    () => (currentUserId ? { user_id: currentUserId } : {}), // DB column is user_id
     [currentUserId],
   );
   const feedbackWhere = useMemo(
-    () => (currentUserId ? { userId: currentUserId } : {}),
+    () => (currentUserId ? { user_id: currentUserId } : {}),
     [currentUserId],
   );
   const friendRequestWhere = useMemo(
-    () =>
-      currentUserId
-        ? { toUserId: currentUserId }
-        : {},
+    () => (currentUserId ? { recipient_id: currentUserId } : {}),
     [currentUserId],
   );
 
-  // 1) Users (public)
-const { rows: users, setRows: setUsers, upsert: upsertUser, refresh: refreshUsers } =
-  useSupabaseList<User>('profiles');
+  /* ── Server state hooks (Minimal, corrected) ───────────────────────────── */
 
-// 2) Posts (public feed)
-const { rows: posts, setRows: setPosts, upsert: upsertPost, remove: removePost, refresh: refreshPosts } =
-  useSupabaseList<Post>('posts', { order: { column: 'created_at', ascending: false } });
+  // Users come from 'profiles' table in your schema
+  const {
+    rows: users,
+    setRows: setUsers,
+    refresh: refreshUsers,
+    upsert: upsertUser,
+  } = useSupabaseList<User>('profiles');
 
-// 3) Notifications (private to recipient)  ✅ user_id
-const { rows: notifications, setRows: setNotifications, upsert: upsertNotification, refresh: refreshNotifications } =
-  useSupabaseList<Notification>('notifications', {
-    where: currentUserId ? { user_id: currentUserId } : {},
+  const {
+    rows: posts,
+    setRows: setPosts,
+    refresh: refreshPosts,
+    upsert: upsertPost,
+    remove: removePost,
+  } = useSupabaseList<Post>('posts', { order: { column: 'created_at', ascending: false } });
+
+  const {
+    rows: notifications,
+    setRows: setNotifications,
+    refresh: refreshNotifications,
+    upsert: upsertNotification,
+  } = useSupabaseList<Notification>('notifications', {
+    where: notificationWhere,
     channelKey: currentUserId ? `notifications:${currentUserId}` : 'notifications',
   });
 
-// 4) Friend requests (sender OR recipient)  ✅ requester_id / recipient_id
-// Enhance the hook once to support an 'or' filter:
-const { rows: friendRequests, setRows: setFriendRequests, upsert: upsertFriendRequest, remove: removeFriendRequest, refresh: refreshFriendRequests } =
-  useSupabaseList<FriendRequest>('friend_requests', {
-    or: currentUserId ? `requester_id.eq.${currentUserId},recipient_id.eq.${currentUserId}` : undefined,
-    channelKey: currentUserId ? `friend_requests:${currentUserId}` : 'friend_requests',
+  // ⬇️ Conversations scoped to the signed-in user via the join table
+  const {
+    rows: conversations,
+    setRows: setConversations,
+    refresh: refreshConversations, // <— this is what was missing
+    upsert: upsertConversation,
+  } = useSupabaseList<Conversation>('conversations', {
+    // This join matches your schema: public.conversation_members(user_id, conversation_id)
+    select: '*, conversation_members!inner(user_id,conversation_id)',
+    where: currentUserId ? { 'conversation_members.user_id': currentUserId } : {},
+    channelKey: currentUserId ? `conversations:${currentUserId}` : 'conversations',
   });
 
-// 5) Collaborations (public read; author writes)  ✅ author_id
-const { rows: collaborations, setRows: setCollaborations, upsert: upsertCollab, remove: removeCollab, refresh: refreshCollabs } =
-  useSupabaseList<Collaboration>('collaborations', { /* no where for public list */ });
+  const {
+    rows: collaborations,
+    setRows: setCollaborations,
+    refresh: refreshCollaborations,
+    upsert: upsertCollaboration,
+    remove: removeCollaboration,
+  } = useSupabaseList<Collaboration>('collaborations', {
+    channelKey: currentUserId ? `collaborations:${currentUserId}` : 'collaborations',
+  });
 
-// 6) Feedback (private to author)  ✅ user_id
-const { rows: feedback, setRows: setFeedback, upsert: upsertFeedback, refresh: refreshFeedback } =
-  useSupabaseList<Feedback>('feedback', {
-    where: currentUserId ? { user_id: currentUserId } : {},
+  const {
+    rows: feedback,
+    setRows: setFeedback,
+    refresh: refreshFeedback,
+    upsert: upsertFeedback,
+  } = useSupabaseList<Feedback>('feedback', {
+    where: feedbackWhere,
     channelKey: currentUserId ? `feedback:${currentUserId}` : 'feedback',
   });
 
-// 7) Conversations (membership-based via join)  ✅ conversation_members
-const [conversations, setConversations] = useState<Conversation[]>([]);
-useEffect(() => {
-  if (!currentUserId) { setConversations([]); return; }
-  supabase
-    .from('conversations')
-    .select('*, members:conversation_members!inner(user_id)')
-    .eq('members.user_id', currentUserId)
-    .then(({ data }) => setConversations((data as any) ?? []));
-  const ch = supabase
-    .channel(`realtime:conversations:${currentUserId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_members', filter: `user_id=eq.${currentUserId}` }, () => {
-      supabase
-        .from('conversations')
-        .select('*, members:conversation_members!inner(user_id)')
-        .eq('members.user_id', currentUserId)
-        .then(({ data }) => setConversations((data as any) ?? []));
-    })
-    .subscribe();
-  return () => supabase.removeChannel(ch);
-}, [currentUserId]);
-
-// 8) Messages – load per conversation when opened  ✅ conversation_id
-function useMessages(conversationId?: string) {
-  return useSupabaseList<Message>('messages', {
-    where: conversationId ? { conversation_id: conversationId } : {},
-    order: { column: 'created_at', ascending: true },
-    channelKey: conversationId ? `messages:${conversationId}` : 'messages',
+  const {
+    rows: friendRequests,
+    setRows: setFriendRequests,
+    refresh: refreshFriendRequests,
+    upsert: upsertFriendRequest,
+    remove: removeFriendRequest,
+  } = useSupabaseList<FriendRequest>('friend_requests', {
+    where: friendRequestWhere,
+    channelKey: currentUserId ? `friend_requests:${currentUserId}` : 'friend_requests',
   });
-}
 
-  const authData = { userId: currentUserId };
-  const setAuthData = (next: { userId: string | null }) => setCurrentUserId(next.userId);
-
+  /* Local-only state */
   const [pushSubscriptions, setPushSubscriptions] =
     useLocalStorage<Record<string, PushSubscriptionObject>>(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
   const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(THEME_STORAGE_KEY, 'dark');
@@ -442,20 +437,20 @@ function useMessages(conversationId?: string) {
   const [isRegistering, setIsRegistering] = useState(false);
 
   const historyKey = useMemo(
-    () => `${HISTORY_STORAGE_KEY}:${authData.userId ?? 'guest'}`,
-    [authData.userId],
+    () => `${HISTORY_STORAGE_KEY}:${currentUserId ?? 'guest'}`,
+    [currentUserId],
   );
   const [history, setHistory] = useLocalStorage<NavigationEntry[]>(historyKey, defaultHistory());
 
   const [selectedConversationId, setSelectedConversationId] =
     useState<string | null>(null);
-
   const [editingCollaborationId, setEditingCollaborationId] =
     useState<string | null>(null);
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
 
-  const currentUser = users.find((u) => u.id === authData.userId) || null;
+  /* Derived */
+  const currentUser = users.find((u) => u.id === currentUserId) || null;
   const isAuthenticated = !!currentUser;
   const isMasterUser = currentUser?.id === MASTER_USER_ID;
 
@@ -465,12 +460,13 @@ function useMessages(conversationId?: string) {
   const viewingCollaborationId =
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
+  /* Refresh all */
   const refreshData = useCallback(async () => {
     await Promise.all([
       refreshUsers(),
       refreshPosts(),
       refreshNotifications(),
-      refreshConversations(),
+      refreshConversations(),   // ✅ now defined
       refreshCollaborations(),
       refreshFeedback(),
       refreshFriendRequests(),
@@ -486,6 +482,7 @@ function useMessages(conversationId?: string) {
     refreshFriendRequests,
   ]);
 
+  /* Theme */
   useEffect(() => {
     if (theme === 'light') document.documentElement.classList.remove('dark');
     else document.documentElement.classList.add('dark');
@@ -499,10 +496,12 @@ function useMessages(conversationId?: string) {
     [setThemeState],
   );
 
+  /* Scrolling container */
   const registerScrollableNode = useCallback((node: HTMLDivElement) => {
     scrollableNodeRef.current = node;
   }, []);
 
+  /* Navigation */
   const navigate = useCallback(
     (page: Page, context: PageContext = {}) => {
       const last = history[history.length - 1];
@@ -541,12 +540,11 @@ function useMessages(conversationId?: string) {
 
   const viewProfile = (userId: string) => navigate('profile', { viewingProfileId: userId });
 
+  /* Auth helpers (demo login + signout wrapper) */
   const login = useCallback(
     (username: string, _password: string) => {
       const user = users.find((u) => u.username?.toLowerCase() === username.toLowerCase());
       if (user) {
-        setAuthData({ userId: user.id });
-        setIsRegistering(false);
         setHistory([{ page: 'feed', context: {} }]);
         trackEvent('login_success', { userId: user.id, via: 'demo' });
         return true;
@@ -554,19 +552,18 @@ function useMessages(conversationId?: string) {
       trackEvent('login_failed', { username });
       return false;
     },
-    [users, setAuthData, setHistory],
+    [users, setHistory],
   );
 
   const logout = useCallback(() => {
     try {
       supabase.auth.signOut().catch((error) => console.warn('[logout] supabase signOut error', error));
     } finally {
-      setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
       setRecoveryFlag(false);
       trackEvent('logout', { userId: currentUser?.id, via: 'app_context' });
     }
-  }, [setAuthData, setHistory, currentUser]);
+  }, [setHistory, currentUser]);
 
   const sendPasswordResetLink = useCallback((email: string) => {
     const base = typeof window !== 'undefined' ? window.location.origin : 'https://creatorzonly.com';
@@ -599,9 +596,7 @@ function useMessages(conversationId?: string) {
         | 'blockedUserIds'
       > & { password?: string },
     ) => {
-      if (
-        users.some((u) => u.username?.toLowerCase() === data.username.toLowerCase())
-      ) {
+      if (users.some((u) => u.username?.toLowerCase() === data.username.toLowerCase())) {
         trackEvent('registration_failed', { reason: 'username_taken' });
         return false;
       }
@@ -627,15 +622,15 @@ function useMessages(conversationId?: string) {
 
       setUsers((prev) => [...prev, newUser]);
       upsertUser(newUser);
-      setAuthData({ userId: newUser.id });
       setIsRegistering(false);
       setHistory([{ page: 'feed', context: {} }]);
       trackEvent('registration_success', { userId: newUser.id });
       return true;
     },
-    [users, setUsers, upsertUser, setAuthData, setHistory],
+    [users, setUsers, upsertUser, setHistory],
   );
 
+  /* Profile update */
   const updateUserProfile = useCallback(
     (patch: Partial<User> & Record<string, any>) => {
       if (!currentUser) return;
@@ -649,6 +644,7 @@ function useMessages(conversationId?: string) {
     [currentUser, setUsers, upsertUser],
   );
 
+  /* Social helpers */
   const getUserById = useCallback(
     (id: string) => users.find((u) => u.id === id),
     [users],
@@ -763,21 +759,6 @@ function useMessages(conversationId?: string) {
           return user;
         }),
       );
-      const fromUser = getUserById(request.fromUserId);
-      const updatedFromUser = fromUser
-        ? {
-            ...fromUser,
-            friendIds: [...new Set([...fromUser.friendIds, request.toUserId])],
-          }
-        : undefined;
-      if (updatedFromUser) upsertUser(updatedFromUser);
-      const updatedToUser = currentUser
-        ? {
-            ...currentUser,
-            friendIds: [...new Set([...currentUser.friendIds, request.fromUserId])],
-          }
-        : undefined;
-      if (updatedToUser) upsertUser(updatedToUser);
 
       const notification: Notification = {
         id: crypto.randomUUID ? crypto.randomUUID() : `n${Date.now()}`,
@@ -812,8 +793,6 @@ function useMessages(conversationId?: string) {
       setFriendRequests,
       upsertFriendRequest,
       setUsers,
-      getUserById,
-      upsertUser,
       setNotifications,
       upsertNotification,
       pushSubscriptions,
@@ -831,8 +810,8 @@ function useMessages(conversationId?: string) {
       );
       upsertFriendRequest({ ...request, status: FriendRequestStatus.DECLINED });
       trackEvent('friend_request_declined', {
-        declinedBy: request.toUserId,
-        requestedBy: request.fromUserId,
+        declinedBy: request?.toUserId,
+        requestedBy: request?.fromUserId,
       });
     },
     [friendRequests, setFriendRequests, upsertFriendRequest],
@@ -841,81 +820,50 @@ function useMessages(conversationId?: string) {
   const removeFriend = useCallback(
     (friendId: string) => {
       if (!currentUser) return;
-      const currentUserId = currentUser.id;
+      const currentId = currentUser.id;
 
       setUsers((prev) =>
         prev.map((user) => {
-          if (user.id === currentUserId) {
-            return {
-              ...user,
-              friendIds: user.friendIds.filter((id) => id !== friendId),
-            };
+          if (user.id === currentId) {
+            return { ...user, friendIds: user.friendIds.filter((id) => id !== friendId) };
           }
           if (user.id === friendId) {
-            return {
-              ...user,
-              friendIds: user.friendIds.filter((id) => id !== currentUserId),
-            };
+            return { ...user, friendIds: user.friendIds.filter((id) => id !== currentId) };
           }
           return user;
         }),
       );
 
-      const updatedCurrentUser = {
-        ...currentUser,
-        friendIds: currentUser.friendIds.filter((id) => id !== friendId),
-      };
-      upsertUser(updatedCurrentUser);
-      const friendUser = getUserById(friendId);
-      if (friendUser) {
-        upsertUser({
-          ...friendUser,
-          friendIds: friendUser.friendIds.filter((id) => id !== currentUserId),
-        });
-      }
-
-      setFriendRequests((prev) =>
-        prev.filter(
-          (fr) =>
-            !(
-              (fr.fromUserId === currentUserId && fr.toUserId === friendId) ||
-              (fr.fromUserId === friendId && fr.toUserId === currentUserId)
-            ),
-        ),
-      );
-
-      trackEvent('friend_removed', { remover: currentUserId, removed: friendId });
+      trackEvent('friend_removed', { remover: currentId, removed: friendId });
     },
-    [currentUser, setUsers, upsertUser, getUserById, setFriendRequests],
+    [currentUser, setUsers],
   );
 
   const toggleBlockUser = useCallback(
     (userIdToBlock: string) => {
       if (!currentUser) return;
-      const currentUserId = currentUser.id;
+      const currentId = currentUser.id;
       const isBlocked = currentUser.blockedUserIds?.includes(userIdToBlock);
 
       const updatedBlocked = isBlocked
         ? (currentUser.blockedUserIds || []).filter((id) => id !== userIdToBlock)
         : [...new Set([...(currentUser.blockedUserIds || []), userIdToBlock])];
 
-      const patchedUser: User = {
-        ...currentUser,
-        blockedUserIds: updatedBlocked,
-      };
-      setUsers((prev) => prev.map((u) => (u.id === currentUserId ? patchedUser : u)));
+      const patchedUser: User = { ...currentUser, blockedUserIds: updatedBlocked };
+      setUsers((prev) => prev.map((u) => (u.id === currentId ? patchedUser : u)));
       upsertUser(patchedUser);
 
       if (!isBlocked) removeFriend(userIdToBlock);
 
       trackEvent(isBlocked ? 'user_unblocked' : 'user_blocked', {
-        blocker: currentUserId,
+        blocker: currentId,
         blocked: userIdToBlock,
       });
     },
     [currentUser, setUsers, upsertUser, removeFriend],
   );
 
+  /* Posts */
   const addPost = useCallback(
     (content: string, image?: string) => {
       if (!currentUser) return;
@@ -945,6 +893,7 @@ function useMessages(conversationId?: string) {
     [setPosts, removePost, currentUser?.id],
   );
 
+  /* Collaborations */
   const addCollaboration = useCallback(
     (
       collabData: Omit<
@@ -973,7 +922,7 @@ function useMessages(conversationId?: string) {
   const updateCollaboration = useCallback(
     (updatedCollab: Collaboration) => {
       setCollaborations((prev) =>
-        prev.map((collab) => (collab.id === updatedCollab.id ? updatedCollab : collab)),
+        prev.map((c) => (c.id === updatedCollab.id ? updatedCollab : c)),
       );
       upsertCollaboration(updatedCollab);
       trackEvent('collaboration_updated', {
@@ -1000,7 +949,6 @@ function useMessages(conversationId?: string) {
       if (!collab) return;
 
       const isInterested = collab.interestedUserIds.includes(currentUser.id);
-
       const updatedCollab: Collaboration = {
         ...collab,
         interestedUserIds: isInterested
@@ -1054,6 +1002,7 @@ function useMessages(conversationId?: string) {
     ],
   );
 
+  /* Messaging (client-side thread shape; server table is messages) */
   const sendMessage = useCallback(
     (conversationId: string, text: string) => {
       if (!currentUser) return;
@@ -1061,7 +1010,9 @@ function useMessages(conversationId?: string) {
       const conversation = conversations.find((c) => c.id === conversationId);
       if (!conversation) return;
 
-      const other = conversation.participantIds.find((id) => id !== currentUser.id);
+      const other = (conversation as any).participantIds?.find?.(
+        (id: string) => id !== currentUser.id,
+      );
       if (!other) return;
 
       const newMessage: Message = {
@@ -1074,9 +1025,8 @@ function useMessages(conversationId?: string) {
 
       const updatedConversation: Conversation = {
         ...conversation,
-        messages: [...conversation.messages, newMessage],
+        messages: [...(conversation.messages || []), newMessage],
       };
-
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? updatedConversation : c)),
       );
@@ -1122,9 +1072,9 @@ function useMessages(conversationId?: string) {
       if (!currentUser) return;
 
       let conversation = conversations.find(
-        (c) =>
-          c.participantIds.includes(currentUser.id) &&
-          c.participantIds.includes(participantId),
+        (c: any) =>
+          c.participantIds?.includes?.(currentUser.id) &&
+          c.participantIds?.includes?.(participantId),
       );
 
       if (!conversation) {
@@ -1133,7 +1083,7 @@ function useMessages(conversationId?: string) {
           participantIds: [currentUser.id, participantId],
           messages: [],
           folder: 'general',
-        };
+        } as unknown as Conversation;
         setConversations((prev) => [...prev, conversation!]);
         upsertConversation(conversation);
       }
@@ -1158,6 +1108,7 @@ function useMessages(conversationId?: string) {
     [setConversations, conversations, upsertConversation],
   );
 
+  /* Notifications */
   const markNotificationsAsRead = useCallback(
     (ids: string[]) => {
       setTimeout(() => {
@@ -1166,15 +1117,14 @@ function useMessages(conversationId?: string) {
         );
         ids.forEach((id) => {
           const existing = notifications.find((n) => n.id === id);
-          if (existing) {
-            upsertNotification({ ...existing, isRead: true });
-          }
+          if (existing) upsertNotification({ ...existing, isRead: true });
         });
-      }, 500);
+      }, 400);
     },
     [setNotifications, notifications, upsertNotification],
   );
 
+  /* Feedback */
   const sendFeedback = useCallback(
     (content: string, type: 'Bug Report' | 'Suggestion') => {
       if (!currentUser) return;
@@ -1192,19 +1142,17 @@ function useMessages(conversationId?: string) {
     [currentUser, setFeedback, upsertFeedback],
   );
 
+  /* Push subscriptions */
   const subscribeToPushNotifications = useCallback(
     (subscription: PushSubscriptionObject) => {
       if (!currentUser) return;
-      setPushSubscriptions((prev) => ({
-        ...prev,
-        [currentUser.id]: subscription,
-      }));
-      console.log(`[PUSH_SIM] User ${currentUser.id} subscribed.`);
+      setPushSubscriptions((prev) => ({ ...prev, [currentUser.id]: subscription }));
       trackEvent('push_subscribed', { userId: currentUser.id });
     },
     [currentUser, setPushSubscriptions],
   );
 
+  /* Context value */
   const value: AppContextType = {
     users,
     posts,
@@ -1284,12 +1232,13 @@ function useMessages(conversationId?: string) {
     setTheme,
 
     refreshData,
-    refreshConversations,
+    refreshConversations, // ✅ explicitly exposed
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
+/* Hook */
 export const useAppContext = () => {
   const context = useContext(AppContext);
   if (context === undefined) {
