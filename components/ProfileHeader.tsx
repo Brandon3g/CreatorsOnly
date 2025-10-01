@@ -62,27 +62,33 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({ user, isEditing, setIsEdi
     if (setIsEditing) setIsEditing(false);
   };
 
-  // OPTION A: Map UI fields -> DB columns that exist (no banner_url in DB)
-  const buildDbPatch = () => {
+ const buildUiPatch = (cleanedLinks: User['platformLinks']) => {
+    const trimmedName = typeof formData.name === 'string' ? formData.name.trim() : formData.name;
+    const trimmedUsername =
+      typeof formData.username === 'string' ? formData.username.trim() : formData.username;
+    const trimmedBio = (formData.bio ?? '').slice(0, BIO_LIMIT);
+    const trimmedCustomLink =
+      typeof formData.customLink === 'string' ? formData.customLink.trim() : formData.customLink;
+
     return {
-      // DB columns only:
-      username: formData.username?.trim() || null,
-      display_name:
-        (formData as any).display_name ??
-        (formData.name ? formData.name.trim() : null),
-      bio: (formData.bio ?? '').slice(0, BIO_LIMIT),
-      // map UI avatar -> DB avatar_url
-      avatar_url: formData.avatar || null,
-      // NOTE: banner is intentionally NOT sent because DB has no banner_url
+      name: trimmedName ?? '',
+      username: trimmedUsername ?? '',
+      bio: trimmedBio,
+      avatar: formData.avatar || '',
+      banner: formData.banner || '',
+      state: formData.state || '',
+      county: formData.county || '',
+      customLink: trimmedCustomLink || '',
+      platformLinks: cleanedLinks,
     };
   };
 
   const handleSave = () => {
     const cleanedLinks = formData.platformLinks.filter(link => link.url.trim() !== '');
+    const uiPatch = buildUiPatch(cleanedLinks);
     setFormData(prev => ({ ...prev, platformLinks: cleanedLinks }));
 
-    // Send only DB-allowed fields
-    updateUserProfile(buildDbPatch());
+   updateUserProfile(uiPatch);
 
     if (setIsEditing) setIsEditing(false);
   };
@@ -113,10 +119,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({ user, isEditing, setIsEdi
           if (!isEditing) {
             if (field === 'avatar') {
               updateUserProfile({
-                username: user.username,
-                display_name: (user as any).display_name ?? user.name ?? null,
-                bio: user.bio ?? null,
-                avatar_url: newImageUrl,
+                avatar: newImageUrl,
               });
             }
           }
