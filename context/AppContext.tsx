@@ -1,13 +1,13 @@
 // context/AppContext.tsx
 import React, {
   createContext,
-  useState,
   useContext,
-  ReactNode,
+  useMemo,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
+  useState,
+  ReactNode,
 } from 'react';
 
 import {
@@ -32,31 +32,29 @@ import { MASTER_USER_ID } from '../constants';
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 
-/* -----------------------------------------------------------------------------
- * Password recovery helpers
- * ---------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Recovery helpers
+   ─────────────────────────────────────────────────────────────────────────── */
 const RECOVERY_FLAG = 'co-recovery-active';
-
-function getRecoveryFlag(): boolean {
+const getRecoveryFlag = () => {
   try {
     return sessionStorage.getItem(RECOVERY_FLAG) === '1';
   } catch {
     return false;
   }
-}
-function setRecoveryFlag(on: boolean) {
+};
+const setRecoveryFlag = (on: boolean) => {
   try {
     if (on) sessionStorage.setItem(RECOVERY_FLAG, '1');
     else sessionStorage.removeItem(RECOVERY_FLAG);
   } catch {}
-}
+};
 
 function urlLooksLikeRecovery(): boolean {
   try {
     const href = window.location.href || '';
     const hash = window.location.hash || '';
     if (/#\/NewPassword/i.test(hash)) return true;
-
     const fragments = href.split('#').slice(1);
     for (const frag of fragments) {
       const qs = new URLSearchParams(frag);
@@ -68,94 +66,60 @@ function urlLooksLikeRecovery(): boolean {
   } catch {}
   return false;
 }
-function isRecoveryActive(): boolean {
-  return urlLooksLikeRecovery() || getRecoveryFlag();
-}
+const isRecoveryActive = () => urlLooksLikeRecovery() || getRecoveryFlag();
 
-/* -----------------------------------------------------------------------------
- * Lightweight socket-style event emitter (simulated)
- * ---------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Simulated socket + push
+   ─────────────────────────────────────────────────────────────────────────── */
 const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
   window.dispatchEvent(
     new CustomEvent('socket-event', { detail: { userId, eventName, payload } }),
   );
 };
-
-/* -----------------------------------------------------------------------------
- * Simulated Web Push
- * ---------------------------------------------------------------------------*/
 const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
-
-const sendWebPush = (
-  subscriptions: Record<string, PushSubscriptionObject>,
-  userId: string,
-  title: string,
-  body: string,
-  url: string,
-) => {
-  console.log(`[PUSH_SIM] Sending push to user ${userId}: ${title}`);
-  if (subscriptions[userId]) {
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.controller.postMessage({
-        type: 'show-notification',
-        payload: {
-          title,
-          options: { body, data: { url } },
-        },
-      });
-    }
-  } else {
-    console.warn(`[PUSH_SIM] No push subscription found for user ${userId}`);
-  }
-};
-
-/* -----------------------------------------------------------------------------
- * Storage keys
- * ---------------------------------------------------------------------------*/
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 const HISTORY_STORAGE_KEY = 'creatorsOnlyHistory';
 
-const defaultHistory = (): NavigationEntry[] => [{ page: 'feed', context: {} }];
-
-/* -----------------------------------------------------------------------------
- * Supabase list helper (SAFE: no default order)
- * ---------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Supabase list helper (safe ordering)
+   ─────────────────────────────────────────────────────────────────────────── */
 function useSupabaseList<T extends { id?: string }>(
   table: string,
   {
     select = '*',
-    where = {} as Record<string, string | number | boolean | null | undefined>,
-    order, // <-- optional on purpose (safer)
+    where = {} as Record<string, string | number | boolean | null>,
+    // If you pass order, we’ll only apply it when the column actually exists.
+    // This prevents 400s like: "column profiles.created_at does not exist".
+    order,
     channelKey,
   }: {
     select?: string;
-    where?: Record<string, string | number | boolean | null | undefined>;
-    order?: { column?: string; ascending?: boolean };
+    where?: Record<string, string | number | boolean | null>;
+    order?: { column?: string; ascending?: boolean } | undefined;
     channelKey?: string;
   } = {},
 ) {
   const [rows, setRows] = React.useState<T[]>([]);
   const whereString = React.useMemo(() => JSON.stringify(where ?? {}), [where]);
-  const channelRef = React.useRef(channelKey || table);
+  const chanRef = React.useRef(channelKey || table);
 
   const refresh = React.useCallback(async () => {
     let query = supabase.from(table).select(select);
 
-    const filters: Record<string, string | number | boolean | null | undefined> =
-      JSON.parse(whereString || '{}');
-
+    // Apply filters
+    const filters: Record<string, string | number | boolean | null> = JSON.parse(whereString);
     for (const [key, value] of Object.entries(filters)) {
       if (value !== undefined) {
         query = query.eq(key, value as any);
       }
     }
 
+    // Apply order ONLY when explicitly provided; this avoids 400s on missing columns
     if (order?.column) {
       try {
         query = query.order(order.column, { ascending: !!order.ascending });
-      } catch (e) {
-        // If the column doesn't exist, don't let the whole request fail.
-        console.warn(`[useSupabaseList] Ignoring bad order("${order.column}") for ${table}`);
+      } catch {
+        // ignore — some drivers throw synchronously if invalid, but Supabase usually returns 400 later.
       }
     }
 
@@ -163,33 +127,30 @@ function useSupabaseList<T extends { id?: string }>(
     if (!error && Array.isArray(data)) {
       setRows(data as T[]);
     } else if (error) {
+      // Log once to console; keeps UI stable
+      // eslint-disable-next-line no-console
       console.warn(`[useSupabaseList] Failed to load ${table}`, error);
     }
   }, [table, select, whereString, order?.column, order?.ascending]);
 
+  // initial + dependency refresh
   React.useEffect(() => {
     refresh();
   }, [refresh]);
 
+  // realtime
   React.useEffect(() => {
     const channel = supabase
-      .channel(`realtime:${channelRef.current}`)
+      .channel(`realtime:${chanRef.current}`)
       .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
         refresh();
-      });
-
-    channel.subscribe((status) => {
-      if (status === 'CHANNEL_ERROR') {
-        console.error(`[useSupabaseList] Realtime channel error for ${table}`);
-      }
-    });
+      })
+      .subscribe();
 
     return () => {
       try {
         supabase.removeChannel(channel);
-      } catch (error) {
-        console.error(`[useSupabaseList] Failed to remove channel for ${table}`, error);
-      }
+      } catch {}
     };
   }, [table, refresh]);
 
@@ -214,10 +175,11 @@ function useSupabaseList<T extends { id?: string }>(
   return { rows, setRows, refresh, upsert, remove } as const;
 }
 
-/* -----------------------------------------------------------------------------
- * Context type
- * ---------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Context shape
+   ─────────────────────────────────────────────────────────────────────────── */
 interface AppContextType {
+  // state
   users: User[];
   posts: Post[];
   notifications: Notification[];
@@ -241,9 +203,22 @@ interface AppContextType {
 
   theme: 'light' | 'dark';
 
+  // nav
+  navigate: (page: Page, context?: PageContext) => void;
+  goBack: () => void;
+  viewProfile: (userId: string) => void;
+  updateCurrentContext: (newContext: Partial<PageContext>) => void;
+
+  // lookups
+  getUserById: (id: string) => User | undefined;
+  getUserByUsername: (username: string) => User | undefined;
+
+  // misc UI
+  registerScrollableNode: (node: HTMLDivElement) => void;
+
+  // auth & profile
   login: (username: string, password: string) => boolean;
   logout: () => void;
-
   startRegistration: () => void;
   cancelRegistration: () => void;
   registerAndSetup: (
@@ -258,9 +233,9 @@ interface AppContextType {
       | 'blockedUserIds'
     > & { password?: string }
   ) => boolean;
-
   updateUserProfile: (patch: Partial<User> & Record<string, any>) => void;
 
+  // social
   sendFriendRequest: (toUserId: string) => void;
   cancelFriendRequest: (toUserId: string) => void;
   acceptFriendRequest: (requestId: string) => void;
@@ -271,9 +246,11 @@ interface AppContextType {
   getFriendRequest: (userId1: string, userId2: string) => FriendRequest | undefined;
   getFriendRequestById: (id: string) => FriendRequest | undefined;
 
+  // posts
   addPost: (content: string, image?: string) => void;
   deletePost: (postId: string) => void;
 
+  // collabs
   addCollaboration: (
     collab: Omit<Collaboration, 'id' | 'authorId' | 'timestamp' | 'interestedUserIds'>,
   ) => void;
@@ -281,44 +258,35 @@ interface AppContextType {
   deleteCollaboration: (collabId: string) => void;
   toggleCollaborationInterest: (collabId: string) => void;
 
+  // messaging
   sendMessage: (conversationId: string, text: string) => void;
   viewConversation: (participantId: string) => void;
   setSelectedConversationId: (id: string | null) => void;
-
-  setEditingCollaborationId: (id: string | null) => void;
   moveConversationToFolder: (conversationId: string, folder: ConversationFolder) => void;
 
+  // notifications & feedback
   markNotificationsAsRead: (ids: string[]) => void;
   sendFeedback: (content: string, type: 'Bug Report' | 'Suggestion') => void;
 
-  navigate: (page: Page, context?: PageContext) => void;
-  goBack: () => void;
-  viewProfile: (userId: string) => void;
-  updateCurrentContext: (newContext: Partial<PageContext>) => void;
-
-  getUserById: (id: string) => User | undefined;
-  getUserByUsername: (username: string) => User | undefined;
-
-  registerScrollableNode: (node: HTMLDivElement) => void;
-
-  sendPasswordResetLink: (email: string) => void;
-
+  // push + theme
   subscribeToPushNotifications: (subscription: PushSubscriptionObject) => void;
-
   setTheme: (theme: 'light' | 'dark') => void;
 
-  // data refresh
+  // data management
   refreshData: () => Promise<void>;
-  refreshConversations: () => Promise<void>; // kept to satisfy current callers
+  refreshConversations: () => Promise<void>;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────────
+   Context
+   ─────────────────────────────────────────────────────────────────────────── */
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-/* -----------------------------------------------------------------------------
- * Provider
- * ---------------------------------------------------------------------------*/
+/* ──────────────────────────────────────────────────────────────────────────────
+   Provider
+   ─────────────────────────────────────────────────────────────────────────── */
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // localStorage convenience
+  // little localStorage helper
   function useLocalStorage<T>(
     key: string,
     initialValue: T,
@@ -341,15 +309,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return [storedValue, setValue];
   }
 
-  // Auth pointer
+  // auth pointer
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       if (data?.user) setCurrentUserId(data.user.id);
     });
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       const recovering = isRecoveryActive();
       if (session?.user) {
         setCurrentUserId(session.user.id);
@@ -366,38 +332,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         trackEvent('logout', { via: 'supabase' });
       }
     });
-
     return () => {
       sub.subscription.unsubscribe();
     };
   }, []);
 
-  // WHERE clauses memoized off currentUserId
-  const notificationWhere = useMemo(
-    () => (currentUserId ? { userId: currentUserId } : {}),
+  // where clauses that depend on auth
+  const notificationsWhere = useMemo(
+    // IMPORTANT: column name is recipient_id in your DB (per earlier RLS + schema)
+    () => (currentUserId ? { recipient_id: currentUserId } : {}),
     [currentUserId],
   );
   const feedbackWhere = useMemo(
-    () => (currentUserId ? { userId: currentUserId } : {}),
+    () => (currentUserId ? { user_id: currentUserId } : {}),
     [currentUserId],
   );
   const friendRequestWhere = useMemo(
-    () => (currentUserId ? { toUserId: currentUserId } : {}),
+    () => (currentUserId ? { recipient_id: currentUserId } : {}),
     [currentUserId],
   );
 
-  // =======================
-  // Server state hookups
-  // =======================
+  /* ── server-backed state (safe ordering) ─────────────────────────────────── */
+
+  // profiles: DO NOT pass order here (no created_at on your profiles)
   const {
     rows: users,
     setRows: setUsers,
     refresh: refreshUsers,
     upsert: upsertUser,
-  } = useSupabaseList<User>('profiles', {
-    // SAFER: profiles has updated_at, not created_at
-    order: { column: 'updated_at', ascending: false },
-  });
+  } = useSupabaseList<User>('profiles', { select: '*' });
 
   const {
     rows: posts,
@@ -406,8 +369,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     upsert: upsertPost,
     remove: removePost,
   } = useSupabaseList<Post>('posts', {
-    // Keep if your posts table really has created_at; otherwise change to 'timestamp' or drop
-    order: { column: 'created_at', ascending: false },
+    // posts.timestamp exists in your seed code; if unsure, drop order to avoid 400s
+    order: { column: 'timestamp', ascending: false },
   });
 
   const {
@@ -416,14 +379,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     refresh: refreshNotifications,
     upsert: upsertNotification,
   } = useSupabaseList<Notification>('notifications', {
-    where: notificationWhere,
+    where: notificationsWhere,
     channelKey: currentUserId ? `notifications:${currentUserId}` : 'notifications',
   });
 
   const {
     rows: conversations,
     setRows: setConversations,
-    refresh: refreshConversations, // <- keep available & export
+    refresh: refreshConversations, // exposed to context
     upsert: upsertConversation,
   } = useSupabaseList<Conversation>('conversations', {
     channelKey: currentUserId ? `conversations:${currentUserId}` : 'conversations',
@@ -463,41 +426,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const authData = { userId: currentUserId };
   const setAuthData = (next: { userId: string | null }) => setCurrentUserId(next.userId);
 
-  // =======================
-  // Local/device-only state
-  // =======================
+  /* ── local state ─────────────────────────────────────────────────────────── */
   const [pushSubscriptions, setPushSubscriptions] =
     useLocalStorage<Record<string, PushSubscriptionObject>>(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
   const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(THEME_STORAGE_KEY, 'dark');
-
-  const [isRegistering, setIsRegistering] = useState(false);
 
   const historyKey = useMemo(
     () => `${HISTORY_STORAGE_KEY}:${authData.userId ?? 'guest'}`,
     [authData.userId],
   );
-  const [history, setHistory] = useLocalStorage<NavigationEntry[]>(historyKey, defaultHistory());
+  const [history, setHistory] = useLocalStorage<NavigationEntry[]>(
+    historyKey,
+    [{ page: 'feed', context: {} }],
+  );
 
-  const [selectedConversationId, setSelectedConversationId] =
-    useState<string | null>(null);
-
-  const [editingCollaborationId, setEditingCollaborationId] =
-    useState<string | null>(null);
-
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [editingCollaborationId, setEditingCollaborationId] = useState<string | null>(null);
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
 
-  // --- Derived -------------------------------------------------------------
+  /* ── derived ─────────────────────────────────────────────────────────────── */
   const currentUser = users.find((u) => u.id === authData.userId) || null;
   const isAuthenticated = !!currentUser;
   const isMasterUser = currentUser?.id === MASTER_USER_ID;
 
   const currentEntry = history[history.length - 1] || { page: 'feed', context: {} };
   const currentPage = currentEntry.page;
-  const viewingProfileId = (currentEntry.context as PageContext).viewingProfileId ?? null;
-  const viewingCollaborationId =
-    (currentEntry.context as PageContext).viewingCollaborationId ?? null;
+  const viewingProfileId = (currentEntry.context as PageContext)?.viewingProfileId ?? null;
+  const viewingCollaborationId = (currentEntry.context as PageContext)?.viewingCollaborationId ?? null;
 
-  // --- Data refresh --------------------------------------------------------
+  /* ── refresh all ─────────────────────────────────────────────────────────── */
   const refreshData = useCallback(async () => {
     await Promise.all([
       refreshUsers(),
@@ -519,7 +477,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     refreshFriendRequests,
   ]);
 
-  // --- Theme ---------------------------------------------------------------
+  /* ── theme ───────────────────────────────────────────────────────────────── */
   useEffect(() => {
     if (theme === 'light') document.documentElement.classList.remove('dark');
     else document.documentElement.classList.add('dark');
@@ -533,12 +491,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setThemeState],
   );
 
-  // --- Scrolling container -------------------------------------------------
+  /* ── nav helpers ─────────────────────────────────────────────────────────── */
   const registerScrollableNode = useCallback((node: HTMLDivElement) => {
     scrollableNodeRef.current = node;
   }, []);
 
-  // --- Navigation ----------------------------------------------------------
   const navigate = useCallback(
     (page: Page, context: PageContext = {}) => {
       const last = history[history.length - 1];
@@ -577,7 +534,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const viewProfile = (userId: string) => navigate('profile', { viewingProfileId: userId });
 
-  // --- Auth-like demo helpers (plus Supabase signOut for safety) -----------
+  /* ── auth / account ──────────────────────────────────────────────────────── */
   const login = useCallback(
     (username: string, _password: string) => {
       const user = users.find((u) => u.username?.toLowerCase() === username.toLowerCase());
@@ -596,7 +553,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const logout = useCallback(() => {
     try {
-      supabase.auth.signOut().catch((error) => console.warn('[logout] supabase signOut error', error));
+      supabase.auth.signOut().catch(() => {});
     } finally {
       setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
@@ -604,21 +561,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       trackEvent('logout', { userId: currentUser?.id, via: 'app_context' });
     }
   }, [setAuthData, setHistory, currentUser]);
-
-  const sendPasswordResetLink = useCallback((email: string) => {
-    const base = typeof window !== 'undefined' ? window.location.origin : 'https://creatorzonly.com';
-    const redirectTo = `${base}/#/NewPassword`;
-    supabase.auth
-      .resetPasswordForEmail(email, { redirectTo })
-      .then(({ error }) => {
-        if (error) {
-          console.error('Password reset email error:', error.message);
-          trackEvent('password_reset_failed', { email, message: error.message });
-        } else {
-          trackEvent('password_reset_requested', { email, redirectTo });
-        }
-      });
-  }, []);
 
   const startRegistration = () => setIsRegistering(true);
   const cancelRegistration = () => setIsRegistering(false);
@@ -636,13 +578,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         | 'blockedUserIds'
       > & { password?: string },
     ) => {
-      if (
-        users.some((u) => u.username?.toLowerCase() === data.username.toLowerCase())
-      ) {
+      if (users.some((u) => u.username?.toLowerCase() === data.username.toLowerCase())) {
         trackEvent('registration_failed', { reason: 'username_taken' });
         return false;
       }
-
       const newId = crypto.randomUUID ? crypto.randomUUID() : `u${Date.now()}`;
       const newUser: User = {
         id: newId,
@@ -661,7 +600,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         platformLinks: [],
         blockedUserIds: [],
       };
-
       setUsers((prev) => [...prev, newUser]);
       upsertUser(newUser);
       setAuthData({ userId: newUser.id });
@@ -686,12 +624,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [currentUser, setUsers, upsertUser],
   );
 
-  // --- Utilities & social actions -----------------------------------------
+  /* ── lookups ─────────────────────────────────────────────────────────────── */
   const getUserById = useCallback(
     (id: string) => users.find((u) => u.id === id),
     [users],
   );
+  const getUserByUsername = useCallback(
+    (username: string) =>
+      users.find((u) => u.username?.toLowerCase() === username.toLowerCase()),
+    [users],
+  );
 
+  /* ── social / friends ───────────────────────────────────────────────────── */
   const getFriendRequest = useCallback(
     (userId1: string, userId2: string) =>
       friendRequests.find(
@@ -711,7 +655,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     (toUserId: string) => {
       if (!currentUser) return;
       const fromUserId = currentUser.id;
-
       const existing = getFriendRequest(fromUserId, toUserId);
       if (existing) return;
 
@@ -727,7 +670,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const notification: Notification = {
         id: crypto.randomUUID ? crypto.randomUUID() : `n${Date.now()}`,
-        userId: toUserId,
+        userId: toUserId, // kept for UI compatibility
         actorId: fromUserId,
         type: NotificationType.FRIEND_REQUEST,
         entityType: 'friend_request',
@@ -739,13 +682,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setNotifications((prev) => [...prev, notification]);
       upsertNotification(notification);
       emitSocketEvent(toUserId, 'notification:new', notification);
-      sendWebPush(
-        pushSubscriptions,
-        toUserId,
-        'New Friend Request',
-        notification.message,
-        `/profile/${currentUser.username}`,
-      );
       trackEvent('friend_request_sent', { from: fromUserId, to: toUserId });
     },
     [
@@ -755,7 +691,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       upsertFriendRequest,
       setNotifications,
       upsertNotification,
-      pushSubscriptions,
     ],
   );
 
@@ -769,13 +704,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           fr.status === FriendRequestStatus.PENDING,
       );
       if (!pending) return;
-
       setFriendRequests((prev) => prev.filter((fr) => fr.id !== pending.id));
       removeFriendRequest(pending.id);
-      trackEvent('friend_request_cancelled', {
-        from: currentUser.id,
-        to: toUserId,
-      });
+      trackEvent('friend_request_cancelled', { from: currentUser.id, to: toUserId });
     },
     [currentUser, friendRequests, setFriendRequests, removeFriendRequest],
   );
@@ -816,13 +747,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setNotifications((prev) => [...prev, notification]);
       upsertNotification(notification);
       emitSocketEvent(request.fromUserId, 'notification:new', notification);
-      sendWebPush(
-        pushSubscriptions,
-        request.fromUserId,
-        'Friend Request Accepted',
-        notification.message,
-        `/profile/${currentUser.username}`,
-      );
 
       trackEvent('friend_request_accepted', {
         acceptedBy: request.toUserId,
@@ -837,7 +761,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUsers,
       setNotifications,
       upsertNotification,
-      pushSubscriptions,
     ],
   );
 
@@ -852,8 +775,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       );
       upsertFriendRequest({ ...request, status: FriendRequestStatus.DECLINED });
       trackEvent('friend_request_declined', {
-        declinedBy: request.toUserId,
-        requestedBy: request.fromUserId,
+        declinedBy: request?.toUserId,
+        requestedBy: request?.fromUserId,
       });
     },
     [friendRequests, setFriendRequests, upsertFriendRequest],
@@ -867,47 +790,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUsers((prev) =>
         prev.map((user) => {
           if (user.id === currentUserId) {
-            return {
-              ...user,
-              friendIds: user.friendIds.filter((id) => id !== friendId),
-            };
+            return { ...user, friendIds: user.friendIds.filter((id) => id !== friendId) };
           }
           if (user.id === friendId) {
-            return {
-              ...user,
-              friendIds: user.friendIds.filter((id) => id !== currentUserId),
-            };
+            return { ...user, friendIds: user.friendIds.filter((id) => id !== currentUserId) };
           }
           return user;
         }),
       );
 
-      const updatedCurrentUser = {
-        ...currentUser,
-        friendIds: currentUser.friendIds.filter((id) => id !== friendId),
-      };
-      upsertUser(updatedCurrentUser);
-      const friendUser = getUserById(friendId);
-      if (friendUser) {
-        upsertUser({
-          ...friendUser,
-          friendIds: friendUser.friendIds.filter((id) => id !== currentUserId),
-        });
-      }
-
-      setFriendRequests((prev) =>
-        prev.filter(
-          (fr) =>
-            !(
-              (fr.fromUserId === currentUserId && fr.toUserId === friendId) ||
-              (fr.fromUserId === friendId && fr.toUserId === currentUserId)
-            ),
-        ),
-      );
-
       trackEvent('friend_removed', { remover: currentUserId, removed: friendId });
     },
-    [currentUser, setUsers, upsertUser, getUserById, setFriendRequests],
+    [currentUser, setUsers],
   );
 
   const toggleBlockUser = useCallback(
@@ -920,10 +814,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ? (currentUser.blockedUserIds || []).filter((id) => id !== userIdToBlock)
         : [...new Set([...(currentUser.blockedUserIds || []), userIdToBlock])];
 
-      const patchedUser: User = {
-        ...currentUser,
-        blockedUserIds: updatedBlocked,
-      };
+      const patchedUser: User = { ...currentUser, blockedUserIds: updatedBlocked };
       setUsers((prev) => prev.map((u) => (u.id === currentUserId ? patchedUser : u)));
       upsertUser(patchedUser);
 
@@ -937,12 +828,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [currentUser, setUsers, upsertUser, removeFriend],
   );
 
-  // --- Posts ---------------------------------------------------------------
+  /* ── posts ───────────────────────────────────────────────────────────────── */
   const addPost = useCallback(
     (content: string, image?: string) => {
       if (!currentUser) return;
+      const id = crypto.randomUUID ? crypto.randomUUID() : `p${Date.now()}`;
       const newPost: Post = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `p${Date.now()}`,
+        id,
         authorId: currentUser.id,
         content,
         image,
@@ -953,7 +845,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
       setPosts((prev) => [newPost, ...prev]);
       upsertPost(newPost);
-      trackEvent('post_created', { userId: currentUser.id, postId: newPost.id });
+      trackEvent('post_created', { userId: currentUser.id, postId: id });
     },
     [currentUser, setPosts, upsertPost],
   );
@@ -967,7 +859,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setPosts, removePost, currentUser?.id],
   );
 
-  // --- Collaborations ------------------------------------------------------
+  /* ── collaborations ─────────────────────────────────────────────────────── */
   const addCollaboration = useCallback(
     (
       collabData: Omit<
@@ -976,8 +868,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       >,
     ) => {
       if (!currentUser) return;
+      const id = crypto.randomUUID ? crypto.randomUUID() : `collab${Date.now()}`;
       const newCollab: Collaboration = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `collab${Date.now()}`,
+        id,
         authorId: currentUser.id,
         timestamp: new Date().toISOString(),
         interestedUserIds: [],
@@ -985,10 +878,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
       setCollaborations((prev) => [newCollab, ...prev]);
       upsertCollaboration(newCollab);
-      trackEvent('collaboration_created', {
-        userId: currentUser.id,
-        collabId: newCollab.id,
-      });
+      trackEvent('collaboration_created', { userId: currentUser.id, collabId: id });
     },
     [currentUser, setCollaborations, upsertCollaboration],
   );
@@ -996,7 +886,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateCollaboration = useCallback(
     (updatedCollab: Collaboration) => {
       setCollaborations((prev) =>
-        prev.map((collab) => (collab.id === updatedCollab.id ? updatedCollab : collab)),
+        prev.map((c) => (c.id === updatedCollab.id ? updatedCollab : c)),
       );
       upsertCollaboration(updatedCollab);
       trackEvent('collaboration_updated', {
@@ -1023,7 +913,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!collab) return;
 
       const isInterested = collab.interestedUserIds.includes(currentUser.id);
-
       const updatedCollab: Collaboration = {
         ...collab,
         interestedUserIds: isInterested
@@ -1051,13 +940,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setNotifications((prev) => [...prev, notification]);
         upsertNotification(notification);
         emitSocketEvent(collab.authorId, 'notification:new', notification);
-        sendWebPush(
-          pushSubscriptions,
-          collab.authorId,
-          'New Interest in Opportunity',
-          notification.message,
-          `/collaborations`,
-        );
       }
 
       trackEvent('collaboration_interest_toggled', {
@@ -1073,23 +955,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       upsertCollaboration,
       setNotifications,
       upsertNotification,
-      pushSubscriptions,
     ],
   );
 
-  // --- Messaging -----------------------------------------------------------
+  /* ── messaging ───────────────────────────────────────────────────────────── */
   const sendMessage = useCallback(
     (conversationId: string, text: string) => {
       if (!currentUser) return;
-
       const conversation = conversations.find((c) => c.id === conversationId);
       if (!conversation) return;
 
       const other = conversation.participantIds.find((id) => id !== currentUser.id);
       if (!other) return;
 
+      const id = crypto.randomUUID ? crypto.randomUUID() : `m${Date.now()}`;
       const newMessage: Message = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `m${Date.now()}`,
+        id,
         senderId: currentUser.id,
         receiverId: other,
         text,
@@ -1100,7 +981,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ...conversation,
         messages: [...conversation.messages, newMessage],
       };
-
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? updatedConversation : c)),
       );
@@ -1120,13 +1000,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setNotifications((prev) => [...prev, notification]);
       upsertNotification(notification);
       emitSocketEvent(other, 'notification:new', notification);
-      sendWebPush(
-        pushSubscriptions,
-        other,
-        `New message from ${currentUser.name}`,
-        text,
-        `/messages`,
-      );
 
       trackEvent('message_sent', { from: currentUser.id, to: other });
     },
@@ -1137,14 +1010,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       upsertConversation,
       setNotifications,
       upsertNotification,
-      pushSubscriptions,
     ],
   );
 
   const viewConversation = useCallback(
     (participantId: string) => {
       if (!currentUser) return;
-
       let conversation = conversations.find(
         (c) =>
           c.participantIds.includes(currentUser.id) &&
@@ -1182,7 +1053,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setConversations, conversations, upsertConversation],
   );
 
-  // --- Notifications -------------------------------------------------------
+  /* ── notifications & feedback ───────────────────────────────────────────── */
   const markNotificationsAsRead = useCallback(
     (ids: string[]) => {
       setTimeout(() => {
@@ -1195,17 +1066,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             upsertNotification({ ...existing, isRead: true });
           }
         });
-      }, 500);
+      }, 250);
     },
     [setNotifications, notifications, upsertNotification],
   );
 
-  // --- Feedback ------------------------------------------------------------
   const sendFeedback = useCallback(
     (content: string, type: 'Bug Report' | 'Suggestion') => {
       if (!currentUser) return;
+      const id = crypto.randomUUID ? crypto.randomUUID() : `f${Date.now()}`;
       const newFeedback: Feedback = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `f${Date.now()}`,
+        id,
         userId: currentUser.id,
         type,
         content,
@@ -1218,7 +1089,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [currentUser, setFeedback, upsertFeedback],
   );
 
-  // --- Push subscriptions --------------------------------------------------
+  /* ── push ────────────────────────────────────────────────────────────────── */
   const subscribeToPushNotifications = useCallback(
     (subscription: PushSubscriptionObject) => {
       if (!currentUser) return;
@@ -1226,13 +1097,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         ...prev,
         [currentUser.id]: subscription,
       }));
-      console.log(`[PUSH_SIM] User ${currentUser.id} subscribed.`);
       trackEvent('push_subscribed', { userId: currentUser.id });
     },
     [currentUser, setPushSubscriptions],
   );
 
-  // --- Context value -------------------------------------------------------
+  /* ── context value ───────────────────────────────────────────────────────── */
   const value: AppContextType = {
     users,
     posts,
@@ -1257,71 +1127,74 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     theme,
 
+    // nav
+    navigate,
+    goBack,
+    viewProfile,
+    updateCurrentContext,
+
+    // lookups
+    getUserById,
+    getUserByUsername,
+
+    // misc
+    registerScrollableNode,
+
+    // auth
     login,
     logout,
-
     startRegistration,
     cancelRegistration,
     registerAndSetup,
-
     updateUserProfile,
 
+    // social
     sendFriendRequest,
     cancelFriendRequest,
     acceptFriendRequest,
     declineFriendRequest,
     removeFriend,
     toggleBlockUser,
-
     getFriendRequest,
     getFriendRequestById,
 
+    // posts
     addPost,
     deletePost,
 
+    // collabs
     addCollaboration,
     updateCollaboration,
     deleteCollaboration,
     toggleCollaborationInterest,
 
+    // messages
     sendMessage,
     viewConversation,
     setSelectedConversationId,
-
-    setEditingCollaborationId,
     moveConversationToFolder,
 
+    // notifications & feedback
     markNotificationsAsRead,
     sendFeedback,
 
-    navigate,
-    goBack,
-    viewProfile,
-    updateCurrentContext,
-
-    getUserById,
-    getUserByUsername: (username: string) =>
-      users.find((u) => u.username?.toLowerCase() === username.toLowerCase()),
-
-    registerScrollableNode,
-
-    sendPasswordResetLink,
-
+    // push + theme
     subscribeToPushNotifications,
-
     setTheme,
 
+    // data management
     refreshData,
-    refreshConversations, // keep exporting for existing callers
+    refreshConversations,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
+/* ──────────────────────────────────────────────────────────────────────────────
+   Hook
+   ─────────────────────────────────────────────────────────────────────────── */
 export const useAppContext = () => {
-  const context = useContext(AppContext);
-  if (context === undefined) {
-    throw new Error('useAppContext must be used within an AppProvider');
-  }
-  return context;
+  const ctx = useContext(AppContext);
+  if (!ctx) throw new Error('useAppContext must be used within an AppProvider');
+  return ctx;
 };
