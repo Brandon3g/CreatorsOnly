@@ -410,23 +410,94 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
   // --- Supabase → AppContext **BRIDGE** -----------------------------------
-// Map any signed-in Supabase user to our AI master profile (MASTER_USER_ID)
 useEffect(() => {
-  // Initial session check (async)
-  (async () => {
-    // If URL/tokens look like recovery, persist a flag so we respect it even if Supabase cleans the hash.
-    if (urlLooksLikeRecovery()) setRecoveryFlag(true);
+    let cancelled = false;
 
-    const { data } = await supabase.auth.getSession();
-    const hasSession = !!data.session?.user;
-    const recovering = isRecoveryActive();
+    const ensureSupabaseUserRecord = async (sessionUser: any) => {
+      const supabaseUserId = sessionUser?.id;
+      if (!supabaseUserId || cancelled) return;
 
-    if (hasSession) {
-      if (authData.userId !== MASTER_USER_ID) {
-        setAuthData({ userId: MASTER_USER_ID });
+      let profile: {
+        username?: string | null;
+        display_name?: string | null;
+        bio?: string | null;
+        avatar_url?: string | null;
+      } | null = null;
+
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('username, display_name, bio, avatar_url')
+          .eq('id', supabaseUserId)
+          .maybeSingle();
+
+        if (error) throw error;
+        profile = (data as typeof profile) ?? null;
+      } catch (error) {
+        console.warn('[AuthBridge] Failed to load Supabase profile', error);
       }
 
-      // During recovery, DO NOT clobber route/history; ensure we land on NewPassword.
+      if (cancelled) return;
+
+      const metadata = sessionUser?.user_metadata ?? {};
+      const fallbackUsername =
+        profile?.username?.trim() ||
+        (typeof metadata.preferred_username === 'string'
+          ? metadata.preferred_username.trim()
+          : '') ||
+        (sessionUser?.email ? sessionUser.email.split('@')[0] : '') ||
+        `user-${supabaseUserId.slice(0, 8)}`;
+
+      const displayName =
+        profile?.display_name?.trim() ||
+        (typeof metadata.full_name === 'string' ? metadata.full_name.trim() : '') ||
+        (typeof metadata.name === 'string' ? metadata.name.trim() : '') ||
+        fallbackUsername;
+
+      const resolvedAvatar =
+        profile?.avatar_url ||
+        (typeof metadata.avatar_url === 'string' ? metadata.avatar_url : undefined) ||
+        `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(displayName || fallbackUsername)}`;
+
+      const resolvedBanner = `https://picsum.photos/seed/${supabaseUserId.slice(0, 8)}-banner/1000/300`;
+
+      setUsers((prev) => {
+        const existing = prev.find((u) => u.id === supabaseUserId);
+        if (existing) {
+          const updatedUser = {
+            ...existing,
+            name: displayName || existing.name || fallbackUsername,
+            username: fallbackUsername || existing.username,
+            email: sessionUser?.email ?? existing.email,
+            bio: typeof profile?.bio === 'string' ? profile.bio : existing.bio ?? '',
+            avatar: resolvedAvatar ?? existing.avatar,
+          };
+          return prev.map((u) => (u.id === supabaseUserId ? updatedUser : u));
+        }
+
+        const newUser: User = {
+          id: supabaseUserId,
+          name: displayName || fallbackUsername,
+          username: fallbackUsername,
+          avatar: resolvedAvatar,
+          banner: resolvedBanner,
+          bio: typeof profile?.bio === 'string' ? profile.bio : '',
+          email: sessionUser?.email ?? undefined,
+          isVerified: false,
+          friendIds: [],
+          platformLinks: [],
+          blockedUserIds: [],
+        };
+
+        return [...prev, newUser];
+      });
+    };
+
+    const handleSignedInUser = async (sessionUser: any, recovering: boolean) => {
+      if (!sessionUser || cancelled) return;
+      const supabaseUserId = sessionUser.id;
+
+      setAuthData((prev) => (prev.userId === supabaseUserId ? prev : { userId: supabaseUserId }));
       if (recovering) {
         if (!/#\/NewPassword/i.test(window.location.hash)) {
           window.location.hash = '#/NewPassword';
@@ -435,41 +506,51 @@ useEffect(() => {
         setHistory([{ page: 'feed', context: {} }]);
       }
 
-      // Rehydrate after session appears
-      reloadUsers();
-      trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-    } else if (authData.userId !== null) {
-      setAuthData({ userId: null });
-      setHistory([{ page: 'feed', context: {} }]);
-    }
-  })();
-
-  // Subscribe to future changes
-  const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-    const recoveringNow = isRecoveryActive();
-
-    if (session?.user) {
-      setAuthData({ userId: MASTER_USER_ID });
-
-      if (recoveringNow) {
-        if (!/#\/NewPassword/i.test(window.location.hash)) {
-          window.location.hash = '#/NewPassword';
-        }
-      } else {
-        setHistory([{ page: 'feed', context: {} }]);
+      try {
+        await reloadUsers();
+      } catch (error) {
+        console.warn('[AuthBridge] Failed to reload users', error);
       }
 
-      // Rehydrate after session appears
-      reloadUsers();
-      trackEvent('login_success', { userId: MASTER_USER_ID, via: 'supabase' });
-    } else {
-      setAuthData({ userId: null });
-      setHistory([{ page: 'feed', context: {} }]);
-    }
-  });
+      if (cancelled) return;
+      await ensureSupabaseUserRecord(sessionUser);
 
-  return () => sub.subscription.unsubscribe();
-}, [reloadUsers]);
+      if (!cancelled) {
+        trackEvent('login_success', { userId: supabaseUserId, via: 'supabase' });
+      }
+    };
+
+    (async () => {
+      if (urlLooksLikeRecovery()) setRecoveryFlag(true);
+
+      const { data } = await supabase.auth.getSession();
+      const sessionUser = data.session?.user;
+      const recovering = isRecoveryActive();
+
+      if (sessionUser) {
+        await handleSignedInUser(sessionUser, recovering);
+      } else {
+        setAuthData((prev) => (prev.userId === null ? prev : { userId: null }));
+        setHistory([{ page: 'feed', context: {} }]);
+      }
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      const recoveringNow = isRecoveryActive();
+
+      if (session?.user) {
+        handleSignedInUser(session.user, recoveringNow);
+      } else {
+        setAuthData((prev) => (prev.userId === null ? prev : { userId: null }));
+        setHistory([{ page: 'feed', context: {} }]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+    };
+  }, [reloadUsers, setAuthData, setHistory, setUsers]);
 
   // --- Data refresh (simulated) -------------------------------------------
   const refreshData = useCallback(async () => {
