@@ -32,9 +32,9 @@ import { MASTER_USER_ID } from '../constants';
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 
-/* ──────────────────────────────────────────────────────────────────────────────
-   Recovery helpers
-────────────────────────────────────────────────────────────────────────────── */
+/* -----------------------------------------------------------------------------
+ * Password recovery helpers
+ * ---------------------------------------------------------------------------*/
 const RECOVERY_FLAG = 'co-recovery-active';
 
 function getRecoveryFlag(): boolean {
@@ -55,7 +55,6 @@ function urlLooksLikeRecovery(): boolean {
   try {
     const href = window.location.href || '';
     const hash = window.location.hash || '';
-
     if (/#\/NewPassword/i.test(hash)) return true;
 
     const fragments = href.split('#').slice(1);
@@ -73,18 +72,18 @@ function isRecoveryActive(): boolean {
   return urlLooksLikeRecovery() || getRecoveryFlag();
 }
 
-/* ──────────────────────────────────────────────────────────────────────────────
-   Lightweight socket-style event emitter (simulated)
-────────────────────────────────────────────────────────────────────────────── */
+/* -----------------------------------------------------------------------------
+ * Lightweight socket-style event emitter (simulated)
+ * ---------------------------------------------------------------------------*/
 const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
   window.dispatchEvent(
     new CustomEvent('socket-event', { detail: { userId, eventName, payload } }),
   );
 };
 
-/* ──────────────────────────────────────────────────────────────────────────────
-   Simulated Web Push (uses SW message to show notification)
-────────────────────────────────────────────────────────────────────────────── */
+/* -----------------------------------------------------------------------------
+ * Simulated Web Push
+ * ---------------------------------------------------------------------------*/
 const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
 
 const sendWebPush = (
@@ -94,39 +93,43 @@ const sendWebPush = (
   body: string,
   url: string,
 ) => {
-  if (!subscriptions[userId]) return;
-  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage({
-      type: 'show-notification',
-      payload: { title, options: { body, data: { url } } },
-    });
+  console.log(`[PUSH_SIM] Sending push to user ${userId}: ${title}`);
+  if (subscriptions[userId]) {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'show-notification',
+        payload: {
+          title,
+          options: { body, data: { url } },
+        },
+      });
+    }
+  } else {
+    console.warn(`[PUSH_SIM] No push subscription found for user ${userId}`);
   }
 };
 
-/* ──────────────────────────────────────────────────────────────────────────────
-   Storage keys
-────────────────────────────────────────────────────────────────────────────── */
+/* -----------------------------------------------------------------------------
+ * Storage keys
+ * ---------------------------------------------------------------------------*/
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 const HISTORY_STORAGE_KEY = 'creatorsOnlyHistory';
 
 const defaultHistory = (): NavigationEntry[] => [{ page: 'feed', context: {} }];
 
-/* ──────────────────────────────────────────────────────────────────────────────
-   Supabase list helper
-────────────────────────────────────────────────────────────────────────────── */
+/* -----------------------------------------------------------------------------
+ * Supabase list helper (SAFE: no default order)
+ * ---------------------------------------------------------------------------*/
 function useSupabaseList<T extends { id?: string }>(
   table: string,
   {
     select = '*',
-    where = {} as Record<string, string | number | boolean | null>,
-    order = { column: 'created_at', ascending: false } as {
-      column?: string;
-      ascending?: boolean;
-    },
+    where = {} as Record<string, string | number | boolean | null | undefined>,
+    order, // <-- optional on purpose (safer)
     channelKey,
   }: {
     select?: string;
-    where?: Record<string, string | number | boolean | null>;
+    where?: Record<string, string | number | boolean | null | undefined>;
     order?: { column?: string; ascending?: boolean };
     channelKey?: string;
   } = {},
@@ -137,14 +140,31 @@ function useSupabaseList<T extends { id?: string }>(
 
   const refresh = React.useCallback(async () => {
     let query = supabase.from(table).select(select);
-    const filters: Record<string, string | number | boolean | null> = JSON.parse(whereString);
+
+    const filters: Record<string, string | number | boolean | null | undefined> =
+      JSON.parse(whereString || '{}');
+
     for (const [key, value] of Object.entries(filters)) {
-      if (value !== undefined) query = query.eq(key, value as any);
+      if (value !== undefined) {
+        query = query.eq(key, value as any);
+      }
     }
-    if (order?.column) query = query.order(order.column, { ascending: !!order.ascending });
+
+    if (order?.column) {
+      try {
+        query = query.order(order.column, { ascending: !!order.ascending });
+      } catch (e) {
+        // If the column doesn't exist, don't let the whole request fail.
+        console.warn(`[useSupabaseList] Ignoring bad order("${order.column}") for ${table}`);
+      }
+    }
+
     const { data, error } = await query;
-    if (!error && Array.isArray(data)) setRows(data as T[]);
-    else if (error) console.warn(`[useSupabaseList] Failed to load ${table}`, error);
+    if (!error && Array.isArray(data)) {
+      setRows(data as T[]);
+    } else if (error) {
+      console.warn(`[useSupabaseList] Failed to load ${table}`, error);
+    }
   }, [table, select, whereString, order?.column, order?.ascending]);
 
   React.useEffect(() => {
@@ -154,14 +174,21 @@ function useSupabaseList<T extends { id?: string }>(
   React.useEffect(() => {
     const channel = supabase
       .channel(`realtime:${channelRef.current}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table }, () => refresh())
-      .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table }, () => {
+        refresh();
+      });
+
+    channel.subscribe((status) => {
+      if (status === 'CHANNEL_ERROR') {
+        console.error(`[useSupabaseList] Realtime channel error for ${table}`);
+      }
+    });
 
     return () => {
       try {
         supabase.removeChannel(channel);
-      } catch (e) {
-        console.warn(`[useSupabaseList] cleanup failed for ${table}`, e);
+      } catch (error) {
+        console.error(`[useSupabaseList] Failed to remove channel for ${table}`, error);
       }
     };
   }, [table, refresh]);
@@ -187,9 +214,9 @@ function useSupabaseList<T extends { id?: string }>(
   return { rows, setRows, refresh, upsert, remove } as const;
 }
 
-/* ──────────────────────────────────────────────────────────────────────────────
-   Context type
-────────────────────────────────────────────────────────────────────────────── */
+/* -----------------------------------------------------------------------------
+ * Context type
+ * ---------------------------------------------------------------------------*/
 interface AppContextType {
   users: User[];
   posts: Post[];
@@ -280,19 +307,18 @@ interface AppContextType {
 
   setTheme: (theme: 'light' | 'dark') => void;
 
+  // data refresh
   refreshData: () => Promise<void>;
-
-  /** explicitly exposed so pages like Messages can force-refresh */
-  refreshConversations: () => Promise<void>;
+  refreshConversations: () => Promise<void>; // kept to satisfy current callers
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-/* ──────────────────────────────────────────────────────────────────────────────
-   Provider
-────────────────────────────────────────────────────────────────────────────── */
+/* -----------------------------------------------------------------------------
+ * Provider
+ * ---------------------------------------------------------------------------*/
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  /* localStorage helper */
+  // localStorage convenience
   function useLocalStorage<T>(
     key: string,
     initialValue: T,
@@ -315,7 +341,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return [storedValue, setValue];
   }
 
-  /* Resolve current Supabase user */
+  // Auth pointer
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -340,32 +366,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         trackEvent('logout', { via: 'supabase' });
       }
     });
-    return () => sub.subscription.unsubscribe();
+
+    return () => {
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
-  /* WHERE helpers for per-user tables */
+  // WHERE clauses memoized off currentUserId
   const notificationWhere = useMemo(
-    () => (currentUserId ? { user_id: currentUserId } : {}), // DB column is user_id
+    () => (currentUserId ? { userId: currentUserId } : {}),
     [currentUserId],
   );
   const feedbackWhere = useMemo(
-    () => (currentUserId ? { user_id: currentUserId } : {}),
+    () => (currentUserId ? { userId: currentUserId } : {}),
     [currentUserId],
   );
   const friendRequestWhere = useMemo(
-    () => (currentUserId ? { recipient_id: currentUserId } : {}),
+    () => (currentUserId ? { toUserId: currentUserId } : {}),
     [currentUserId],
   );
 
-  /* ── Server state hooks (Minimal, corrected) ───────────────────────────── */
-
-  // Users come from 'profiles' table in your schema
+  // =======================
+  // Server state hookups
+  // =======================
   const {
     rows: users,
     setRows: setUsers,
     refresh: refreshUsers,
     upsert: upsertUser,
-  } = useSupabaseList<User>('profiles');
+  } = useSupabaseList<User>('profiles', {
+    // SAFER: profiles has updated_at, not created_at
+    order: { column: 'updated_at', ascending: false },
+  });
 
   const {
     rows: posts,
@@ -373,7 +405,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     refresh: refreshPosts,
     upsert: upsertPost,
     remove: removePost,
-  } = useSupabaseList<Post>('posts', { order: { column: 'created_at', ascending: false } });
+  } = useSupabaseList<Post>('posts', {
+    // Keep if your posts table really has created_at; otherwise change to 'timestamp' or drop
+    order: { column: 'created_at', ascending: false },
+  });
 
   const {
     rows: notifications,
@@ -385,16 +420,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     channelKey: currentUserId ? `notifications:${currentUserId}` : 'notifications',
   });
 
-  // ⬇️ Conversations scoped to the signed-in user via the join table
   const {
     rows: conversations,
     setRows: setConversations,
-    refresh: refreshConversations, // <— this is what was missing
+    refresh: refreshConversations, // <- keep available & export
     upsert: upsertConversation,
   } = useSupabaseList<Conversation>('conversations', {
-    // This join matches your schema: public.conversation_members(user_id, conversation_id)
-    select: '*, conversation_members!inner(user_id,conversation_id)',
-    where: currentUserId ? { 'conversation_members.user_id': currentUserId } : {},
     channelKey: currentUserId ? `conversations:${currentUserId}` : 'conversations',
   });
 
@@ -429,7 +460,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     channelKey: currentUserId ? `friend_requests:${currentUserId}` : 'friend_requests',
   });
 
-  /* Local-only state */
+  const authData = { userId: currentUserId };
+  const setAuthData = (next: { userId: string | null }) => setCurrentUserId(next.userId);
+
+  // =======================
+  // Local/device-only state
+  // =======================
   const [pushSubscriptions, setPushSubscriptions] =
     useLocalStorage<Record<string, PushSubscriptionObject>>(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
   const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(THEME_STORAGE_KEY, 'dark');
@@ -437,20 +473,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isRegistering, setIsRegistering] = useState(false);
 
   const historyKey = useMemo(
-    () => `${HISTORY_STORAGE_KEY}:${currentUserId ?? 'guest'}`,
-    [currentUserId],
+    () => `${HISTORY_STORAGE_KEY}:${authData.userId ?? 'guest'}`,
+    [authData.userId],
   );
   const [history, setHistory] = useLocalStorage<NavigationEntry[]>(historyKey, defaultHistory());
 
   const [selectedConversationId, setSelectedConversationId] =
     useState<string | null>(null);
+
   const [editingCollaborationId, setEditingCollaborationId] =
     useState<string | null>(null);
 
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
 
-  /* Derived */
-  const currentUser = users.find((u) => u.id === currentUserId) || null;
+  // --- Derived -------------------------------------------------------------
+  const currentUser = users.find((u) => u.id === authData.userId) || null;
   const isAuthenticated = !!currentUser;
   const isMasterUser = currentUser?.id === MASTER_USER_ID;
 
@@ -460,13 +497,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const viewingCollaborationId =
     (currentEntry.context as PageContext).viewingCollaborationId ?? null;
 
-  /* Refresh all */
+  // --- Data refresh --------------------------------------------------------
   const refreshData = useCallback(async () => {
     await Promise.all([
       refreshUsers(),
       refreshPosts(),
       refreshNotifications(),
-      refreshConversations(),   // ✅ now defined
+      refreshConversations(),
       refreshCollaborations(),
       refreshFeedback(),
       refreshFriendRequests(),
@@ -482,7 +519,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     refreshFriendRequests,
   ]);
 
-  /* Theme */
+  // --- Theme ---------------------------------------------------------------
   useEffect(() => {
     if (theme === 'light') document.documentElement.classList.remove('dark');
     else document.documentElement.classList.add('dark');
@@ -496,12 +533,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setThemeState],
   );
 
-  /* Scrolling container */
+  // --- Scrolling container -------------------------------------------------
   const registerScrollableNode = useCallback((node: HTMLDivElement) => {
     scrollableNodeRef.current = node;
   }, []);
 
-  /* Navigation */
+  // --- Navigation ----------------------------------------------------------
   const navigate = useCallback(
     (page: Page, context: PageContext = {}) => {
       const last = history[history.length - 1];
@@ -540,11 +577,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const viewProfile = (userId: string) => navigate('profile', { viewingProfileId: userId });
 
-  /* Auth helpers (demo login + signout wrapper) */
+  // --- Auth-like demo helpers (plus Supabase signOut for safety) -----------
   const login = useCallback(
     (username: string, _password: string) => {
       const user = users.find((u) => u.username?.toLowerCase() === username.toLowerCase());
       if (user) {
+        setAuthData({ userId: user.id });
+        setIsRegistering(false);
         setHistory([{ page: 'feed', context: {} }]);
         trackEvent('login_success', { userId: user.id, via: 'demo' });
         return true;
@@ -552,18 +591,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       trackEvent('login_failed', { username });
       return false;
     },
-    [users, setHistory],
+    [users, setAuthData, setHistory],
   );
 
   const logout = useCallback(() => {
     try {
       supabase.auth.signOut().catch((error) => console.warn('[logout] supabase signOut error', error));
     } finally {
+      setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
       setRecoveryFlag(false);
       trackEvent('logout', { userId: currentUser?.id, via: 'app_context' });
     }
-  }, [setHistory, currentUser]);
+  }, [setAuthData, setHistory, currentUser]);
 
   const sendPasswordResetLink = useCallback((email: string) => {
     const base = typeof window !== 'undefined' ? window.location.origin : 'https://creatorzonly.com';
@@ -596,7 +636,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         | 'blockedUserIds'
       > & { password?: string },
     ) => {
-      if (users.some((u) => u.username?.toLowerCase() === data.username.toLowerCase())) {
+      if (
+        users.some((u) => u.username?.toLowerCase() === data.username.toLowerCase())
+      ) {
         trackEvent('registration_failed', { reason: 'username_taken' });
         return false;
       }
@@ -622,15 +664,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       setUsers((prev) => [...prev, newUser]);
       upsertUser(newUser);
+      setAuthData({ userId: newUser.id });
       setIsRegistering(false);
       setHistory([{ page: 'feed', context: {} }]);
       trackEvent('registration_success', { userId: newUser.id });
       return true;
     },
-    [users, setUsers, upsertUser, setHistory],
+    [users, setUsers, upsertUser, setAuthData, setHistory],
   );
 
-  /* Profile update */
   const updateUserProfile = useCallback(
     (patch: Partial<User> & Record<string, any>) => {
       if (!currentUser) return;
@@ -644,7 +686,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [currentUser, setUsers, upsertUser],
   );
 
-  /* Social helpers */
+  // --- Utilities & social actions -----------------------------------------
   const getUserById = useCallback(
     (id: string) => users.find((u) => u.id === id),
     [users],
@@ -810,8 +852,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       );
       upsertFriendRequest({ ...request, status: FriendRequestStatus.DECLINED });
       trackEvent('friend_request_declined', {
-        declinedBy: request?.toUserId,
-        requestedBy: request?.fromUserId,
+        declinedBy: request.toUserId,
+        requestedBy: request.fromUserId,
       });
     },
     [friendRequests, setFriendRequests, upsertFriendRequest],
@@ -820,50 +862,82 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const removeFriend = useCallback(
     (friendId: string) => {
       if (!currentUser) return;
-      const currentId = currentUser.id;
+      const currentUserId = currentUser.id;
 
       setUsers((prev) =>
         prev.map((user) => {
-          if (user.id === currentId) {
-            return { ...user, friendIds: user.friendIds.filter((id) => id !== friendId) };
+          if (user.id === currentUserId) {
+            return {
+              ...user,
+              friendIds: user.friendIds.filter((id) => id !== friendId),
+            };
           }
           if (user.id === friendId) {
-            return { ...user, friendIds: user.friendIds.filter((id) => id !== currentId) };
+            return {
+              ...user,
+              friendIds: user.friendIds.filter((id) => id !== currentUserId),
+            };
           }
           return user;
         }),
       );
 
-      trackEvent('friend_removed', { remover: currentId, removed: friendId });
+      const updatedCurrentUser = {
+        ...currentUser,
+        friendIds: currentUser.friendIds.filter((id) => id !== friendId),
+      };
+      upsertUser(updatedCurrentUser);
+      const friendUser = getUserById(friendId);
+      if (friendUser) {
+        upsertUser({
+          ...friendUser,
+          friendIds: friendUser.friendIds.filter((id) => id !== currentUserId),
+        });
+      }
+
+      setFriendRequests((prev) =>
+        prev.filter(
+          (fr) =>
+            !(
+              (fr.fromUserId === currentUserId && fr.toUserId === friendId) ||
+              (fr.fromUserId === friendId && fr.toUserId === currentUserId)
+            ),
+        ),
+      );
+
+      trackEvent('friend_removed', { remover: currentUserId, removed: friendId });
     },
-    [currentUser, setUsers],
+    [currentUser, setUsers, upsertUser, getUserById, setFriendRequests],
   );
 
   const toggleBlockUser = useCallback(
     (userIdToBlock: string) => {
       if (!currentUser) return;
-      const currentId = currentUser.id;
+      const currentUserId = currentUser.id;
       const isBlocked = currentUser.blockedUserIds?.includes(userIdToBlock);
 
       const updatedBlocked = isBlocked
         ? (currentUser.blockedUserIds || []).filter((id) => id !== userIdToBlock)
         : [...new Set([...(currentUser.blockedUserIds || []), userIdToBlock])];
 
-      const patchedUser: User = { ...currentUser, blockedUserIds: updatedBlocked };
-      setUsers((prev) => prev.map((u) => (u.id === currentId ? patchedUser : u)));
+      const patchedUser: User = {
+        ...currentUser,
+        blockedUserIds: updatedBlocked,
+      };
+      setUsers((prev) => prev.map((u) => (u.id === currentUserId ? patchedUser : u)));
       upsertUser(patchedUser);
 
       if (!isBlocked) removeFriend(userIdToBlock);
 
       trackEvent(isBlocked ? 'user_unblocked' : 'user_blocked', {
-        blocker: currentId,
+        blocker: currentUserId,
         blocked: userIdToBlock,
       });
     },
     [currentUser, setUsers, upsertUser, removeFriend],
   );
 
-  /* Posts */
+  // --- Posts ---------------------------------------------------------------
   const addPost = useCallback(
     (content: string, image?: string) => {
       if (!currentUser) return;
@@ -893,7 +967,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setPosts, removePost, currentUser?.id],
   );
 
-  /* Collaborations */
+  // --- Collaborations ------------------------------------------------------
   const addCollaboration = useCallback(
     (
       collabData: Omit<
@@ -922,7 +996,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateCollaboration = useCallback(
     (updatedCollab: Collaboration) => {
       setCollaborations((prev) =>
-        prev.map((c) => (c.id === updatedCollab.id ? updatedCollab : c)),
+        prev.map((collab) => (collab.id === updatedCollab.id ? updatedCollab : collab)),
       );
       upsertCollaboration(updatedCollab);
       trackEvent('collaboration_updated', {
@@ -949,6 +1023,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!collab) return;
 
       const isInterested = collab.interestedUserIds.includes(currentUser.id);
+
       const updatedCollab: Collaboration = {
         ...collab,
         interestedUserIds: isInterested
@@ -1002,7 +1077,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ],
   );
 
-  /* Messaging (client-side thread shape; server table is messages) */
+  // --- Messaging -----------------------------------------------------------
   const sendMessage = useCallback(
     (conversationId: string, text: string) => {
       if (!currentUser) return;
@@ -1010,9 +1085,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const conversation = conversations.find((c) => c.id === conversationId);
       if (!conversation) return;
 
-      const other = (conversation as any).participantIds?.find?.(
-        (id: string) => id !== currentUser.id,
-      );
+      const other = conversation.participantIds.find((id) => id !== currentUser.id);
       if (!other) return;
 
       const newMessage: Message = {
@@ -1025,8 +1098,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const updatedConversation: Conversation = {
         ...conversation,
-        messages: [...(conversation.messages || []), newMessage],
+        messages: [...conversation.messages, newMessage],
       };
+
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? updatedConversation : c)),
       );
@@ -1072,9 +1146,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (!currentUser) return;
 
       let conversation = conversations.find(
-        (c: any) =>
-          c.participantIds?.includes?.(currentUser.id) &&
-          c.participantIds?.includes?.(participantId),
+        (c) =>
+          c.participantIds.includes(currentUser.id) &&
+          c.participantIds.includes(participantId),
       );
 
       if (!conversation) {
@@ -1083,7 +1157,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           participantIds: [currentUser.id, participantId],
           messages: [],
           folder: 'general',
-        } as unknown as Conversation;
+        };
         setConversations((prev) => [...prev, conversation!]);
         upsertConversation(conversation);
       }
@@ -1108,7 +1182,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [setConversations, conversations, upsertConversation],
   );
 
-  /* Notifications */
+  // --- Notifications -------------------------------------------------------
   const markNotificationsAsRead = useCallback(
     (ids: string[]) => {
       setTimeout(() => {
@@ -1117,14 +1191,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         );
         ids.forEach((id) => {
           const existing = notifications.find((n) => n.id === id);
-          if (existing) upsertNotification({ ...existing, isRead: true });
+          if (existing) {
+            upsertNotification({ ...existing, isRead: true });
+          }
         });
-      }, 400);
+      }, 500);
     },
     [setNotifications, notifications, upsertNotification],
   );
 
-  /* Feedback */
+  // --- Feedback ------------------------------------------------------------
   const sendFeedback = useCallback(
     (content: string, type: 'Bug Report' | 'Suggestion') => {
       if (!currentUser) return;
@@ -1142,17 +1218,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [currentUser, setFeedback, upsertFeedback],
   );
 
-  /* Push subscriptions */
+  // --- Push subscriptions --------------------------------------------------
   const subscribeToPushNotifications = useCallback(
     (subscription: PushSubscriptionObject) => {
       if (!currentUser) return;
-      setPushSubscriptions((prev) => ({ ...prev, [currentUser.id]: subscription }));
+      setPushSubscriptions((prev) => ({
+        ...prev,
+        [currentUser.id]: subscription,
+      }));
+      console.log(`[PUSH_SIM] User ${currentUser.id} subscribed.`);
       trackEvent('push_subscribed', { userId: currentUser.id });
     },
     [currentUser, setPushSubscriptions],
   );
 
-  /* Context value */
+  // --- Context value -------------------------------------------------------
   const value: AppContextType = {
     users,
     posts,
@@ -1232,13 +1312,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setTheme,
 
     refreshData,
-    refreshConversations, // ✅ explicitly exposed
+    refreshConversations, // keep exporting for existing callers
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
-/* Hook */
 export const useAppContext = () => {
   const context = useContext(AppContext);
   if (context === undefined) {
