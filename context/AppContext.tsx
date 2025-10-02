@@ -80,6 +80,72 @@ const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 const HISTORY_STORAGE_KEY = 'creatorsOnlyHistory';
 
+const ensureArray = <T,>(value: unknown): T[] => {
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed as T[];
+      }
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
+const normalizeProfileRow = (row: any): User => {
+  if (!row || typeof row !== 'object') {
+    return {
+      id: '',
+      name: '',
+      username: '',
+      avatar: '',
+      banner: '',
+      bio: '',
+      email: undefined,
+      isVerified: false,
+      friendIds: [],
+      friendRequestIds: [],
+      platformLinks: [],
+      tags: [],
+      county: undefined,
+      state: undefined,
+      customLink: undefined,
+      blockedUserIds: [],
+    };
+  }
+
+  return {
+    id: row.id ?? '',
+    name: row.name ?? '',
+    username: row.username ?? '',
+    avatar: row.avatar ?? '',
+    banner: row.banner ?? '',
+    bio: row.bio ?? '',
+    email: row.email ?? undefined,
+    isVerified:
+      typeof row.is_verified === 'boolean'
+        ? row.is_verified
+        : typeof row.isVerified === 'boolean'
+          ? row.isVerified
+          : false,
+    friendIds: ensureArray<string>(row.friend_ids ?? row.friendIds),
+    friendRequestIds: ensureArray<string>(row.friend_request_ids ?? row.friendRequestIds),
+    platformLinks: ensureArray<User['platformLinks'][number]>(
+      row.platform_links ?? row.platformLinks,
+    ),
+    tags: ensureArray<string>(row.tags),
+    county: row.county ?? undefined,
+    state: row.state ?? undefined,
+    customLink: row.custom_link ?? row.customLink ?? undefined,
+    blockedUserIds: ensureArray<string>(row.blocked_user_ids ?? row.blockedUserIds),
+  };
+};
+
 /* ──────────────────────────────────────────────────────────────────────────────
    Supabase list helper (safe ordering)
    ─────────────────────────────────────────────────────────────────────────── */
@@ -92,11 +158,13 @@ function useSupabaseList<T extends { id?: string }>(
     // This prevents 400s like: "column X does not exist".
     order,
     channelKey,
+    mapRow,
   }: {
     select?: string;
     where?: Record<string, string | number | boolean | null>;
     order?: { column?: string; ascending?: boolean } | undefined;
     channelKey?: string;
+    mapRow?: (row: any) => T;
   } = {},
 ) {
   const [rows, setRows] = React.useState<T[]>([]);
@@ -125,12 +193,13 @@ function useSupabaseList<T extends { id?: string }>(
 
     const { data, error } = await query;
     if (!error && Array.isArray(data)) {
-      setRows(data as T[]);
+      const mappedRows = mapRow ? (data as any[]).map((row) => mapRow(row)) : (data as T[]);
+      setRows(mappedRows);
     } else if (error) {
       // eslint-disable-next-line no-console
       console.warn(`[useSupabaseList] Failed to load ${table}`, error);
     }
-  }, [table, select, whereString, order?.column, order?.ascending]);
+  }, [table, select, whereString, order?.column, order?.ascending, mapRow]);
 
   // initial + dependency refresh
   React.useEffect(() => {
@@ -356,7 +425,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRows: setUsers,
     refresh: refreshUsers,
     upsert: upsertUser,
-  } = useSupabaseList<User>('profiles', { select: '*' });
+  } = useSupabaseList<User>('profiles', { select: '*', mapRow: normalizeProfileRow });
 
   const {
     rows: posts,
