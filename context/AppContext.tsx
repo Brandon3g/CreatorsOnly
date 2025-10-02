@@ -146,6 +146,25 @@ const normalizeProfileRow = (row: any): User => {
   };
 };
 
+const serializeUserRow = (user: User): Record<string, any> => ({
+  id: user.id,
+  name: user.name,
+  username: user.username,
+  avatar: user.avatar,
+  banner: user.banner,
+  bio: user.bio,
+  email: user.email ?? null,
+  is_verified: user.isVerified,
+  friend_ids: user.friendIds ?? [],
+  friend_request_ids: user.friendRequestIds ?? [],
+  platform_links: user.platformLinks ?? [],
+  tags: user.tags ?? [],
+  county: user.county ?? null,
+  state: user.state ?? null,
+  custom_link: user.customLink ?? null,
+  blocked_user_ids: user.blockedUserIds ?? [],
+});
+
 /* ──────────────────────────────────────────────────────────────────────────────
    Supabase list helper (safe ordering)
    ─────────────────────────────────────────────────────────────────────────── */
@@ -159,12 +178,14 @@ function useSupabaseList<T extends { id?: string }>(
     order,
     channelKey,
     mapRow,
+     serializeRow,
   }: {
     select?: string;
     where?: Record<string, string | number | boolean | null>;
     order?: { column?: string; ascending?: boolean } | undefined;
     channelKey?: string;
     mapRow?: (row: any) => T;
+    serializeRow?: (row: T) => Record<string, any>;
   } = {},
 ) {
   const [rows, setRows] = React.useState<T[]>([]);
@@ -224,11 +245,12 @@ function useSupabaseList<T extends { id?: string }>(
 
   const upsert = React.useCallback(
     async (payload: T) => {
-      const { data, error } = await supabase.from(table).upsert(payload).select();
+      const dbPayload = serializeRow ? serializeRow(payload) : payload;
+      const { data, error } = await supabase.from(table).upsert(dbPayload).select();
       if (!error) refresh();
       return { data, error };
     },
-    [table, refresh],
+    [table, refresh, serializeRow],
   );
 
   const remove = React.useCallback(
@@ -425,7 +447,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRows: setUsers,
     refresh: refreshUsers,
     upsert: upsertUser,
-  } = useSupabaseList<User>('profiles', { select: '*', mapRow: normalizeProfileRow });
+ } = useSupabaseList<User>('profiles', {
+    select: '*',
+    mapRow: normalizeProfileRow,
+    serializeRow: serializeUserRow,
+  });
 
   const {
     rows: posts,
@@ -682,10 +708,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         prev.map((user) => (user.id === currentUser.id ? { ...user, ...patch } : user)),
       );
       const updatedUser = { ...currentUser, ...patch } as User;
-      upsertUser(updatedUser);
+      void upsertUser(updatedUser).then(({ error }) => {
+        if (error) {
+          console.warn('[AppContext] Failed to persist profile update', error);
+          refreshUsers();
+        }
+      });
       trackEvent('profile_updated', { userId: currentUser.id });
     },
-    [currentUser, setUsers, upsertUser],
+    [currentUser, setUsers, upsertUser, refreshUsers],
   );
 
   /* ── lookups ─────────────────────────────────────────────────────────────── */
