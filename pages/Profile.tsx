@@ -1,5 +1,5 @@
 // pages/Profile.tsx
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAppContext } from '../context/AppContext';
 import ProfileHeader from '../components/ProfileHeader';
 import UserCard from '../components/UserCard';
@@ -19,6 +19,12 @@ const ProfilePage: React.FC = () => {
     const id = viewingProfileId ?? currentUser?.id ?? null;
     return id ? getUserById(id) ?? null : null;
   }, [viewingProfileId, currentUser?.id, getUserById]);
+
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+
+  useEffect(() => {
+    setIsEditingProfile(false);
+  }, [profile?.id]);
 
   // Safe fallbacks so UI never crashes when data is still loading
   const safeTags = profile?.tags ?? [];
@@ -44,7 +50,11 @@ const ProfilePage: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto">
-      <ProfileHeader user={profile} />
+       <ProfileHeader
+        user={profile}
+        isEditing={isEditingProfile}
+        setIsEditing={setIsEditingProfile}
+      />
 
       <section className="mt-6 grid gap-4 md:grid-cols-3">
         <div className="md:col-span-2 space-y-4">
