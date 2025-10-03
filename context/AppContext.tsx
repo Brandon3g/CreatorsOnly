@@ -119,13 +119,26 @@ const normalizeProfileRow = (row: any): User => {
     };
   }
 
+ const coalesceString = (...values: Array<unknown>): string => {
+    for (const value of values) {
+      if (typeof value === 'string' && value.length) {
+        return value;
+      }
+      if (typeof value === 'string') {
+        // Allow empty string explicitly set in Supabase row.
+        return value;
+      }
+    }
+    return '';
+  };
+
   return {
-    id: row.id ?? '',
-    name: row.name ?? '',
-    username: row.username ?? '',
-    avatar: row.avatar ?? '',
-    banner: row.banner ?? '',
-    bio: row.bio ?? '',
+    id: coalesceString(row.id),
+    name: coalesceString(row.display_name, row.name, row.displayName),
+    username: coalesceString(row.username),
+    avatar: coalesceString(row.avatar_url, row.avatar, row.avatarUrl),
+    banner: coalesceString(row.banner, row.banner_url, row.bannerUrl),
+    bio: coalesceString(row.bio),
     email: row.email ?? undefined,
     isVerified:
       typeof row.is_verified === 'boolean'
@@ -148,21 +161,10 @@ const normalizeProfileRow = (row: any): User => {
 
 const serializeUserRow = (user: User): Record<string, any> => ({
   id: user.id,
-  name: user.name,
-  username: user.username,
-  avatar: user.avatar,
-  banner: user.banner,
-  bio: user.bio,
-  email: user.email ?? null,
-  is_verified: user.isVerified,
-  friend_ids: user.friendIds ?? [],
-  friend_request_ids: user.friendRequestIds ?? [],
-  platform_links: user.platformLinks ?? [],
-  tags: user.tags ?? [],
-  county: user.county ?? null,
-  state: user.state ?? null,
-  custom_link: user.customLink ?? null,
-  blocked_user_ids: user.blockedUserIds ?? [],
+  username: user.username || null,
+  display_name: user.name || null,
+  bio: user.bio || null,
+  avatar_url: user.avatar || null,
 });
 
 /* ──────────────────────────────────────────────────────────────────────────────
