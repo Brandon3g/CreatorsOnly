@@ -175,25 +175,17 @@ const serializeUserRow = (user: User): Record<string, any> => {
     return trimmed.length ? trimmed : null;
   };
 
-  const locationState = nullable(user.state);
-  const locationCounty = nullable(user.county);
-  const website = nullable(user.customLink);
-
   return {
     id: user.id,
     username: nullable(user.username),
     display_name: nullable(user.name),
-    full_name: nullable(user.name),
     bio: typeof user.bio === 'string' ? user.bio : null,
     avatar_url: typeof user.avatar === 'string' ? user.avatar : null,
     banner_url: typeof user.banner === 'string' ? user.banner : null,
-    custom_link: website,
-    website,
-    location_state: locationState,
-    state: locationState,
-    location_county: locationCounty,
-    county: locationCounty,
-    platform_links: user.platformLinks ?? [],
+    custom_link: nullable(user.customLink),
+    location_state: nullable(user.state),
+    location_county: nullable(user.county),
+    platform_links: user.platformLinks && user.platformLinks.length > 0 ? user.platformLinks : [],
   };
 };
 
