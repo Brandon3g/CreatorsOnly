@@ -180,6 +180,10 @@ type SerializedUserRow = {
   location_state: string | null;
   location_county: string | null;
   platform_links: User['platformLinks'];
+  friend_ids: string[];
+  friend_request_ids: string[];
+  blocked_user_ids: string[];
+  tags: string[];
 };
 
 const serializeUserRow = (user: User): SerializedUserRow => {
@@ -187,6 +191,28 @@ const serializeUserRow = (user: User): SerializedUserRow => {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length ? trimmed : null;
+  };
+
+  const arrayOfStrings = (value: unknown): string[] => {
+    if (Array.isArray(value)) {
+      return value.filter((entry) => typeof entry === 'string') as string[];
+    }
+    return [];
+  };
+
+  const arrayOfPlatformLinks = (value: unknown): User['platformLinks'] => {
+    if (Array.isArray(value)) {
+      return value.filter(
+        (entry): entry is User['platformLinks'][number] =>
+          Boolean(entry) &&
+          typeof entry === 'object' &&
+          'platform' in entry &&
+          'url' in entry &&
+          typeof (entry as any).platform === 'string' &&
+          typeof (entry as any).url === 'string',
+      );
+    }
+    return [];
   };
 
   return {
@@ -199,7 +225,11 @@ const serializeUserRow = (user: User): SerializedUserRow => {
     custom_link: nullable(user.customLink),
     location_state: nullable(user.state),
     location_county: nullable(user.county),
-    platform_links: user.platformLinks && user.platformLinks.length > 0 ? user.platformLinks : [],
+    platform_links: arrayOfPlatformLinks(user.platformLinks),
+    friend_ids: arrayOfStrings(user.friendIds),
+    friend_request_ids: arrayOfStrings(user.friendRequestIds),
+    blocked_user_ids: arrayOfStrings(user.blockedUserIds),
+    tags: arrayOfStrings(user.tags),
   };
 };
 

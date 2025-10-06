@@ -1,8 +1,6 @@
 // services/profile.ts
 import { supabase } from '../lib/supabaseClient';
 
-type PlatformLink = { platform: string; url: string };
-
 export type Profile = {
   id: string;
   username: string | null;
@@ -13,8 +11,13 @@ export type Profile = {
   custom_link: string | null;
   location_state: string | null;
   location_county: string | null;
-  platform_links: PlatformLink[] | null;
-  updated_at: string | null;
+  platform_links: { platform: string; url: string }[] | null;
+  friend_ids: string[] | null;
+  friend_request_ids: string[] | null;
+  blocked_user_ids: string[] | null;
+  tags: string[] | null;
+  email: string | null;
+  is_verified: boolean | null;
   updated_at: string | null;
 };
 
@@ -30,6 +33,12 @@ const PROFILE_COLUMNS =
     'location_state',
     'location_county',
     'platform_links',
+    'friend_ids',
+    'friend_request_ids',
+    'blocked_user_ids',
+    'tags',
+    'email',
+    'is_verified',
     'updated_at',
   ].join(', ');
 
@@ -43,6 +52,10 @@ const WRITABLE_FIELDS = new Set<keyof Omit<Profile, 'id' | 'updated_at'>>([
   'location_state',
   'location_county',
   'platform_links',
+  'friend_ids',
+  'friend_request_ids',
+  'blocked_user_ids',
+  'tags',
 ]);
 
 const UUID_REGEX =
@@ -106,15 +119,32 @@ export async function updateMyProfile(
 
   const updates = sanitizePatch(patch);
 
+  if (Object.keys(updates).length === 0) {
+    return getProfileById(dbUserId);
+  }
+
   const { data, error } = await supabase
     .from('profiles')
     .update({ ...updates })
     .eq('id', dbUserId)
     .select(PROFILE_COLUMNS)
+    .maybeSingle();
+
+  if (!error && data) {
+    return data as Profile;
+  }
+
+  const { data: upserted, error: upsertError } = await supabase
+    .from('profiles')
+    .upsert(
+      { id: dbUserId, ...updates },
+      { onConflict: 'id' },
+    )
+    .select(PROFILE_COLUMNS)
     .single();
 
-  if (error) throw error;
-  return data as Profile;
+  if (upsertError) throw upsertError;
+  return upserted as Profile;
 }
 
 /**
