@@ -1,4 +1,5 @@
 // services/profile.ts
+import type { User } from '../types';
 import { supabase } from '../lib/supabaseClient';
 
 export type Profile = {
@@ -8,6 +9,10 @@ export type Profile = {
   bio: string | null;
   avatar_url: string | null;
   updated_at: string | null;
+  location_state: string | null;
+  location_county: string | null;
+  custom_link: string | null;
+  platform_links: User['platformLinks'] | null;
 };
 
 const PROFILE_COLUMNS =
@@ -17,6 +22,10 @@ const PROFILE_COLUMNS =
     'display_name',
     'bio',
     'avatar_url',
+    'location_state',
+    'location_county',
+    'custom_link',
+    'platform_links',
     'updated_at',
   ].join(', ');
 
@@ -25,6 +34,10 @@ const WRITABLE_FIELDS = new Set<keyof Omit<Profile, 'id' | 'updated_at'>>([
   'display_name',
   'bio',
   'avatar_url',
+  'location_state',
+  'location_county',
+  'custom_link',
+  'platform_links',
 ]);
 
 const UUID_REGEX =

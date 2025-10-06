@@ -169,12 +169,18 @@ const normalizeProfileRow = (row: any): User => {
   };
 };
 
+type SerializedPlatformLink = User['platformLinks'][number];
+
 type SerializedUserRow = {
   id: string;
   username: string | null;
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
+  location_state: string | null;
+  location_county: string | null;
+  custom_link: string | null;
+  platform_links: SerializedPlatformLink[] | null;
 };
 
 const serializeUserRow = (user: User): SerializedUserRow => {
@@ -184,12 +190,39 @@ const serializeUserRow = (user: User): SerializedUserRow => {
     return trimmed.length ? trimmed : null;
   };
 
+  const sanitizePlatformLinks = (
+    links: User['platformLinks'] | undefined,
+  ): SerializedUserRow['platform_links'] => {
+    if (!Array.isArray(links)) return null;
+
+    const cleaned = links
+      .map((link) => {
+        if (!link || typeof link !== 'object') return null;
+        const platform = (link as SerializedPlatformLink).platform;
+        const urlRaw = (link as SerializedPlatformLink).url;
+        if (typeof platform !== 'string') return null;
+        if (typeof urlRaw !== 'string') return null;
+
+        const url = urlRaw.trim();
+        if (!url.length) return null;
+
+        return { platform, url };
+      })
+      .filter((link): link is SerializedPlatformLink => Boolean(link));
+
+    return cleaned.length ? cleaned : null;
+  };
+
   return {
     id: user.id,
     username: nullable(user.username),
     display_name: nullable(user.name),
     bio: typeof user.bio === 'string' ? user.bio : null,
     avatar_url: typeof user.avatar === 'string' ? user.avatar : null,
+    location_state: nullable(user.state),
+    location_county: nullable(user.county),
+    custom_link: nullable(user.customLink),
+    platform_links: sanitizePlatformLinks(user.platformLinks),
   };
 };
 
