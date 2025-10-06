@@ -255,7 +255,7 @@ const SignUp: React.FC = () => {
       });
 
       setTimeout(() => {
-        window.location.hash = data.session ? '#/Feed' : '#/Login';
+        window.location.hash = data.session ? '#/Profile' : '#/Login';
       }, 700);
     } catch (err: any) {
       console.error('[SignUp] error', err);

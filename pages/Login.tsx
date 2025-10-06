@@ -77,7 +77,7 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
       trackEvent('login_success', { method: 'email_password' });
       // Let AuthGate/AppContext take over. Small nudge to reflect state instantly:
       if (!location.hash || location.hash.toLowerCase() === '#/login') {
-        location.hash = '#/Feed';
+        location.hash = '#/Profile';
       }
     } catch (e) {
       console.error('[Login] unexpected', e);

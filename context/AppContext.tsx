@@ -478,7 +478,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (recovering && !/#\/NewPassword/i.test(window.location.hash)) {
           window.location.hash = '#/NewPassword';
         } else {
-          setHistory([{ page: 'feed', context: {} }]);
+          setHistory([{ page: 'profile', context: { viewingProfileId: session.user.id } }]);
         }
         trackEvent('login_success', { userId: session.user.id, via: 'supabase' });
       } else {
@@ -697,7 +697,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (user) {
         setAuthData({ userId: user.id });
         setIsRegistering(false);
-        setHistory([{ page: 'feed', context: {} }]);
+        setHistory([{ page: 'profile', context: { viewingProfileId: user.id } }]);
         trackEvent('login_success', { userId: user.id, via: 'demo' });
         return true;
       }
@@ -760,7 +760,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       upsertUser(newUser);
       setAuthData({ userId: newUser.id });
       setIsRegistering(false);
-      setHistory([{ page: 'feed', context: {} }]);
+      setHistory([{ page: 'profile', context: { viewingProfileId: newUser.id } }]);
       trackEvent('registration_success', { userId: newUser.id });
       return true;
     },
