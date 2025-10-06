@@ -31,6 +31,7 @@ import {
 import { MASTER_USER_ID } from '../constants';
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
+import { updateMyProfile } from '../services/profile';
 
 /* ──────────────────────────────────────────────────────────────────────────────
    Recovery helpers
@@ -168,7 +169,20 @@ const normalizeProfileRow = (row: any): User => {
   };
 };
 
-const serializeUserRow = (user: User): Record<string, any> => {
+type SerializedUserRow = {
+  id: string;
+  username: string | null;
+  display_name: string | null;
+  bio: string | null;
+  avatar_url: string | null;
+  banner_url: string | null;
+  custom_link: string | null;
+  location_state: string | null;
+  location_county: string | null;
+  platform_links: User['platformLinks'];
+};
+
+const serializeUserRow = (user: User): SerializedUserRow => {
   const nullable = (value: unknown): string | null => {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
@@ -187,6 +201,11 @@ const serializeUserRow = (user: User): Record<string, any> => {
     location_county: nullable(user.county),
     platform_links: user.platformLinks && user.platformLinks.length > 0 ? user.platformLinks : [],
   };
+};
+
+const toProfilePatch = (user: User): Omit<SerializedUserRow, 'id'> => {
+  const { id: _ignored, ...dbPatch } = serializeUserRow(user);
+  return dbPatch;
 };
 
 /* ──────────────────────────────────────────────────────────────────────────────
@@ -347,7 +366,7 @@ interface AppContextType {
       | 'blockedUserIds'
     > & { password?: string }
   ) => boolean;
-  updateUserProfile: (patch: Partial<User> & Record<string, any>) => void;
+  updateUserProfile: (patch: Partial<User> & Record<string, any>) => Promise<void>;
 
   // social
   sendFriendRequest: (toUserId: string) => void;
@@ -726,21 +745,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   );
 
   const updateUserProfile = useCallback(
-    (patch: Partial<User> & Record<string, any>) => {
+    async (patch: Partial<User> & Record<string, any>) => {
       if (!currentUser) return;
+
+      const optimisticUser = { ...currentUser, ...patch } as User;
+
       setUsers((prev) =>
-        prev.map((user) => (user.id === currentUser.id ? { ...user, ...patch } : user)),
+        prev.map((user) => (user.id === currentUser.id ? optimisticUser : user)),
       );
-      const updatedUser = { ...currentUser, ...patch } as User;
-      void upsertUser(updatedUser).then(({ error }) => {
-        if (error) {
-          console.warn('[AppContext] Failed to persist profile update', error);
-          refreshUsers();
-        }
-      });
-      trackEvent('profile_updated', { userId: currentUser.id });
+
+      try {
+        const dbPatch = toProfilePatch(optimisticUser);
+        const updatedProfile = await updateMyProfile(currentUser.id, dbPatch);
+        const normalizedUser = normalizeProfileRow(updatedProfile);
+        setUsers((prev) =>
+          prev.map((user) => (user.id === normalizedUser.id ? normalizedUser : user)),
+        );
+        trackEvent('profile_updated', { userId: currentUser.id });
+      } catch (error) {
+        console.warn('[AppContext] Failed to persist profile update', error);
+        refreshUsers();
+      }
     },
-    [currentUser, setUsers, upsertUser, refreshUsers],
+    [currentUser, setUsers, refreshUsers],
   );
 
   /* ── lookups ─────────────────────────────────────────────────────────────── */

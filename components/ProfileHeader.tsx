@@ -63,7 +63,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({ user, isEditing, setIsEdi
     if (setIsEditing) setIsEditing(false);
   };
 
- const buildUiPatch = (cleanedLinks: User['platformLinks']) => {
+  const buildUiPatch = (cleanedLinks: User['platformLinks']) => {
     const trimmedName = typeof formData.name === 'string' ? formData.name.trim() : formData.name;
     const trimmedUsername =
       typeof formData.username === 'string' ? formData.username.trim() : formData.username;
@@ -84,12 +84,12 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({ user, isEditing, setIsEdi
     };
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const cleanedLinks = formData.platformLinks.filter(link => link.url.trim() !== '');
     const uiPatch = buildUiPatch(cleanedLinks);
     setFormData(prev => ({ ...prev, platformLinks: cleanedLinks }));
 
-   updateUserProfile(uiPatch);
+    await updateUserProfile(uiPatch);
 
     if (setIsEditing) setIsEditing(false);
   };
@@ -119,7 +119,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({ user, isEditing, setIsEdi
           // If NOT in edit mode, persist immediately (map avatar -> avatar_url; ignore banner)
           if (!isEditing) {
             if (field === 'avatar') {
-              updateUserProfile({
+              void updateUserProfile({
                 avatar: newImageUrl,
               });
             }
@@ -299,7 +299,7 @@ You will be unfriended.`
               <button
                 onClick={(e) => {
                   e.preventDefault();
-                  handleSave();
+                  void handleSave();
                 }}
                 className="font-bold py-2 px-4 rounded-full bg-primary text-white hover:bg-primary-hover transition-opacity"
               >
