@@ -165,6 +165,11 @@ const serializeUserRow = (user: User): Record<string, any> => ({
   display_name: user.name || null,
   bio: user.bio || null,
   avatar_url: user.avatar || null,
+  banner_url: user.banner || null,
+  state: user.state || null,
+  county: user.county || null,
+  custom_link: user.customLink || null,
+  platform_links: user.platformLinks ?? [],
 });
 
 /* ──────────────────────────────────────────────────────────────────────────────
