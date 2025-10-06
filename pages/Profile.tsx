@@ -6,6 +6,7 @@ import UserCard from '../components/UserCard';
 import PostCard from '../components/PostCard';
 import CollabCard from '../components/CollabCard';
 import type { User } from '../types';
+import { usePullToRefresh, PullToRefreshIndicator } from '../components/PullToRefresh';
 
 const ProfilePage: React.FC = () => {
   const {
@@ -17,7 +18,12 @@ const ProfilePage: React.FC = () => {
     navigate,
     posts,
     collaborations,
+    refreshData,
   } = useAppContext();
+
+  const { isRefreshing, pullDistance, isPulling, handlers } = usePullToRefresh({
+    onRefresh: refreshData,
+  });
 
   type TabKey = 'posts' | 'opportunities' | 'friends';
 
@@ -127,38 +133,52 @@ const ProfilePage: React.FC = () => {
   }
 
   return (
-   <div className="max-w-4xl mx-auto px-4">
-      <ProfileHeader
-        user={profile}
-        isEditing={isEditingProfile}
-        setIsEditing={setIsEditingProfile}
+    <div className="relative">
+      <PullToRefreshIndicator
+        isRefreshing={isRefreshing}
+        pullDistance={pullDistance}
       />
+      <div
+        {...handlers}
+        style={{
+          transform: `translateY(${isRefreshing ? 60 : pullDistance}px)`,
+          transition: isPulling ? 'none' : 'transform 0.3s ease-out',
+        }}
+      >
+        <div className="max-w-4xl mx-auto px-4">
+          <ProfileHeader
+            user={profile}
+            isEditing={isEditingProfile}
+            setIsEditing={setIsEditingProfile}
+          />
 
-      <section className="mt-6">
-        <div className="rounded-2xl border border-surface-light overflow-hidden bg-surface">
-          <nav className="flex border-b border-surface-light">
-            {[
-              { label: 'Posts', value: 'posts' },
-              { label: 'Opportunities', value: 'opportunities' },
-              { label: 'Friends', value: 'friends' },
-            ].map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                className={`flex-1 px-4 py-3 text-sm font-semibold transition-colors ${
-                  activeTab === tab.value
-                    ? 'text-primary border-b-2 border-primary'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-                onClick={() => setActiveTab(tab.value as TabKey)}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-          <div className="bg-surface">{renderTabContent()}</div>
+          <section className="mt-6">
+            <div className="rounded-2xl border border-surface-light overflow-hidden bg-surface">
+              <nav className="flex border-b border-surface-light">
+                {[
+                  { label: 'Posts', value: 'posts' },
+                  { label: 'Opportunities', value: 'opportunities' },
+                  { label: 'Friends', value: 'friends' },
+                ].map((tab) => (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    className={`flex-1 px-4 py-3 text-sm font-semibold transition-colors ${
+                      activeTab === tab.value
+                        ? 'text-primary border-b-2 border-primary'
+                        : 'text-text-secondary hover:text-text-primary'
+                    }`}
+                    onClick={() => setActiveTab(tab.value as TabKey)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
+              <div className="bg-surface">{renderTabContent()}</div>
+            </div>
+          </section>
         </div>
-      </section>
+      </div>
     </div>
   );
 };

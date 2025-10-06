@@ -4,6 +4,7 @@ import { useAppContext } from '../context/AppContext';
 import { Conversation, ConversationFolder, NotificationType } from '../types';
 import { ICONS } from '../constants';
 import { subscribeToTable } from '../services/realtime'; // ✅ NEW: realtime hook-in
+import { usePullToRefresh, PullToRefreshIndicator } from '../components/PullToRefresh';
 
 const Messages: React.FC = () => {
   const {
@@ -21,6 +22,10 @@ const Messages: React.FC = () => {
     markNotificationsAsRead,
     refreshData, // ✅ we'll trigger this on realtime events
   } = useAppContext();
+
+  const { isRefreshing, pullDistance, isPulling, handlers } = usePullToRefresh({
+    onRefresh: refreshData,
+  });
 
   const [newMessage, setNewMessage] = useState('');
   const [activeFolder, setActiveFolder] = useState<ConversationFolder>('general');
@@ -210,88 +215,100 @@ const Messages: React.FC = () => {
   );
 
   return (
-    <div className="flex h-full">
-      {/* Conversation List */}
+    <div className="relative h-full">
+      <PullToRefreshIndicator
+        isRefreshing={isRefreshing}
+        pullDistance={pullDistance}
+      />
       <div
-        className={`w-full md:w-1/3 border-r border-surface-light flex-col main-content-mobile-padding ${
-          selectedConversationId ? 'hidden md:flex' : 'flex'
-        }`}
+        {...handlers}
+        className="flex h-full"
+        style={{
+          transform: `translateY(${isRefreshing ? 60 : pullDistance}px)`,
+          transition: isPulling ? 'none' : 'transform 0.3s ease-out',
+        }}
       >
-        <header className="app-header flex items-center space-x-4">
-          {history.length > 1 && (
-            <button
-              onClick={goBack}
-              onTouchStart={() => {}}
-              aria-label="Go back"
-              className="text-text-secondary hover:text-primary p-2 rounded-full -ml-2"
-            >
-              {ICONS.arrowLeft}
-            </button>
-          )}
-          <div className="flex-grow flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-bold text-primary lg:hidden">CreatorsOnly</h1>
-              <h1 className="hidden lg:block text-xl font-bold">Messages</h1>
-            </div>
-            <div className="flex md:hidden items-center space-x-4">
-              <button onClick={() => navigate('search')} onTouchStart={() => {}} aria-label="Search">
-                {ICONS.search}
-              </button>
+        {/* Conversation List */}
+        <div
+          className={`w-full md:w-1/3 border-r border-surface-light flex-col main-content-mobile-padding ${
+            selectedConversationId ? 'hidden md:flex' : 'flex'
+          }`}
+        >
+          <header className="app-header flex items-center space-x-4">
+            {history.length > 1 && (
               <button
-                onClick={() => navigate('notifications')}
+                onClick={goBack}
                 onTouchStart={() => {}}
-                aria-label="Notifications"
-                className="relative"
+                aria-label="Go back"
+                className="text-text-secondary hover:text-primary p-2 rounded-full -ml-2"
               >
-                {ICONS.notifications}
-                {hasOtherNotifications && (
-                  <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-accent-red ring-2 ring-background" />
-                )}
+                {ICONS.arrowLeft}
               </button>
+            )}
+            <div className="flex-grow flex items-center justify-between">
+              <div>
+                <h1 className="text-xl font-bold text-primary lg:hidden">CreatorsOnly</h1>
+                <h1 className="hidden lg:block text-xl font-bold">Messages</h1>
+              </div>
+              <div className="flex md:hidden items-center space-x-4">
+                <button onClick={() => navigate('search')} onTouchStart={() => {}} aria-label="Search">
+                  {ICONS.search}
+                </button>
+                <button
+                  onClick={() => navigate('notifications')}
+                  onTouchStart={() => {}}
+                  aria-label="Notifications"
+                  className="relative"
+                >
+                  {ICONS.notifications}
+                  {hasOtherNotifications && (
+                    <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-accent-red ring-2 ring-background" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className="p-2">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search messages"
+                className="w-full bg-surface-light border border-transparent rounded-full py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-primary"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary">
+                {ICONS.search}
+              </div>
             </div>
           </div>
-        </header>
 
-        <div className="p-2">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search messages"
-              className="w-full bg-surface-light border border-transparent rounded-full py-2 pl-10 pr-4 focus:outline-none focus:ring-2 focus:ring-primary"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary">
-              {ICONS.search}
-            </div>
+          <div className="flex border-b border-surface-light">
+            <FolderButton folder="contact_list" label="Contact List" />
+            <FolderButton folder="general" label="General" />
+            <FolderButton folder="hidden" label="Hidden" />
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {filteredConversations.map((conv) => (
+              <ConversationListItem
+                key={conv.id}
+                conv={conv}
+                isSelected={conv.id === selectedConversationId}
+              />
+            ))}
           </div>
         </div>
 
-        <div className="flex border-b border-surface-light">
-          <FolderButton folder="contact_list" label="Contact List" />
-          <FolderButton folder="general" label="General" />
-          <FolderButton folder="hidden" label="Hidden" />
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {filteredConversations.map((conv) => (
-            <ConversationListItem
-              key={conv.id}
-              conv={conv}
-              isSelected={conv.id === selectedConversationId}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Chat View */}
-      <div
-        className={`w-full md:w-2/3 flex-col main-content-mobile-padding ${
-          selectedConversationId ? 'flex' : 'hidden md:flex'
-        }`}
-      >
-        {selectedConversation && currentUser ? (
-          <>
+        {/* Chat View */}
+        <div
+          className={`w-full md:w-2/3 flex-col main-content-mobile-padding ${
+            selectedConversationId ? 'flex' : 'hidden md:flex'
+          }`}
+        >
+          {selectedConversation && currentUser ? (
+            <>
             <header className="app-header flex items-center space-x-3 justify-between">
               <div className="flex items-center space-x-4">
                 <button
@@ -401,6 +418,7 @@ const Messages: React.FC = () => {
             <p>Select a conversation to start chatting</p>
           </div>
         )}
+        </div>
       </div>
     </div>
   );
