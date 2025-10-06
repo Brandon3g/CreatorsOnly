@@ -1,23 +1,48 @@
 // services/profile.ts
 import { supabase } from '../lib/supabaseClient';
 
+type PlatformLink = { platform: string; url: string };
+
 export type Profile = {
   id: string;
   username: string | null;
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
+  banner_url: string | null;
+  custom_link: string | null;
+  location_state: string | null;
+  location_county: string | null;
+  platform_links: PlatformLink[] | null;
+  updated_at: string | null;
   updated_at: string | null;
 };
 
 const PROFILE_COLUMNS =
-  'id, username, display_name, bio, avatar_url, updated_at';
+  [
+    'id',
+    'username',
+    'display_name',
+    'bio',
+    'avatar_url',
+    'banner_url',
+    'custom_link',
+    'location_state',
+    'location_county',
+    'platform_links',
+    'updated_at',
+  ].join(', ');
 
 const WRITABLE_FIELDS = new Set<keyof Omit<Profile, 'id' | 'updated_at'>>([
   'username',
   'display_name',
   'bio',
   'avatar_url',
+  'banner_url',
+  'custom_link',
+  'location_state',
+  'location_county',
+  'platform_links',
 ]);
 
 const UUID_REGEX =

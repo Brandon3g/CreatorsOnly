@@ -119,7 +119,7 @@ const normalizeProfileRow = (row: any): User => {
     };
   }
 
- const coalesceString = (...values: Array<unknown>): string => {
+  const coalesceString = (...values: Array<unknown>): string => {
     for (const value of values) {
       if (typeof value === 'string' && value.length) {
         return value;
@@ -132,9 +132,18 @@ const normalizeProfileRow = (row: any): User => {
     return '';
   };
 
+  const optionalString = (...values: Array<unknown>): string | undefined => {
+    for (const value of values) {
+      if (typeof value === 'string') {
+        return value;
+      }
+    }
+    return undefined;
+  };
+
   return {
     id: coalesceString(row.id),
-    name: coalesceString(row.display_name, row.name, row.displayName),
+    name: coalesceString(row.display_name, row.full_name, row.name, row.displayName, row.fullName),
     username: coalesceString(row.username),
     avatar: coalesceString(row.avatar_url, row.avatar, row.avatarUrl),
     banner: coalesceString(row.banner, row.banner_url, row.bannerUrl),
@@ -152,25 +161,41 @@ const normalizeProfileRow = (row: any): User => {
       row.platform_links ?? row.platformLinks,
     ),
     tags: ensureArray<string>(row.tags),
-    county: row.county ?? undefined,
-    state: row.state ?? undefined,
-    customLink: row.custom_link ?? row.customLink ?? undefined,
+    county: optionalString(row.location_county, row.county),
+    state: optionalString(row.location_state, row.state),
+    customLink: optionalString(row.custom_link, row.website, row.customLink),
     blockedUserIds: ensureArray<string>(row.blocked_user_ids ?? row.blockedUserIds),
   };
 };
 
-const serializeUserRow = (user: User): Record<string, any> => ({
-  id: user.id,
-  username: user.username || null,
-  display_name: user.name || null,
-  bio: user.bio || null,
-  avatar_url: user.avatar || null,
-  banner_url: user.banner || null,
-  state: user.state || null,
-  county: user.county || null,
-  custom_link: user.customLink || null,
-  platform_links: user.platformLinks ?? [],
-});
+const serializeUserRow = (user: User): Record<string, any> => {
+  const nullable = (value: unknown): string | null => {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed : null;
+  };
+
+  const locationState = nullable(user.state);
+  const locationCounty = nullable(user.county);
+  const website = nullable(user.customLink);
+
+  return {
+    id: user.id,
+    username: nullable(user.username),
+    display_name: nullable(user.name),
+    full_name: nullable(user.name),
+    bio: typeof user.bio === 'string' ? user.bio : null,
+    avatar_url: typeof user.avatar === 'string' ? user.avatar : null,
+    banner_url: typeof user.banner === 'string' ? user.banner : null,
+    custom_link: website,
+    website,
+    location_state: locationState,
+    state: locationState,
+    location_county: locationCounty,
+    county: locationCounty,
+    platform_links: user.platformLinks ?? [],
+  };
+};
 
 /* ──────────────────────────────────────────────────────────────────────────────
    Supabase list helper (safe ordering)
