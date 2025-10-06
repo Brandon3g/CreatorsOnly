@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { User, Platform, FriendRequestStatus } from '../types';
 import { ICONS } from '../constants';
 import { useAppContext } from '../context/AppContext';
@@ -21,6 +21,7 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({ user, isEditing, setIsEdi
     navigate,
     removeFriend,
     toggleBlockUser,
+    users,
   } = useAppContext();
 
   const isCurrentUser = currentUser?.id === user.id;
@@ -163,6 +164,28 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({ user, isEditing, setIsEdi
       });
     }
   };
+
+const friendUsers = useMemo(
+    () =>
+      (user.friendIds ?? [])
+        .map((id) => (users ?? []).find((u) => u.id === id) ?? null)
+        .filter((friend): friend is User => Boolean(friend)),
+    [user.friendIds, users],
+  );
+
+  const friendPreview = useMemo(() => {
+    if (friendUsers.length === 0) return '';
+    const names = friendUsers.map((friend) => friend.name).filter(Boolean);
+    if (names.length <= 3) {
+      return names.join(', ');
+    }
+    return `${names.slice(0, 3).join(', ')} +${names.length - 3} more`;
+  }, [friendUsers]);
+
+  const hasLocation = Boolean(user.county && user.state);
+  const safePlatformLinks = user.platformLinks ?? [];
+  const hasPlatforms = safePlatformLinks.length > 0 || Boolean(user.customLink);
+  const userTags = user.tags ?? [];
 
   const PlatformLink: React.FC<{ platform: Platform; url: string }> = ({ platform, url }) => (
     <a
@@ -508,32 +531,60 @@ You will be unfriended.`
             </div>
             <p className="text-text-secondary">@{user.username}</p>
             <p className="mt-4 whitespace-pre-wrap">{user.bio}</p>
+            {userTags.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {userTags.map((tag, index) => (
+                  <span
+                    key={`${tag}-${index}`}
+                    className="px-2 py-1 rounded-md bg-surface-light text-xs font-medium text-text-primary"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </>
         )}
 
         {!isEditing && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-4 text-text-secondary">
-            {user.county && user.state && (
-              <div className="flex items-center space-x-1">
-                {ICONS.location} <span>{user.county}, {user.state}</span>
+          <div className="mt-4 space-y-3 text-sm text-text-secondary">
+            {(hasLocation || friendUsers.length > 0) && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {hasLocation && (
+                  <div className="flex items-center space-x-1">
+                    {ICONS.location}
+                    <span>
+                      {user.county}, {user.state}
+                    </span>
+                  </div>
+                )}
+                {friendUsers.length > 0 && (
+                  <div className="flex items-center space-x-1">
+                    <span>Friends ·</span>
+                    <span className="font-medium text-text-primary">{friendPreview}</span>
+                  </div>
+                )}
               </div>
             )}
-            <div className="flex items-center space-x-2">
-              {user.platformLinks.map(link => (
-                <PlatformLink key={link.platform} platform={link.platform} url={link.url} />
-              ))}
-              {user.customLink && (
-                <a
-                  href={user.customLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Website"
-                  className="text-text-secondary hover:text-primary transition-colors"
-                >
-                  {ICONS.link}
-                </a>
-              )}
-            </div>
+
+            {hasPlatforms && (
+              <div className="flex flex-wrap items-center gap-3">
+                {safePlatformLinks.map((link) => (
+                  <PlatformLink key={link.platform} platform={link.platform} url={link.url} />
+                ))}
+                {user.customLink && (
+                  <a
+                    href={user.customLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Website"
+                    className="text-text-secondary hover:text-primary transition-colors"
+                  >
+                    {ICONS.link}
+                  </a>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
