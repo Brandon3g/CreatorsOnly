@@ -175,15 +175,6 @@ type SerializedUserRow = {
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
-  banner_url: string | null;
-  custom_link: string | null;
-  location_state: string | null;
-  location_county: string | null;
-  platform_links: User['platformLinks'];
-  friend_ids: string[];
-  friend_request_ids: string[];
-  blocked_user_ids: string[];
-  tags: string[];
 };
 
 const serializeUserRow = (user: User): SerializedUserRow => {
@@ -193,43 +184,12 @@ const serializeUserRow = (user: User): SerializedUserRow => {
     return trimmed.length ? trimmed : null;
   };
 
-  const arrayOfStrings = (value: unknown): string[] => {
-    if (Array.isArray(value)) {
-      return value.filter((entry) => typeof entry === 'string') as string[];
-    }
-    return [];
-  };
-
-  const arrayOfPlatformLinks = (value: unknown): User['platformLinks'] => {
-    if (Array.isArray(value)) {
-      return value.filter(
-        (entry): entry is User['platformLinks'][number] =>
-          Boolean(entry) &&
-          typeof entry === 'object' &&
-          'platform' in entry &&
-          'url' in entry &&
-          typeof (entry as any).platform === 'string' &&
-          typeof (entry as any).url === 'string',
-      );
-    }
-    return [];
-  };
-
   return {
     id: user.id,
     username: nullable(user.username),
     display_name: nullable(user.name),
     bio: typeof user.bio === 'string' ? user.bio : null,
     avatar_url: typeof user.avatar === 'string' ? user.avatar : null,
-    banner_url: typeof user.banner === 'string' ? user.banner : null,
-    custom_link: nullable(user.customLink),
-    location_state: nullable(user.state),
-    location_county: nullable(user.county),
-    platform_links: arrayOfPlatformLinks(user.platformLinks),
-    friend_ids: arrayOfStrings(user.friendIds),
-    friend_request_ids: arrayOfStrings(user.friendRequestIds),
-    blocked_user_ids: arrayOfStrings(user.blockedUserIds),
-    tags: arrayOfStrings(user.tags),
   };
 };
 

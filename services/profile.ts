@@ -7,17 +7,6 @@ export type Profile = {
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
-  banner_url: string | null;
-  custom_link: string | null;
-  location_state: string | null;
-  location_county: string | null;
-  platform_links: { platform: string; url: string }[] | null;
-  friend_ids: string[] | null;
-  friend_request_ids: string[] | null;
-  blocked_user_ids: string[] | null;
-  tags: string[] | null;
-  email: string | null;
-  is_verified: boolean | null;
   updated_at: string | null;
 };
 
@@ -28,17 +17,6 @@ const PROFILE_COLUMNS =
     'display_name',
     'bio',
     'avatar_url',
-    'banner_url',
-    'custom_link',
-    'location_state',
-    'location_county',
-    'platform_links',
-    'friend_ids',
-    'friend_request_ids',
-    'blocked_user_ids',
-    'tags',
-    'email',
-    'is_verified',
     'updated_at',
   ].join(', ');
 
@@ -47,15 +25,6 @@ const WRITABLE_FIELDS = new Set<keyof Omit<Profile, 'id' | 'updated_at'>>([
   'display_name',
   'bio',
   'avatar_url',
-  'banner_url',
-  'custom_link',
-  'location_state',
-  'location_county',
-  'platform_links',
-  'friend_ids',
-  'friend_request_ids',
-  'blocked_user_ids',
-  'tags',
 ]);
 
 const UUID_REGEX =
