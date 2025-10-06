@@ -101,7 +101,7 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
           </div>
         </div>
 
-        <h1 className="text-2xl font-bold text-center mb-2">CreatorsOnly</h1>
+        <h1 className="text-2xl font-bold text-center mb-2 text-primary">CreatorsOnly</h1>
         <p className="text-center text-text-secondary mb-6">
           A community for Creators
         </p>
