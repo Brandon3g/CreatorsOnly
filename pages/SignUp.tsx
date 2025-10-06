@@ -267,7 +267,7 @@ const SignUp: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen grid place-items-center p-6">
+    <div className="min-h-screen grid place-items-center p-6 bg-background">
       <div className="w-full max-w-md bg-surface rounded-2xl border border-surface-light p-6 md:p-8">
         {/* Header */}
         <div className="mb-6">
