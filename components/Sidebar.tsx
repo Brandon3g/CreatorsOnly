@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { ICONS } from '../constants';
-import { applyThemePreference, syncThemeToDom } from '../lib/theme';
+import { useThemeSync } from '../hooks/useThemeSync';
 import { Page, NotificationType } from '../types';
 
 type NavItemProps = {
@@ -42,13 +42,11 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  const applyTheme = (next: 'light' | 'dark') => {
-    applyThemePreference(next, setTheme);
-  };
+  useThemeSync(theme, setTheme);
 
-  useEffect(() => {
-    syncThemeToDom(theme);
-  }, [theme]);
+  const applyTheme = (next: 'light' | 'dark') => {
+    setTheme(next);
+  };
 
   useEffect(() => {
     // Inject global styles for theme + precise iPhone safe-area handling
@@ -129,8 +127,6 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       `;
       document.head.appendChild(styleEl);
     }
-    syncThemeToDom(theme);
-
     // ===== Mobile header pinning =====
     const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
 
@@ -233,7 +229,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       roots.forEach(cleanupPinned);
       document.documentElement.classList.remove('co-has-pinned-header');
     };
-  }, [theme]);
+  }, []);
 
   const unreadMessageSenders = new Set(
     notifications

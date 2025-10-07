@@ -32,6 +32,7 @@ import { MASTER_USER_ID } from '../constants';
 import { trackEvent } from '../services/analytics';
 import { supabase } from '../lib/supabaseClient';
 import { updateMyProfile } from '../services/profile';
+import { useThemeSync } from '../hooks/useThemeSync';
 
 /* ──────────────────────────────────────────────────────────────────────────────
    Recovery helpers
@@ -586,6 +587,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [pushSubscriptions, setPushSubscriptions] =
     useLocalStorage<Record<string, PushSubscriptionObject>>(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
   const [theme, setThemeState] = useLocalStorage<'light' | 'dark'>(THEME_STORAGE_KEY, 'dark');
+  const syncThemePreference = useThemeSync(theme, setThemeState, { withUpdater: true });
 
   const historyKey = useMemo(
     () => `${HISTORY_STORAGE_KEY}:${authData.userId ?? 'guest'}`,
@@ -634,17 +636,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ]);
 
   /* ── theme ───────────────────────────────────────────────────────────────── */
-  useEffect(() => {
-    if (theme === 'light') document.documentElement.classList.remove('dark');
-    else document.documentElement.classList.add('dark');
-  }, [theme]);
-
   const setTheme = useCallback(
     (newTheme: 'light' | 'dark') => {
-      setThemeState(newTheme);
+      syncThemePreference(newTheme);
       trackEvent('theme_changed', { theme: newTheme });
     },
-    [setThemeState],
+    [syncThemePreference],
   );
 
   /* ── nav helpers ─────────────────────────────────────────────────────────── */

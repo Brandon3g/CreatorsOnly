@@ -12,8 +12,11 @@ const setThemeAttributes = (next: ThemeMode) => {
 
   root.setAttribute('data-theme', next);
   if (body) body.setAttribute('data-theme', next);
-
-  if (next === 'dark') {
+const isDark = next === 'dark';
+  root.classList.toggle('dark', isDark);
+  if (body) body.classList.toggle('dark', isDark);
+  
+  if (isDark) {
     root.style.setProperty('--co-bg', '#0B0B0E');
     root.style.setProperty('--co-fg', '#E5E7EB');
     root.style.setProperty('--co-fg-muted', '#9CA3AF');

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ICONS } from '../constants';
 import { useAppContext } from '../context/AppContext';
-import { applyThemePreference } from '../lib/theme';
+import { useThemeSync } from '../hooks/useThemeSync';
 
 type MobileTopBarProps = {
   title: string;
@@ -31,11 +31,12 @@ const MobileTopBar: React.FC<MobileTopBarProps> = ({ title, className = '' }) =>
 
   const username = currentUser?.username ? `@${currentUser.username}` : '';
 
+  useThemeSync(theme, setTheme);
+
   const handleThemeToggle = useCallback(() => {
-    const nextTheme = theme === 'dark' ? 'light' : 'dark';
-    applyThemePreference(nextTheme, setTheme);
+    setTheme(theme === 'dark' ? 'light' : 'dark');
     setIsMenuOpen(false);
-  }, [theme, setTheme, setIsMenuOpen]);
+  }, [setTheme, theme]);
 
   const feedbackHref = useMemo(
     () => `mailto:${FEEDBACK_EMAIL}?subject=${FEEDBACK_SUBJECT}`,
