@@ -1,11 +1,12 @@
 // src/App.tsx
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect, useMemo } from 'react';
 import { AppProvider, useAppContext } from './context/AppContext';
 import { RealtimeProvider } from './context/RealtimeProvider';
 
 // App pages & components
 import Sidebar from './components/Sidebar';
 import RightSidebar from './components/RightSidebar';
+import MobileTopBar from './components/MobileTopBar';
 import Feed from './pages/Feed';
 import Explore from './pages/Explore';
 import NotificationsPage from './pages/Notifications';
@@ -27,7 +28,7 @@ import ProfileSetup from './pages/ProfileSetup';
 import TestAuth from './pages/TestAuth';
 import { supabase } from './lib/supabaseClient';
 import { ICONS } from './constants';
-import type { Collaboration, Notification, PushSubscriptionObject } from './types';
+import type { Collaboration, Notification, Page, PushSubscriptionObject } from './types';
 import { trackEvent } from './services/analytics';
 
 /* ----------------------------- THEME ----------------------------- */
@@ -85,6 +86,18 @@ const requestNotificationPermission = async (
       console.error('Failed to subscribe to push notifications:', error);
     }
   }
+};
+
+const MOBILE_PAGE_TITLES: Record<Page, string> = {
+  feed: 'Feed',
+  explore: 'Explore',
+  notifications: 'Notifications',
+  messages: 'Messages',
+  search: 'Search',
+  profile: 'Profile',
+  collaborations: 'Collaborations',
+  admin: 'Admin',
+  interestedUsers: 'Interested Users',
 };
 
 /* ----------------------------- ERROR BOUNDARY ----------------------------- */
@@ -656,6 +669,7 @@ const AppContent: React.FC = () => {
     setEditingCollaborationId,
     collaborations,
     navigate,
+    getUserById,
   } = useAppContext();
 
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -760,6 +774,19 @@ const AppContent: React.FC = () => {
     trackEvent('open_feedback_modal');
   };
 
+  const mobileTitle = useMemo(() => {
+    if (!currentUser) return 'CreatorsOnly';
+    if (currentPage === 'profile') {
+      const profileId = viewingProfileId ?? currentUser.id;
+      const profileUser =
+        profileId === currentUser.id ? currentUser : getUserById(profileId);
+      if (profileUser?.username) return `@${profileUser.username}`;
+      if (profileUser?.name) return profileUser.name;
+      return MOBILE_PAGE_TITLES.profile;
+    }
+    return MOBILE_PAGE_TITLES[currentPage] ?? 'CreatorsOnly';
+  }, [currentPage, viewingProfileId, currentUser, getUserById]);
+
   // Debug page: #/test-auth
   if (typeof window !== 'undefined' && window.location.hash.includes('test-auth')) {
     return (
@@ -803,6 +830,7 @@ const AppContent: React.FC = () => {
         <div className="flex full-height overflow-hidden safe-pads">
           <Sidebar openCreateModal={openCreateModal} onOpenFeedbackModal={openFeedbackModal} />
           <main className="flex-1 md:ml-20 lg:ml-64 overflow-y-auto main-content-mobile-padding">
+            <MobileTopBar title={mobileTitle} />
             <Messages />
           </main>
           <CreateModal
@@ -835,6 +863,7 @@ const AppContent: React.FC = () => {
           <div className="max-w-5xl mx-auto">
             <div className="md:grid md:grid-cols-3">
               <div className="md:col-span-2 border-l border-r md:border-l-0 border-surface-light min-h-screen">
+                <MobileTopBar title={mobileTitle} />
                 {renderPage()}
               </div>
               <div className="hidden md:block md:col-span-1">

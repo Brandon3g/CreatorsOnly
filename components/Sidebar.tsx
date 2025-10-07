@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../context/AppContext';
 import { ICONS } from '../constants';
+import { applyThemePreference, syncThemeToDom } from '../lib/theme';
 import { Page, NotificationType } from '../types';
 
 type NavItemProps = {
@@ -41,46 +42,12 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
 
-  const setDomTheme = (next: 'light' | 'dark') => {
-    document.documentElement.setAttribute('data-theme', next);
-    document.body.setAttribute('data-theme', next);
-
-    if (next === 'dark') {
-      document.documentElement.style.setProperty('--co-bg', '#0B0B0E');
-      document.documentElement.style.setProperty('--co-fg', '#E5E7EB');
-      document.documentElement.style.setProperty('--co-fg-muted', '#9CA3AF');
-      document.documentElement.style.setProperty('--co-primary', '#7C3AED');
-      document.documentElement.style.setProperty('--co-primary-hover', '#6D28D9');
-      document.documentElement.style.setProperty('--co-surface-opaque-color', '#121214');
-      document.documentElement.style.setProperty('--co-surface-foreground-color', '#E5E7EB');
-      document.documentElement.style.setProperty('--co-surface-border-color', '#262626');
-      document.documentElement.style.setProperty('--co-surface-hover-color', '#1A1A1F');
-      document.documentElement.style.setProperty('--co-surface-shadow', '0 14px 30px rgba(0,0,0,.50)');
-    } else {
-      document.documentElement.style.setProperty('--co-bg', '#FFFFFF');
-      document.documentElement.style.setProperty('--co-fg', '#111827');
-      document.documentElement.style.setProperty('--co-fg-muted', '#6B7280');
-      document.documentElement.style.setProperty('--co-primary', '#7C3AED');
-      document.documentElement.style.setProperty('--co-primary-hover', '#6D28D9');
-      document.documentElement.style.setProperty('--co-surface-opaque-color', '#FFFFFF');
-      document.documentElement.style.setProperty('--co-surface-foreground-color', '#111827');
-      document.documentElement.style.setProperty('--co-surface-border-color', '#E5E7EB');
-      document.documentElement.style.setProperty('--co-surface-hover-color', '#F3F4F6');
-      document.documentElement.style.setProperty('--co-surface-shadow', '0 10px 25px rgba(0,0,0,.08)');
-    }
-  };
-
   const applyTheme = (next: 'light' | 'dark') => {
-    setTheme(next);
-    setDomTheme(next);
-    window.dispatchEvent(new CustomEvent('co:set-theme', { detail: { theme: next } }));
-    try {
-      localStorage.setItem('co-theme', next);
-    } catch {}
+    applyThemePreference(next, setTheme);
   };
 
   useEffect(() => {
-    setDomTheme(theme === 'dark' ? 'dark' : 'light');
+    syncThemeToDom(theme);
   }, [theme]);
 
   useEffect(() => {
@@ -162,7 +129,7 @@ const Sidebar: React.FC<SidebarProps> = ({ openCreateModal, onOpenFeedbackModal 
       `;
       document.head.appendChild(styleEl);
     }
-    setDomTheme(theme === 'dark' ? 'dark' : 'light');
+    syncThemeToDom(theme);
 
     // ===== Mobile header pinning =====
     const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
