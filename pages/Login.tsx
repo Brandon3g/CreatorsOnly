@@ -92,7 +92,7 @@ const Login: React.FC<LoginProps> = ({ onForgotPassword }) => {
   const goSignUp = () => (location.hash = '#/SignUp');
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="min-h-screen bg-black flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-surface rounded-2xl border border-surface-light p-6 shadow-lg">
         {/* Header icon */}
         <div className="flex items-center justify-center mb-4">

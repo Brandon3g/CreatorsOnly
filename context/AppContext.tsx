@@ -704,16 +704,47 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [users, setAuthData, setHistory],
   );
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    const userId = currentUser?.id ?? undefined;
+
     try {
-      supabase.auth.signOut().catch(() => {});
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch (error) {
+      console.warn('[AppContext] Failed to sign out', error);
     } finally {
       setAuthData({ userId: null });
       setHistory([{ page: 'feed', context: {} }]);
+      setIsRegistering(false);
+      setSelectedConversationId(null);
+      setEditingCollaborationId(null);
+      setUsers([]);
+      setPosts([]);
+      setNotifications([]);
+      setConversations([]);
+      setCollaborations([]);
+      setFeedback([]);
+      setFriendRequests([]);
       setRecoveryFlag(false);
-      trackEvent('logout', { userId: currentUser?.id, via: 'app_context' });
+      trackEvent('logout', { userId, via: 'app_context' });
+      if (typeof window !== 'undefined') {
+        window.location.hash = '#/Login';
+      }
     }
-  }, [setAuthData, setHistory, currentUser]);
+  }, [
+    currentUser?.id,
+    setAuthData,
+    setHistory,
+    setIsRegistering,
+    setSelectedConversationId,
+    setEditingCollaborationId,
+    setUsers,
+    setPosts,
+    setNotifications,
+    setConversations,
+    setCollaborations,
+    setFeedback,
+    setFriendRequests,
+  ]);
 
   const startRegistration = () => setIsRegistering(true);
   const cancelRegistration = () => setIsRegistering(false);
