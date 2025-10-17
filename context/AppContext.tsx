@@ -469,8 +469,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // auth pointer
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      if (data?.user) setCurrentUserId(data.user.id);
+    supabase.auth.getSession().then(({ data }) => {
+      const user = data.session?.user;
+      if (user) setCurrentUserId(user.id);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       const recovering = isRecoveryActive();
