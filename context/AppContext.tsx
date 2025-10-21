@@ -606,6 +606,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [{ page: 'feed', context: {} }],
   );
 
+  const usersRef = useRef(users);
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
+  
   const [isRegistering, setIsRegistering] = useState(false);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [editingCollaborationId, setEditingCollaborationId] = useState<string | null>(null);
@@ -623,37 +628,127 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     let cancelled = false;
 
-    (async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authData.userId)
-        .maybeSingle();
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let attemptCount = 0;
+    let inflight = false;
+    let pendingImmediateRetry = false;
 
-      if (cancelled) return;
+    const hasLoadedCurrentUser = () =>
+      usersRef.current.some((user) => user.id === authData.userId);
 
-      if (error) {
-        console.warn('[AppContext] Failed to load current user profile', error);
+    const clearRetryTimeout = () => {
+      if (retryTimeout !== null) {
+        clearTimeout(retryTimeout);
+        retryTimeout = null;
+      }
+    };
+
+    const scheduleRetry = (delayOverride?: number) => {
+      if (cancelled || hasLoadedCurrentUser()) return;
+      const baseDelay = 500;
+      const maxDelay = 5000;
+      const delay =
+        typeof delayOverride === 'number'
+          ? Math.max(delayOverride, 0)
+          : Math.min(baseDelay * 2 ** Math.max(attemptCount - 1, 0), maxDelay);
+
+      clearRetryTimeout();
+      retryTimeout = window.setTimeout(() => {
+        retryTimeout = null;
+        void attemptFetch();
+      }, delay);
+    };
+
+    const attemptFetch = async () => {
+      if (cancelled || hasLoadedCurrentUser() || inflight) return;
+
+      inflight = true;
+      attemptCount += 1;
+      let resolved = false;
+
+      try {
+        await refreshUsers();
+
+        if (cancelled || hasLoadedCurrentUser()) {
+          resolved = true;
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', authData.userId)
+          .maybeSingle();
+
+        if (cancelled || hasLoadedCurrentUser()) {
+          resolved = true;
+          return;
+        }
+
+        if (error) {
+          console.warn('[AppContext] Failed to load current user profile', error);
+        } else if (data) {
+          const normalized = normalizeProfileRow(data);
+          setUsers((prev) => {
+            const idx = prev.findIndex((user) => user.id === normalized.id);
+            if (idx === -1) {
+              return [...prev, normalized];
+            }
+            const next = [...prev];
+            next[idx] = normalized;
+            return next;
+          });
+          resolved = true;
+        }
+      } catch (err) {
+        console.warn('[AppContext] Unexpected error while loading current user', err);
+      } finally {
+        inflight = false;
+      }
+
+      if (cancelled || hasLoadedCurrentUser() || resolved) {
         return;
       }
-      if (!data) return;
 
-      const normalized = normalizeProfileRow(data);
-      setUsers((prev) => {
-        const idx = prev.findIndex((user) => user.id === normalized.id);
-        if (idx === -1) {
-          return [...prev, normalized];
-        }
-        const next = [...prev];
-        next[idx] = normalized;
-        return next;
-      });
-    })();
+      if (pendingImmediateRetry) {
+        pendingImmediateRetry = false;
+        scheduleRetry(0);
+      } else {
+        scheduleRetry();
+      }
+    };
+
+    const requestImmediateRetry = () => {
+      if (cancelled || hasLoadedCurrentUser()) return;
+      if (inflight) {
+        pendingImmediateRetry = true;
+        return;
+      }
+      scheduleRetry(0);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        requestImmediateRetry();
+      }
+    };
+
+    const handleFocus = () => {
+      requestImmediateRetry();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    void attemptFetch();
 
     return () => {
       cancelled = true;
+      clearRetryTimeout();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
     };
-  }, [authData.userId, currentUser, setUsers]);
+  }, [authData.userId, currentUser, refreshUsers, setUsers]);
 
   const currentEntry = history[history.length - 1] || { page: 'feed', context: {} };
   const currentPage = currentEntry.page;
