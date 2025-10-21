@@ -584,6 +584,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const authData = { userId: currentUserId };
   const setAuthData = (next: { userId: string | null }) => setCurrentUserId(next.userId);
 
+// Ensure we refetch profiles once auth is established (important when the first
+  // load happens while logged out, e.g. iOS standalone PWAs).
+  useEffect(() => {
+    if (!authData.userId) return;
+    refreshUsers();
+  }, [authData.userId, refreshUsers]);
+
   /* ── local state ─────────────────────────────────────────────────────────── */
   const [pushSubscriptions, setPushSubscriptions] =
     useLocalStorage<Record<string, PushSubscriptionObject>>(PUSH_SUBSCRIPTIONS_STORAGE_KEY, {});
@@ -608,6 +615,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const currentUser = users.find((u) => u.id === authData.userId) || null;
   const isAuthenticated = !!currentUser;
   const isMasterUser = currentUser?.id === MASTER_USER_ID;
+
+  // When the profile list is empty but we know who is logged in, fetch that
+  // specific profile directly so the shell can render.
+  useEffect(() => {
+    if (!authData.userId || currentUser) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authData.userId)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error) {
+        console.warn('[AppContext] Failed to load current user profile', error);
+        return;
+      }
+      if (!data) return;
+
+      const normalized = normalizeProfileRow(data);
+      setUsers((prev) => {
+        const idx = prev.findIndex((user) => user.id === normalized.id);
+        if (idx === -1) {
+          return [...prev, normalized];
+        }
+        const next = [...prev];
+        next[idx] = normalized;
+        return next;
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authData.userId, currentUser, setUsers]);
 
   const currentEntry = history[history.length - 1] || { page: 'feed', context: {} };
   const currentPage = currentEntry.page;
