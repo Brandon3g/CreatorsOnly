@@ -81,6 +81,9 @@ const emitSocketEvent = (userId: string, eventName: string, payload: any) => {
 const PUSH_SUBSCRIPTIONS_STORAGE_KEY = 'creatorsOnlyPushSubscriptions';
 const THEME_STORAGE_KEY = 'creatorsOnlyTheme';
 const HISTORY_STORAGE_KEY = 'creatorsOnlyHistory';
+const CURRENT_USER_STORAGE_KEY = 'creatorsOnlyCachedUsers';
+
+const isBrowser = typeof window !== 'undefined';
 
 const ensureArray = <T,>(value: unknown): T[] => {
   if (Array.isArray(value)) {
@@ -232,6 +235,61 @@ const toProfilePatch = (user: User): Omit<SerializedUserRow, 'id'> => {
   return dbPatch;
 };
 
+type CachedUserMap = Record<string, User>;
+
+const readCachedUsers = (): CachedUserMap => {
+  if (!isBrowser) return {};
+  try {
+    const raw = window.localStorage.getItem(CURRENT_USER_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+
+    const next: CachedUserMap = {};
+    Object.entries(parsed as Record<string, unknown>).forEach(([key, value]) => {
+      if (!value || typeof value !== 'object') return;
+      const normalized = normalizeProfileRow(value);
+      const id = normalized.id || key;
+      if (!id) return;
+      next[id] = normalized;
+    });
+    return next;
+  } catch {
+    return {};
+  }
+};
+
+const persistCachedUsers = (map: CachedUserMap) => {
+  if (!isBrowser) return;
+  try {
+    const entries = Object.entries(map).filter(([, user]) => Boolean(user && user.id));
+    if (entries.length === 0) {
+      window.localStorage.removeItem(CURRENT_USER_STORAGE_KEY);
+      return;
+    }
+
+    const serializable: Record<string, User> = {};
+    entries.forEach(([key, user]) => {
+      if (user && user.id) {
+        serializable[key] = user;
+      }
+    });
+
+    window.localStorage.setItem(CURRENT_USER_STORAGE_KEY, JSON.stringify(serializable));
+  } catch {
+    // Ignore storage errors (e.g., Safari private mode)
+  }
+};
+
+const areUsersEqual = (a?: User, b?: User | null): boolean => {
+  if (!a || !b) return false;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+};
+
 /* ──────────────────────────────────────────────────────────────────────────────
    Supabase list helper (safe ordering)
    ─────────────────────────────────────────────────────────────────────────── */
@@ -260,32 +318,37 @@ function useSupabaseList<T extends { id?: string }>(
   const chanRef = React.useRef(channelKey || table);
 
   const refresh = React.useCallback(async () => {
-    let query = supabase.from(table).select(select);
+    try {
+      let query = supabase.from(table).select(select);
 
-    // Apply filters
-    const filters: Record<string, string | number | boolean | null> = JSON.parse(whereString);
-    for (const [key, value] of Object.entries(filters)) {
-      if (value !== undefined) {
-        query = query.eq(key, value as any);
+      // Apply filters
+      const filters: Record<string, string | number | boolean | null> = JSON.parse(whereString);
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined) {
+          query = query.eq(key, value as any);
+        }
       }
-    }
 
-    // Apply order ONLY when explicitly provided
-    if (order?.column) {
-      try {
-        query = query.order(order.column, { ascending: !!order.ascending });
-      } catch {
-        // ignore — we’ll just not order if driver complains synchronously
+      // Apply order ONLY when explicitly provided
+      if (order?.column) {
+        try {
+          query = query.order(order.column, { ascending: !!order.ascending });
+        } catch {
+          // ignore — we’ll just not order if driver complains synchronously
+        }
       }
-    }
 
-    const { data, error } = await query;
-    if (!error && Array.isArray(data)) {
-      const mappedRows = mapRow ? (data as any[]).map((row) => mapRow(row)) : (data as T[]);
-      setRows(mappedRows);
-    } else if (error) {
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        const mappedRows = mapRow ? (data as any[]).map((row) => mapRow(row)) : (data as T[]);
+        setRows(mappedRows);
+      } else if (error) {
+        // eslint-disable-next-line no-console
+        console.warn(`[useSupabaseList] Failed to load ${table}`, error);
+      }
+    } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn(`[useSupabaseList] Failed to load ${table}`, error);
+      console.warn(`[useSupabaseList] Failed to load ${table}`, err);
     }
   }, [table, select, whereString, order?.column, order?.ascending, mapRow]);
 
@@ -584,7 +647,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const authData = { userId: currentUserId };
   const setAuthData = (next: { userId: string | null }) => setCurrentUserId(next.userId);
 
-// Ensure we refetch profiles once auth is established (important when the first
+const [cachedUsers, setCachedUsers] = useState<CachedUserMap>(() => readCachedUsers());
+
+  useEffect(() => {
+    persistCachedUsers(cachedUsers);
+  }, [cachedUsers]);
+
+  // Ensure we refetch profiles once auth is established (important when the first
   // load happens while logged out, e.g. iOS standalone PWAs).
   useEffect(() => {
     if (!authData.userId) return;
@@ -610,21 +679,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     usersRef.current = users;
   }, [users]);
-  
+
   const [isRegistering, setIsRegistering] = useState(false);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [editingCollaborationId, setEditingCollaborationId] = useState<string | null>(null);
   const scrollableNodeRef = useRef<HTMLDivElement | null>(null);
 
   /* ── derived ─────────────────────────────────────────────────────────────── */
-  const currentUser = users.find((u) => u.id === authData.userId) || null;
+  const currentUserFromRows = users.find((u) => u.id === authData.userId) || null;
+  const cachedUser = authData.userId ? cachedUsers[authData.userId] ?? null : null;
+  const currentUser = currentUserFromRows ?? cachedUser ?? null;
   const isAuthenticated = !!currentUser;
   const isMasterUser = currentUser?.id === MASTER_USER_ID;
+
+  useEffect(() => {
+    const userId = authData.userId;
+    if (!userId || !currentUserFromRows) return;
+
+    setCachedUsers((prev) => {
+      const existing = prev[userId];
+      if (areUsersEqual(existing, currentUserFromRows)) {
+        return prev;
+      }
+      return { ...prev, [userId]: currentUserFromRows };
+    });
+  }, [authData.userId, currentUserFromRows]);
 
   // When the profile list is empty but we know who is logged in, fetch that
   // specific profile directly so the shell can render.
   useEffect(() => {
-    if (!authData.userId || currentUser) return;
+    if (!authData.userId || currentUserFromRows) return;
 
     let cancelled = false;
 
@@ -965,13 +1049,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   /* ── lookups ─────────────────────────────────────────────────────────────── */
   const getUserById = useCallback(
-    (id: string) => users.find((u) => u.id === id),
-    [users],
+    (id: string) => users.find((u) => u.id === id) ?? cachedUsers[id],
+    [users, cachedUsers],
   );
   const getUserByUsername = useCallback(
-    (username: string) =>
-      users.find((u) => u.username?.toLowerCase() === username.toLowerCase()),
-    [users],
+    (username: string) => {
+      const target = username.toLowerCase();
+      const fromUsers = users.find((u) => u.username?.toLowerCase() === target);
+      if (fromUsers) return fromUsers;
+      return Object.values(cachedUsers).find(
+        (u) => u.username?.toLowerCase() === target,
+      );
+    },
+    [users, cachedUsers],
   );
 
   /* ── social / friends ───────────────────────────────────────────────────── */
