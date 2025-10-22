@@ -24,7 +24,10 @@ const ProfileHeader: React.FC<ProfileHeaderProps> = ({ user, isEditing, setIsEdi
     users,
   } = useAppContext();
 
-  const isCurrentUser = currentUser?.id === user.id;
+  const viewer = currentUser;
+  const isCurrentUser = viewer?.id === user.id;
+  const viewerFriendIds = viewer?.friendIds ?? [];
+  const viewerBlockedUserIds = viewer?.blockedUserIds ?? [];
   const [formData, setFormData] = useState<User>(user);
   const [copied, setCopied] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -209,7 +212,11 @@ const friendUsers = useMemo(
   };
 
   const handleToggleBlock = () => {
-    const isBlocked = currentUser?.blockedUserIds?.includes(user.id);
+    if (!viewer) {
+      return;
+    }
+
+    const isBlocked = viewerBlockedUserIds.includes(user.id);
     if (isBlocked) {
       toggleBlockUser(user.id);
     } else {
@@ -256,8 +263,6 @@ You will be unfriended.`
       )}
     </div>
   );
-
-  const isBlockedByYou = currentUser?.blockedUserIds?.includes(user.id);
 
   return (
     <div className="bg-background">
@@ -337,87 +342,89 @@ You will be unfriended.`
               Message
             </button>
 
-            <div className="relative" ref={menuRef}>
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  setIsMenuOpen((prev) => !prev);
-                }}
-                onTouchEnd={(e) => {
-                  e.preventDefault();
-                  setIsMenuOpen((prev) => !prev);
-                }}
-                className="p-2 rounded-full border border-text-secondary hover:bg-surface-light"
-                aria-haspopup="true"
-                aria-expanded={isMenuOpen}
-              >
-                {React.cloneElement(ICONS.ellipsis as React.ReactElement<{ className: string }>, {
-                  className: 'h-5 w-5',
-                })}
-              </button>
+            {viewer && (
+              <div className="relative" ref={menuRef}>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsMenuOpen((prev) => !prev);
+                  }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    setIsMenuOpen((prev) => !prev);
+                  }}
+                  className="p-2 rounded-full border border-text-secondary hover:bg-surface-light"
+                  aria-haspopup="true"
+                  aria-expanded={isMenuOpen}
+                >
+                  {React.cloneElement(ICONS.ellipsis as React.ReactElement<{ className: string }>, {
+                    className: 'h-5 w-5',
+                  })}
+                </button>
 
-              {isMenuOpen && (
-                <div className="absolute right-0 mt-2 w-56 bg-background border rounded-xl shadow-lg overflow-hidden z-10">
-                  {currentUser?.friendIds.includes(user.id) ? (
-                    <button
-                      onClick={handleRemoveFriend}
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
-                    >
-                      Remove Friend
-                    </button>
-                  ) : (
-                    (() => {
-                      const friendRequest = getFriendRequest(currentUser!.id, user.id);
-                      if (friendRequest && friendRequest.status === FriendRequestStatus.PENDING) {
-                        if (friendRequest.fromUserId === currentUser!.id) {
+                {isMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-56 bg-background border rounded-xl shadow-lg overflow-hidden z-10">
+                    {viewerFriendIds.includes(user.id) ? (
+                      <button
+                        onClick={handleRemoveFriend}
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
+                      >
+                        Remove Friend
+                      </button>
+                    ) : (
+                      (() => {
+                        const friendRequest = getFriendRequest(viewer.id, user.id);
+                        if (friendRequest && friendRequest.status === FriendRequestStatus.PENDING) {
+                          if (friendRequest.fromUserId === viewer.id) {
+                            return (
+                              <button
+                                onClick={() => cancelFriendRequest(user.id)}
+                                className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
+                              >
+                                Cancel Request
+                              </button>
+                            );
+                          }
                           return (
                             <button
-                              onClick={() => cancelFriendRequest(user.id)}
+                              onClick={() => navigate('notifications')}
                               className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
                             >
-                              Cancel Request
+                              Respond to Request
                             </button>
                           );
                         }
                         return (
                           <button
-                            onClick={() => navigate('notifications')}
+                            onClick={() => sendFriendRequest(user.id)}
                             className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
                           >
-                            Respond to Request
+                            Add Friend
                           </button>
                         );
-                      }
-                      return (
-                        <button
-                          onClick={() => sendFriendRequest(user.id)}
-                          className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
-                        >
-                          Add Friend
-                        </button>
-                      );
-                    })()
-                  )}
+                      })()
+                    )}
 
-                  <button
-                    onClick={handleToggleBlock}
-                    className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
-                  >
-                    {currentUser?.blockedUserIds?.includes(user.id) ? `Unblock @${user.username}` : `Block @${user.username}`}
-                  </button>
+                    <button
+                      onClick={handleToggleBlock}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
+                    >
+                      {viewerBlockedUserIds.includes(user.id) ? `Unblock @${user.username}` : `Block @${user.username}`}
+                    </button>
 
-                  <button
-                    onClick={async () => {
-                      await handleShareProfile();
-                      setIsMenuOpen(false);
-                    }}
-                    className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
-                  >
-                    {copied ? 'Link Copied!' : 'Share Profile'}
-                  </button>
-                </div>
-              )}
-            </div>
+                    <button
+                      onClick={async () => {
+                        await handleShareProfile();
+                        setIsMenuOpen(false);
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-surface-light"
+                    >
+                      {copied ? 'Link Copied!' : 'Share Profile'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
